@@ -82,7 +82,7 @@
   function memexNote(m) {
     switch (m.status) {
       case "ok": return "";
-      case "disabled": return "transcripts: off (no memex)";
+      case "disabled": return "transcripts: off";
       case "timeout": return "transcripts: timed out";
       case "rate_limited": return "transcripts: rate limited, try again shortly";
       case "cancelled": return "";

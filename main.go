@@ -54,7 +54,9 @@ func main() {
 	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
 	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
 	flag.DurationVar(&cfg.GHEvery, "gh-every", 10*time.Minute, "gh pr list interval")
-	flag.StringVar(&cfg.Memex, "memex", env("HERDR_DASH_MEMEX", "memex"), "memex binary for transcript search, $HERDR_DASH_MEMEX (\"off\" disables; disabled when not found)")
+	// Off by default: `memex search` also ingests new transcripts, which can
+	// cost seconds of CPU and hundreds of MB (see README, Content search).
+	flag.StringVar(&cfg.Memex, "memex", env("HERDR_DASH_MEMEX", "off"), "memex binary for transcript search, e.g. \"memex\" (on PATH), $HERDR_DASH_MEMEX; default off; disabled when not found")
 	flag.DurationVar(&cfg.MemexTimeout, "memex-timeout", 2*time.Second, "time limit of one memex search")
 	flag.IntVar(&cfg.MemexPerMin, "memex-per-min", 30, "memex searches allowed a minute")
 	flag.Parse()

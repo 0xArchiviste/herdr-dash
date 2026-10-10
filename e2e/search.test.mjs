@@ -354,7 +354,8 @@ test("memex missing or off: files still searched, transcripts disabled", async (
   // S8
   const a = await boot(await freePort(), ["--memex", join(tmp, "no-such-memex")]);
   const b = await boot(await freePort(), [], { HERDR_DASH_MEMEX: "off" });
-  for (const { url } of [a, b]) {
+  const c = await boot(await freePort(), [], { HERDR_DASH_MEMEX: "" }); // the default: off
+  for (const { url } of [a, b, c]) {
     const r = await search("zephyr", url);
     assert.equal(r.memex.status, "disabled");
     assert.ok(hit(r, "alpha/t-0001", "task"));
@@ -363,8 +364,7 @@ test("memex missing or off: files still searched, transcripts disabled", async (
     assert.equal(cfg.memex, false);
   }
   assert.equal((await (await fetch(base + "/api/config")).json()).memex, true);
-  a.s.kill();
-  b.s.kill();
+  [a, b, c].forEach((x) => x.s.kill());
 });
 
 test("memex is rate limited", async () => {

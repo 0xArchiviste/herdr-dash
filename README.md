@@ -102,11 +102,15 @@ working directory (a thread's worktree or folder, a project folder); hits
 from a project's repo show under the project, others are dropped. Pages and
 add-ons can call `hd.search(text, { mode: "content" | "title" })`.
 
-`--memex` / `HERDR_DASH_MEMEX` names the binary (default `memex` on `PATH`;
-`off` disables; missing means off), `--memex-timeout` (2s) and
-`--memex-per-min` (30) bound it. Note that `memex search` itself ingests new
-transcripts unless `auto_index_on_search = false` is set in
-`~/.memex/config.toml`.
+Transcript search is **opt-in**: `--memex memex` (or
+`HERDR_DASH_MEMEX=memex`, or a path) turns it on; it is off by default and
+when the binary is missing. `--memex-timeout` (2s) and `--memex-per-min` (30)
+bound it. Why opt-in: `memex search` first ingests transcripts written since
+its last run. Warm, a search costs ~0.1 s and ~50 MB; after a backlog it was
+measured at 6.7 s, 8 s of CPU and 670 MB, which the service's
+`CPUQuota=25%`/`MemoryMax=256M` turn into timeouts or an OOM kill. With
+`auto_index_on_search = false` in `~/.memex/config.toml` (and memex's own
+indexing keeping the index fresh) searches stay read-only and fast.
 
 ## Data sources (reads)
 
