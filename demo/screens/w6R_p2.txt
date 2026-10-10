@@ -1,0 +1,17 @@
+● Write(migrations/0042_ledger_index.sql)
+  ⎿  Wrote 6 lines
+
+● Bash(make test-migrations)
+  ⎿  ok  0042_ledger_index (0.8s)
+
+╭──────────────────────────────────────────────────────────────╮
+│ Bash command                                                 │
+│                                                              │
+│   psql "$STAGING_DB_URL" -f migrations/0042_ledger_index.sql │
+│   Apply the ledger index migration to staging                │
+│                                                              │
+│ Do you want to proceed?                                      │
+│ ❯ 1. Yes                                                     │
+│   2. Yes, and don't ask again for psql commands              │
+│   3. No, and tell Claude what to do differently (esc)        │
+╰──────────────────────────────────────────────────────────────╯

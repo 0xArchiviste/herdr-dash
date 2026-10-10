@@ -1,0 +1,13 @@
+[
+ {
+  "pane_id": "w4M:p1",
+  "tab_id": "w4M:t1",
+  "workspace_id": "w4M",
+  "name": "hpc-pixel-forge",
+  "agent": "claude",
+  "agent_status": "idle",
+  "state_change_seq": 7,
+  "pair_since": "2026-10-09T08:00:00Z",
+  "agent_session": "00000000-0000-4000-8000-000000000002"
+ }
+]

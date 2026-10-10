@@ -78,10 +78,25 @@
 //     side on a wide screen.
 // 40. Phones lose the bottom sheet, or show a dock control, whatever dock
 //     was chosen on desktop.
+//
+// Longer scrollback, written before the change:
+// 41. Lines vanish once they scroll out of the live tail, or merging a new
+//     tail into the buffer duplicates or reorders lines.
+// 42. A full-screen TUI redraw garbles the buffer (history mixed with the
+//     frame) instead of replacing it.
+// 43. Scrolling to the top does not load earlier lines, the reader's place
+//     jumps when they are prepended, or loading goes on past the cap or
+//     keeps polling once nothing more is to be had.
+// 44. History reads are unbounded (any ?lines=), uncached, or run in
+//     parallel for one pane; or a pane that may not be read is read.
+// 45. An update yanks a scrolled-up reader down, or there is no "new
+//     output" button to jump back to the newest line.
+// 46. The box stays short instead of using the panel's height in side and
+//     bottom docks.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, utimesSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +112,7 @@ mkdirSync(artifacts, { recursive: true });
 
 const tmp = mkdtempSync(join(tmpdir(), "herdr-dash-e2e-"));
 const stubLog = join(tmp, "calls.log");
+const redrawFlag = join(tmp, "redraw");
 writeFileSync(stubLog, "");
 
 // git does not keep mtimes: set the transcript times the test asserts on.
@@ -134,7 +150,7 @@ function startServer(port, extra = []) {
     "--poll", "1s",
     ...extra,
   ], {
-    env: { ...process.env, STUB_LOG: stubLog, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_USAGE: "off" },
+    env: { ...process.env, STUB_LOG: stubLog, STUB_T0: String(Math.floor(Date.now() / 1000)), STUB_REDRAW: redrawFlag, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_USAGE: "off" },
     stdio: ["ignore", "inherit", "inherit"],
   });
 }
@@ -725,7 +741,7 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   assert.deepEqual(since(m), [`${hp} coordinator prompt alpha --text-file -`, `stdin: ${evil}`]);
   await page.waitForSelector("#chat-log .msg.ok");
   assert.equal(await page.locator("#coord-input").inputValue(), "");
-  const reads = () => logLines().filter((l) => l === "herdr pane read w1Z:p1 --source recent --lines 40").length;
+  const reads = () => logLines().filter((l) => l === "herdr pane read w1Z:p1 --source recent --lines 60").length;
   const r0 = reads();
   await page.waitForTimeout(2500);
   assert.ok(reads() - r0 >= 2, `fast refresh after send: ${reads() - r0} reads in 2.5s`);
@@ -798,11 +814,12 @@ test("live screens show the newest line and stay pinned to the bottom", async ()
     // New output keeps it pinned.
     await waitFor(async () => (await box()).n > b.n, 5000);
     assert.equal((await box()).pinned, true, `${open}: still pinned after an update`);
-    // A reader who scrolled up is left there...
-    await page.locator("#p-chat .screen").evaluate((s) => (s.scrollTop = 0));
+    // A reader who scrolled up is left there (not to the very top, which
+    // loads earlier lines)...
+    await page.locator("#p-chat .screen").evaluate((s) => (s.scrollTop = Math.floor((s.scrollHeight - s.clientHeight) / 2)));
     b = await box();
     await waitFor(async () => (await box()).n > b.n, 5000);
-    assert.equal((await box()).top, 0, `${open}: not yanked down`);
+    assert.equal((await box()).top, b.top, `${open}: not yanked down`);
     // ...until they scroll back to the bottom.
     await page.locator("#p-chat .screen").evaluate((s) => (s.scrollTop = s.scrollHeight));
     b = await box();
@@ -825,6 +842,161 @@ test("live screens show the newest line and stay pinned to the bottom", async ()
   await page.locator("#p-report-box summary").click();
   assert.match(await page.locator("#p-report").innerText(), /Blocked on a permission prompt/);
   await page.close();
+});
+
+test("scrollback: live tails merge into a long buffer, earlier lines load on scroll up, capped", async () => {
+  // 41-46
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => localStorage.setItem("hd-dock", JSON.stringify({ pos: "right", bottom: 600 })));
+  await page.goto(base + "/");
+  await page.waitForSelector('#needs .chip[data-key="alpha/t-0002"]');
+  const scr = () => page.locator("#p-chat .screen");
+  const box = () => scr().evaluate((s) => {
+    const lh = parseFloat(getComputedStyle(s).lineHeight), pad = parseFloat(getComputedStyle(s).paddingTop);
+    return {
+      lines: s.textContent.split("\n"), n: +s.dataset.n, top: s.scrollTop, h: s.clientHeight,
+      pinned: s.scrollTop + s.clientHeight >= s.scrollHeight - 2,
+      // Index of the line at the top edge of the box.
+      at: Math.round((s.scrollTop - pad) / lh),
+    };
+  });
+  const nums = (ls) => ls.map((l) => l.match(/^scrollback line (\d+)$/)).filter(Boolean).map((m) => +m[1]);
+  const contiguous = (ns) => ns.length > 0 && ns.every((n, i) => i === 0 || n === ns[i - 1] + 1);
+  const clean = (ls, pane) => {
+    // One copy of the tail region, newest line last: nothing garbled.
+    assert.ok(contiguous(nums(ls)), "history lines contiguous, no duplicates");
+    assert.equal(ls.filter((l) => /^clock /.test(l)).length, 1, "one clock line");
+    assert.equal(ls.filter((l) => l === `screen of ${pane}`).length, 1);
+    assert.equal(ls.at(-1), `LAST LINE of ${pane}`);
+  };
+  const historyReads = (pane) => logLines().filter((l) => l.startsWith(`herdr pane read ${pane} `))
+    .map((l) => +l.match(/--lines (\d+)/)[1]).filter((n) => n > 60);
+
+  const h0 = historyReads("w1B:p1").length;
+  await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+  await page.waitForSelector("#p-chat .screen:not(:empty)");
+  let b = await box();
+  const first = nums(b.lines);
+  clean(b.lines, "w1B:p1");
+  assert.ok(first.length <= 60, "the live stream stays small");
+  assert.equal(historyReads("w1B:p1").length, h0, "no history read before scrolling up");
+
+  // 41: three updates later the buffer holds more than one live tail, and
+  // the lines that scrolled out of it are still there, once.
+  await waitFor(async () => (await box()).n >= b.n + 3, 15000);
+  b = await box();
+  clean(b.lines, "w1B:p1");
+  assert.equal(nums(b.lines)[0], first[0], "older lines kept");
+  assert.ok(nums(b.lines).length > first.length, "buffer grew past the live tail");
+
+  // 46: the box uses the side dock's height, not a fixed 340px.
+  assert.ok(b.h >= 450, `tall box in the side dock (${b.h}px)`);
+
+  // 45: scrolled up a bit, updates do not move the reader; a jump button
+  // appears and takes them to the newest line.
+  await scr().evaluate((s) => (s.scrollTop = Math.floor((s.scrollHeight - s.clientHeight) / 2)));
+  b = await box();
+  await page.waitForSelector("#p-chat .new-output:not([hidden])", { timeout: 8000 });
+  assert.equal((await box()).top, b.top, "not yanked down");
+  await page.locator("#p-chat .new-output").click();
+  await waitFor(async () => (await box()).pinned, 3000);
+  assert.equal(await page.locator("#p-chat .new-output").isHidden(), true);
+
+  // 43: at the top, earlier lines are fetched and prepended, and the line
+  // the reader was looking at stays put.
+  b = await box();
+  const topLine = b.lines[0];
+  await scr().evaluate((s) => (s.scrollTop = 0));
+  await waitFor(async () => nums((await box()).lines)[0] < nums(b.lines)[0], 8000);
+  b = await box();
+  clean(b.lines, "w1B:p1");
+  assert.ok(Math.abs(b.lines.indexOf(topLine) - b.at) <= 1, `kept place: ${topLine} at ${b.lines.indexOf(topLine)}, top shows ${b.at}`);
+  assert.equal(historyReads("w1B:p1")[h0], 200, "first load asks for 200 lines");
+  await page.locator("#p-chat .screen").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(artifacts, "scrollback-loaded.png") });
+
+  // ...and again, until the cap.
+  for (let i = 0; i < 12; i++) {
+    const before = nums((await box()).lines)[0];
+    await scr().evaluate((s) => (s.scrollTop = 0));
+    if (/last 2000 lines|Start of history/.test(await page.locator("#p-chat .screen-top").innerText())) break;
+    await waitFor(async () => nums((await box()).lines)[0] < before ||
+      /last 2000 lines/.test(await page.locator("#p-chat .screen-top").innerText()), 8000);
+  }
+  assert.match(await page.locator("#p-chat .screen-top").innerText(), /last 2000 lines/);
+  b = await box();
+  clean(b.lines, "w1B:p1");
+  assert.ok(b.lines.length <= 2000, `capped buffer (${b.lines.length})`);
+  assert.ok(nums(b.lines).length > 1500, "about 2000 lines of history");
+  const reads = historyReads("w1B:p1").slice(h0);
+  assert.equal(Math.max(...reads), 2000, "never asks past the cap");
+  assert.deepEqual(reads, [...reads].sort((x, y) => x - y), "each load asks for more");
+  // Sitting at the top with nothing more to load: no more history reads.
+  await new Promise((r) => setTimeout(r, 4000));
+  assert.equal(historyReads("w1B:p1").length, h0 + reads.length, "no polling for history");
+  await page.screenshot({ path: join(artifacts, "scrollback-capped.png") });
+
+  // 42: a full-screen redraw replaces the buffer; back to normal, the
+  // history is clean again.
+  await scr().evaluate((s) => (s.scrollTop = s.scrollHeight));
+  writeFileSync(redrawFlag, "");
+  try {
+    await waitFor(async () => (await box()).lines.some((l) => /^full-screen frame/.test(l)), 8000);
+    b = await box();
+    assert.deepEqual(nums(b.lines), [], "no history mixed into the frame");
+    assert.equal(b.lines.filter((l) => l === "full-screen frame row 1").length, 1);
+    assert.match(b.lines.at(-1), /^frame clock /);
+  } finally {
+    rmSync(redrawFlag, { force: true });
+  }
+  await waitFor(async () => (await box()).lines.at(-1) === "LAST LINE of w1B:p1", 8000);
+  clean((await box()).lines, "w1B:p1");
+
+  // 46: bottom dock, the box fills the chat column's height.
+  await page.locator("#dock-bottom").click();
+  await page.waitForTimeout(400);
+  const fit = await page.evaluate(() => {
+    const p = document.getElementById("panel").getBoundingClientRect(), s = document.querySelector("#p-chat .screen").getBoundingClientRect();
+    return { ph: p.height, sh: s.height, inside: s.bottom <= p.bottom + 1 };
+  });
+  assert.ok(fit.inside, "box inside the bottom panel");
+  assert.ok(fit.sh >= fit.ph - 210, `box uses the bottom panel's height (${fit.sh} of ${fit.ph})`);
+  await page.screenshot({ path: join(artifacts, "scrollback-dock-bottom.png") });
+  await page.close();
+});
+
+test("history API: capped, cached, one read per pane at a time, refuses unreadable panes", async () => {
+  // 44
+  const reads = (pane) => logLines().filter((l) => l.startsWith(`herdr pane read ${pane} `) && !/--lines ([1-5]?\d|60)$/.test(l));
+  const r0 = reads("w1Z:p1").length;
+  const all = await Promise.all([1, 2, 3, 4, 5].map(() => getJSON("/api/project/alpha/history?lines=1000")));
+  for (const d of all) {
+    assert.equal(d.lines, 1000);
+    assert.match(d.screen, /LAST LINE of w1Z:p1$/);
+    assert.equal(d.screen.split("\n").length, 1000);
+  }
+  assert.equal(reads("w1Z:p1").length - r0, 1, "five concurrent requests, one read");
+  // A smaller request right after is served from that read.
+  const small = await getJSON("/api/project/alpha/history?lines=200");
+  assert.equal(small.screen.split("\n").length, 200);
+  assert.equal(reads("w1Z:p1").length - r0, 1, "smaller request served from the cache");
+
+  const big = await getJSON("/api/thread/alpha/t-0002/history?lines=999999");
+  assert.equal(big.lines, 2000, "capped");
+  assert.ok(!logLines().some((l) => /--lines (\d{5,}|[3-9]\d{3}|2\d{3})/.test(l) && !/--lines 2000$/.test(l)), "no read past 2000");
+  for (const q of ["lines=abc", "lines=-5", "lines=1e9", "lines=10%20--raw"]) {
+    assert.equal((await fetch(base + "/api/thread/alpha/t-0002/history?" + q)).status, 400, q);
+  }
+  // Unreadable: a pane-less coordinator, a thread with no live pane.
+  assert.equal((await getJSON("/api/project/gamma/history?lines=200")).screen, "");
+  const s = await getJSON("/api/state");
+  const dead = s.threads.find((t) => !t.pane_alive || t.state === "resolved");
+  const m = mark();
+  const d = await getJSON(`/api/thread/${dead.project}/${dead.id}/history?lines=200`);
+  assert.equal(d.screen, "");
+  assert.ok(!logLines().slice(m).some((l) => /pane read/.test(l) && dead.pane_id && l.includes(dead.pane_id)), "dead pane not read");
+  assert.equal((await fetch(base + "/api/project/nope/history?lines=200")).status, 404);
+  assert.equal((await fetch(base + "/api/thread/alpha/t-9999/history?lines=200")).status, 404);
 });
 
 test("phone: coordinator panel fits", async () => {
@@ -858,7 +1030,7 @@ async function dockBoxes(page) {
 async function nodesInStage(page) {
   return waitFor(() => page.evaluate(() => {
     const s = document.querySelector("#stage").getBoundingClientRect();
-    const ns = [...document.querySelectorAll("svg g.node .core, svg g.node.hub text.name")].map((c) => c.getBoundingClientRect());
+    const ns = [...document.querySelectorAll("svg g.node .core, svg text.name")].map((c) => c.getBoundingClientRect());
     return ns.length > 0 && ns.every((n) => n.left >= s.left - 1 && n.right <= s.right + 1 && n.top >= s.top - 1 && n.bottom <= s.bottom + 1);
   }), 4000);
 }

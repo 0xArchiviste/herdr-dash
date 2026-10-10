@@ -1,0 +1,7 @@
+Safety settings (yours; no agent may change them):
+  yolo                     off   [built-in]
+  start_threads            ask   [built-in]
+  trust_screens            ask   [built-in]
+  coordinator_agent_args   (none)   [built-in]
+  thread_agent_args        (none)   [built-in]
+  routine_commands         off   [built-in]

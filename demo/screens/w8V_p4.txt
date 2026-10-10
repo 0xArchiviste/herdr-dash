@@ -1,0 +1,8 @@
+• Ran ./scripts/coldstart.sh --device pixel-6a
+  └ median 1.91 s (n=20), was 2.62 s
+
+Dropping the animated splash saves another ~250 ms.
+Should I drop it?
+
+▌ Ask Codex to do anything
+  ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit
