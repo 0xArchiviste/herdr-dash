@@ -35,6 +35,35 @@
 //     shown.
 // 21. Quick-reply buttons do not appear for a blocked pane, or the screen
 //     stream never delivers.
+//
+// Coordinator panel, written before it existed:
+// 22. Clicking a project hub does not open a panel (or opens a thread's).
+// 23. The coordinator pane is guessed: a stale `.state/coordinators.json`
+//     entry, or the recorded pane now running in another folder, is shown
+//     (and read) as the live coordinator instead of "no live pane".
+// 24. A blocked coordinator, or one herdr-projects marks "needs you", is
+//     missing from the Needs-you strip; or an idle one is in it.
+// 25. The coordinator's progress line (`progress --pane`), settings, safety
+//     summary or inbox count (open items only) are missing or wrong.
+// 26. TASKS.md / MEMORY.md are rendered unsanitized.
+// 27. The coordinator screen is read while no coordinator panel is open, or
+//     its stream keeps polling after the panel closes.
+// 28. A coordinator prompt refusal is swallowed, the text reaches argv, or
+//     the screen does not refresh fast after a send.
+// 29. Offering key presses to a coordinator: herdr-projects has no command
+//     for that, so nothing but `coordinator prompt` may be sent.
+// 30. An open thread in the coordinator panel does not open its own panel.
+// 31. The coordinator panel breaks on a phone-sized viewport.
+//
+// Reports and the live screen, written before the change:
+// 32. The live screen misses the newest lines: a pane scrolled up in herdr
+//     (`--source visible`), a read from the top, a trimmed tail, or a box
+//     that does not stay pinned to the bottom (or yanks a reader who
+//     scrolled up back down).
+// 33. The coordinator panel lacks the project's thread reports newest
+//     first, each collapsed, with title, id, time and a way to the thread.
+// 34. The thread panel's report is still open by default, or above the chat
+//     and Next.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -63,6 +92,10 @@ const claudeTime = new Date(Date.now() - 30_000);
 const codexTime = new Date("2026-10-05T10:00:00Z");
 utimesSync(claudeTranscript, claudeTime, claudeTime);
 utimesSync(codexTranscript, codexTime, codexTime);
+// Report mtimes order the coordinator's report list (33).
+const reportNew = new Date("2026-10-04T10:00:00Z"), reportOld = new Date("2026-10-02T10:00:00Z");
+utimesSync(join(td, "root/alpha/threads/t-0002.md"), reportNew, reportNew);
+utimesSync(join(td, "root/alpha/threads/t-0003.md"), reportOld, reportOld);
 
 let server, base, browser, rootDir;
 
@@ -106,7 +139,7 @@ async function post(path, body, { headers = {}, url = base } = {}) {
 // Lines the stubs logged since mark().
 const logLines = () => readFileSync(stubLog, "utf8").split("\n").filter(Boolean);
 const mark = () => logLines().length;
-const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pr list)( |$)/.test(l));
+const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pr list|progress --pane|safety show)( |$)/.test(l));
 
 async function getJSON(path) {
   const r = await fetch(base + path);
@@ -234,8 +267,9 @@ test("page renders graph, needs-you strip, panel and filters", async () => {
   await page.waitForTimeout(2500);
   assert.equal(await page.locator("svg g.node.thread").count(), 10);
   assert.equal(await page.locator("svg g.node.hub").count(), 3);
-  // Acked alpha/t-0007 is hidden by default.
-  assert.equal(await page.locator("#needs .chip").count(), 6);
+  // Acked alpha/t-0007 is hidden by default; alpha's and beta's
+  // coordinators need you too.
+  assert.equal(await page.locator("#needs .chip").count(), 8);
   await page.screenshot({ path: join(artifacts, "dashboard.png") });
 
   await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
@@ -385,6 +419,7 @@ test("screen stream delivers the pane screen and live status", async () => {
   assert.ok(m, buf);
   const d = JSON.parse(m[1]);
   assert.match(d.screen, /screen of w1B:p1/);
+  assert.match(d.screen, /LAST LINE of w1B:p1\n?$/, "32: newest line, even when the pane is scrolled up");
   assert.equal(d.live_status, "blocked");
 });
 
@@ -400,7 +435,7 @@ test("page: chat, quick replies, triage strip, bulk ack, toasts", async () => {
 
   // Grouped by severity with counts.
   const groups = await page.locator("#needs .group").evaluateAll((gs) => gs.map((g) => [g.dataset.state, g.querySelector(".group-head .n").textContent]));
-  assert.deepEqual(groups, [["blocked", "1"], ["waiting", "1"], ["review", "3"], ["landing", "1"]]);
+  assert.deepEqual(groups, [["blocked", "2"], ["waiting", "2"], ["review", "3"], ["landing", "1"]]);
   // Acked filter: show all reveals alpha/t-0007, "acked/snoozed" shows only it.
   await page.selectOption("#needs-filter", "all");
   await page.waitForSelector('#needs .chip[data-key="alpha/t-0007"]');
@@ -426,12 +461,10 @@ test("page: chat, quick replies, triage strip, bulk ack, toasts", async () => {
   await waitFor(() => since(m).includes(`${hp} thread keys alpha t-0002 enter --text=use the second option`), 4000);
   await page.screenshot({ path: join(artifacts, "chat-blocked.png") });
 
-  // Coordinator box.
-  m = mark();
-  await page.fill("#coord-input", "what is next?");
-  await page.click("#coord-send");
-  await waitFor(() => since(m).includes(`${hp} coordinator prompt alpha --text-file -`), 4000);
-  await page.waitForSelector("#p-coord .msg.ok");
+  // The thread panel links to its project's coordinator panel.
+  await page.click("#open-coord");
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Alpha Project", 3000);
+  await page.keyboard.press("Escape");
 
   // Working thread: follow-up prompt via stdin.
   await page.selectOption("#f-state", "");
@@ -492,6 +525,8 @@ test("page: chat, quick replies, triage strip, bulk ack, toasts", async () => {
   await page.click("#select-mode");
   await page.locator('#needs .chip[data-key="beta/t-0001"]').click();
   assert.equal(await page.locator("#panel.open").count(), 0, "select mode does not open the panel");
+  await page.locator('#needs .chip[data-key="hub:beta"]').click();
+  assert.match(await page.locator("#bulk-ack").innerText(), /\(1\)/, "a coordinator cannot be picked for ack");
   await page.locator('#needs .chip[data-key="beta/t-0002"]').click();
   assert.match(await page.locator("#bulk-ack").innerText(), /2/);
   m = mark();
@@ -535,6 +570,267 @@ test("phone: chat panel fits", async () => {
   await page.close();
 });
 
+test("API: coordinators come from herdr-projects' records, checked against live panes", async () => {
+  // 23, 24, 25
+  const s = await getJSON("/api/state");
+  const p = Object.fromEntries(s.projects.map((x) => [x.slug, x]));
+  const a = p.alpha.coordinator, b = p.beta.coordinator, g = p.gamma.coordinator;
+  assert.equal(a.pane_id, "w1Z:p1");
+  assert.equal(a.tab_id, "w1Z:t1");
+  assert.equal(a.agent, "claude");
+  assert.equal(a.live_status, "done");
+  assert.equal(a.state, "waiting", "herdr-projects says needs you");
+  assert.equal(a.needs_you, true);
+  assert.equal(a.activity, "needs you · ~35%");
+  assert.equal(a.last_activity, "2026-10-03T09:00:00Z");
+  // beta: no ticker list, the open record's pane runs in the project folder.
+  assert.equal(b.pane_id, "w2Z:p1");
+  assert.equal(b.state, "blocked");
+  assert.equal(b.needs_you, true);
+  // gamma: stale entry (pane gone) and a record whose pane runs elsewhere.
+  assert.equal(g.pane_id, "");
+  assert.equal(g.state, "none");
+  assert.equal(g.needs_you, false);
+  assert.equal(p.gamma.status, "paused");
+  assert.equal(p.alpha.inbox, 2, "open inbox items only, not done/");
+  assert.equal(p.beta.inbox, 0);
+});
+
+test("API: coordinator detail renders files, settings, progress and jump commands", async () => {
+  // 25, 26
+  const d = await getJSON("/api/project/alpha");
+  writeFileSync(join(artifacts, "project-alpha.json"), JSON.stringify(d, null, 2));
+  assert.match(d.tasks_html, /<strong>widget<\/strong>/);
+  assert.doesNotMatch(d.tasks_html, /<script/i);
+  assert.doesNotMatch(d.tasks_html, /javascript:/i);
+  assert.match(d.memory_html, /Release flow/);
+  assert.equal(d.goal, "Ship the alpha thing");
+  assert.equal(d.settings.thread_profile, "codex-high");
+  assert.equal(d.settings.coordinator_profile, "claude");
+  assert.equal(d.settings.max_parallel_threads, "4");
+  assert.equal(d.settings.repos, "1");
+  assert.equal(d.safety, "yolo on · start threads auto (yolo) · trust screens coordinator (follows yolo)");
+  assert.equal(d.progress.activity, "Waiting for you");
+  assert.equal(d.progress.percent, 35);
+  assert.equal(d.progress.reported_at, "2026-10-04T08:00:00Z");
+  assert.match(d.screen, /screen of w1Z:p1/);
+  assert.deepEqual(d.jump.map((j) => j.command), [
+    "herdr agent focus w1Z:p1",
+    "herdr tab focus w1Z:t1",
+    `${join(stub, "herdr-projects")} open alpha`,
+  ]);
+
+  // 33: newest report first, sanitized.
+  assert.deepEqual(d.reports.map((r) => [r.id, r.title, r.time]), [
+    ["t-0002", "Needs approval", "2026-10-04T10:00:00Z"],
+    ["t-0003", "Widget shipped", "2026-10-02T10:00:00Z"],
+  ]);
+  assert.equal(d.reports[0].state, "blocked");
+  assert.doesNotMatch(d.reports[0].html, /<script|javascript:/i);
+
+  const g = await getJSON("/api/project/gamma");
+  assert.equal(g.screen, "");
+  assert.equal(g.progress, null);
+  assert.equal(g.safety, "", "safety show failing leaves it blank");
+  assert.deepEqual(g.jump.map((j) => j.label), ["Open the project coordinator"]);
+
+  assert.equal((await fetch(base + "/api/project/nope")).status, 404);
+  assert.equal((await fetch(base + "/api/project/-x")).status, 400);
+});
+
+test("coordinator screen stream: live pane, and none for an unidentified one", async () => {
+  // 23, 27
+  const first = async (path) => {
+    const ctrl = new AbortController();
+    const r = await fetch(base + path, { signal: ctrl.signal });
+    assert.equal(r.headers.get("content-type"), "text/event-stream");
+    const reader = r.body.getReader();
+    let buf = "";
+    while (!buf.includes("\n\n")) buf += new TextDecoder().decode((await reader.read()).value);
+    ctrl.abort();
+    return JSON.parse(buf.match(/^event: screen\ndata: (.*)\n/)[1]);
+  };
+  const a = await first("/api/project/alpha/screen");
+  assert.match(a.screen, /screen of w1Z:p1/);
+  assert.equal(a.live_status, "done");
+  assert.equal(a.pane_alive, true);
+  const g = await first("/api/project/gamma/screen");
+  assert.deepEqual(g, { screen: "", live_status: "", pane_alive: false });
+  assert.equal((await fetch(base + "/api/project/nope/screen")).status, 404);
+});
+
+test("page: hub opens the coordinator panel with chat, threads, tasks and memory", async () => {
+  // 22, 24, 26, 27, 28, 29, 30
+  const hp = `herdr-projects --root ${rootDir}`;
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(base + "/");
+  await page.waitForSelector("svg g.node.hub");
+
+  // 24: coordinators in the strip, in their severity group.
+  await page.waitForSelector('#needs .group[data-state="blocked"] .chip.coord[data-key="hub:beta"]');
+  await page.waitForSelector('#needs .group[data-state="waiting"] .chip.coord[data-key="hub:alpha"]');
+  assert.equal(await page.locator('#needs .chip[data-key="hub:gamma"]').count(), 0);
+
+  // 22: clicking the hub opens its panel (and does not filter the graph).
+  await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:alpha"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await page.waitForSelector("#panel.open");
+  assert.equal(await page.locator("#panel h2.title").innerText(), "Alpha Project");
+  assert.equal(await page.locator("svg g.node.thread").count(), 10, "no filter applied");
+  assert.equal(await page.locator("svg g.node.hub.selected").count(), 1);
+  await page.waitForSelector("#p-chat .screen:not(:empty)");
+  assert.match(await page.locator("#p-chat .screen").innerText(), /screen of w1Z:p1/);
+  assert.equal(await page.evaluate(() => window.__pwned), undefined);
+  const head = await page.locator("#p-head").innerText();
+  assert.match(head, /Waiting on you/);
+  await waitFor(async () => /Waiting for you/.test(await page.locator("#p-head").innerText()), 3000);
+  const meta = await page.locator("#p-meta").innerText();
+  for (const want of [/alpha/, /Ship the alpha thing/, /active/, /claude · pane w1Z:p1/, /done/, /codex-high/, /\b4\b/, /yolo on/, /Inbox\s+2/]) assert.match(meta, want);
+  // Viewer's local time, like the thread panel.
+  const local = await page.evaluate(() => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date("2026-10-03T09:00:00Z")));
+  assert.ok(meta.includes(local), `${local} in ${meta}`);
+  await page.waitForSelector("#p-tasks strong");
+  assert.equal(await page.locator("#p-tasks script").count(), 0);
+  assert.equal(await page.locator("#p-memory").evaluate((d) => d.tagName === "DETAILS" && !d.open), true, "memory collapsed");
+  assert.match(await page.locator("#p-memory").innerText(), /memory index/i);
+  assert.match(await page.locator("#p-jump").innerText(), /herdr agent focus w1Z:p1/);
+  // 29: send only, no key buttons.
+  assert.equal(await page.locator("#p-chat .quick").count(), 0);
+  assert.match(await page.locator("#p-chat .note").innerText(), /only send/i);
+  // Open threads: 6 not resolved.
+  assert.equal(await page.locator("#p-threads li").count(), 6);
+  await page.screenshot({ path: join(artifacts, "coordinator.png") });
+
+  // 28: send through stdin; then the screen stream reads fast.
+  let m = mark();
+  const evil = "status? $(id) `x`; ok";
+  await page.fill("#coord-input", evil);
+  await page.keyboard.press("Control+Enter");
+  await waitFor(() => since(m).includes(`${hp} coordinator prompt alpha --text-file -`), 4000);
+  assert.deepEqual(since(m), [`${hp} coordinator prompt alpha --text-file -`, `stdin: ${evil}`]);
+  await page.waitForSelector("#chat-log .msg.ok");
+  assert.equal(await page.locator("#coord-input").inputValue(), "");
+  const reads = () => logLines().filter((l) => l === "herdr pane read w1Z:p1 --source recent --lines 40").length;
+  const r0 = reads();
+  await page.waitForTimeout(2500);
+  assert.ok(reads() - r0 >= 2, `fast refresh after send: ${reads() - r0} reads in 2.5s`);
+
+  // 33: thread reports, newest first, collapsed, click-through.
+  assert.deepEqual(await page.locator("#p-reports details").evaluateAll((ds) => ds.map((d) => [d.dataset.key, d.open])), [["alpha/t-0002", false], ["alpha/t-0003", false]]);
+  const sum = await page.locator("#p-reports details").first().locator("summary").innerText();
+  assert.match(sum, /Needs approval/);
+  assert.match(sum, /t-0002/);
+  await page.locator("#p-reports details").nth(1).locator("summary").click();
+  await page.waitForSelector("#p-reports details[open] li code");
+  await page.locator("#p-reports details").nth(1).locator("button.open-thread").click();
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Widget shipped", 3000);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:alpha"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Alpha Project", 3000);
+
+  // 30: an open thread opens its panel.
+  await page.locator('#p-threads li[data-key="alpha/t-0002"] button').click();
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Needs approval", 3000);
+
+  // 28: beta is blocked: the refusal is shown with the note, nothing resent.
+  await page.locator('#needs .chip[data-key="hub:beta"]').click();
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Beta", 3000);
+  await page.waitForSelector("#p-chat .note.warn");
+  m = mark();
+  await page.fill("#coord-input", "hello");
+  await page.click("#coord-send");
+  await page.waitForSelector("#chat-log .msg.err");
+  assert.match(await page.locator("#chat-log .msg.err").innerText(), /can take a prompt/);
+  await page.waitForTimeout(800);
+  assert.equal(since(m).filter((l) => l.includes("coordinator prompt")).length, 1);
+  assert.equal(await page.locator("#coord-input").inputValue(), "hello", "kept for a retry");
+
+  // 23: gamma has no identifiable pane.
+  await page.selectOption("#f-project", "");
+  await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:gamma"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Gamma (broken)", 3000);
+  await page.waitForSelector("#p-chat .no-pane");
+  assert.match(await page.locator("#p-chat").innerText(), /no live pane/i);
+  assert.match(await page.locator("#p-meta").innerText(), /paused/);
+  assert.equal(await page.locator("#p-head").innerText(), "No live pane", "no stray text when there is no activity");
+
+  // 27: closed panel, no coordinator screen reads.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+  const c0 = reads();
+  await page.waitForTimeout(4000);
+  assert.equal(reads(), c0, "no coordinator screen reads while closed");
+
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("live screens show the newest line and stay pinned to the bottom", async () => {
+  // 32, 34
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(base + "/");
+  await page.waitForSelector('#needs .chip[data-key="alpha/t-0002"]');
+  const box = () => page.locator("#p-chat .screen").evaluate((s) => {
+    const r = s.getBoundingClientRect();
+    return { last: s.textContent.split("\n").pop(), pinned: s.scrollTop + s.clientHeight >= s.scrollHeight - 2, top: s.scrollTop, n: +s.dataset.n, inView: r.bottom <= innerHeight + 1 };
+  });
+  for (const [open, pane] of [["alpha/t-0002", "w1B:p1"], ["hub:alpha", "w1Z:p1"]]) {
+    await page.locator(`#needs .chip[data-key="${open}"]`).click();
+    await page.waitForSelector("#p-chat .screen:not(:empty)");
+    let b = await box();
+    assert.equal(b.last, `LAST LINE of ${pane}`);
+    assert.equal(b.pinned, true, `${open}: pinned to the newest line`);
+    // New output keeps it pinned.
+    await waitFor(async () => (await box()).n > b.n, 5000);
+    assert.equal((await box()).pinned, true, `${open}: still pinned after an update`);
+    // A reader who scrolled up is left there...
+    await page.locator("#p-chat .screen").evaluate((s) => (s.scrollTop = 0));
+    b = await box();
+    await waitFor(async () => (await box()).n > b.n, 5000);
+    assert.equal((await box()).top, 0, `${open}: not yanked down`);
+    // ...until they scroll back to the bottom.
+    await page.locator("#p-chat .screen").evaluate((s) => (s.scrollTop = s.scrollHeight));
+    b = await box();
+    await waitFor(async () => (await box()).n > b.n, 5000);
+    assert.equal((await box()).pinned, true);
+    await page.locator("#p-chat .screen").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(artifacts, `screen-bottom-${open.replace(/[:/]/g, "-")}.png`) });
+  }
+
+  // 34: the thread report sits collapsed below the chat and Next.
+  await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+  await page.waitForSelector("#p-report-box summary .preview:not(:empty)");
+  const order = await page.evaluate(() => {
+    const ids = ["p-chat", "p-next", "p-report-box"].map((id) => document.getElementById(id));
+    return ids.every((e, i) => i === 0 || (ids[i - 1].compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING));
+  });
+  assert.equal(order, true, "chat, then Next, then the report");
+  assert.equal(await page.locator("#p-report-box").evaluate((d) => d.tagName === "DETAILS" && !d.open), true);
+  assert.match(await page.locator("#p-report-box summary .preview").innerText(), /Blocked on a permission prompt/);
+  await page.locator("#p-report-box summary").click();
+  assert.match(await page.locator("#p-report").innerText(), /Blocked on a permission prompt/);
+  await page.close();
+});
+
+test("phone: coordinator panel fits", async () => {
+  // 31
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await page.goto(base + "/");
+  await page.waitForSelector('#needs .chip[data-key="hub:alpha"]');
+  await page.locator('#needs .chip[data-key="hub:alpha"]').tap();
+  await page.waitForSelector("#panel.open #p-chat .screen:not(:empty)");
+  await page.waitForTimeout(400);
+  const box = await page.locator("#panel").boundingBox();
+  assert.ok(box.width <= 390 && box.y > 100, "bottom sheet like the thread panel");
+  await page.screenshot({ path: join(artifacts, "phone-coordinator.png") });
+  await page.locator("#p-threads").scrollIntoViewIfNeeded();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth || document.querySelector("#panel").scrollWidth > document.querySelector("#panel").clientWidth);
+  assert.equal(overflow, false);
+  await page.screenshot({ path: join(artifacts, "phone-coordinator-threads.png") });
+  await page.close();
+});
+
 test("writes are rate limited", async () => {
   // 19: a second instance with a tiny bucket.
   const port = await freePort();
@@ -556,7 +852,7 @@ test("only allow-listed commands were run", () => {
     /^herdr-projects --root \S+ list$/,
     /^herdr-projects --root \S+ thread list \S+ --json$/,
     /^herdr pane list$/,
-    /^herdr pane read \S+ --source visible --lines \d+$/,
+    /^herdr pane read \S+ --source recent --lines \d+$/,
     /^gh pr list --repo \S+ --state all --limit \d+ --json number,url,state,headRefName$/,
     // Writes, through herdr-projects only:
     /^herdr-projects --root \S+ thread prompt [a-z]+ t-\d{4} --text-file -$/,
@@ -564,11 +860,15 @@ test("only allow-listed commands were run", () => {
     /^herdr-projects --root \S+ thread (ack|resolve) [a-z]+ t-\d{4}$/,
     /^herdr-projects --root \S+ thread next [a-z]+ t-\d{4} --line \d+$/,
     /^herdr-projects --root \S+ coordinator prompt [a-z]+ --text-file -$/,
+    /^herdr-projects --root \S+ progress --pane w\w+:p\w+$/,
+    /^herdr-projects --root \S+ safety show [a-z]+$/,
     /^stdin: /,
   ];
   const calls = logLines();
   assert.ok(calls.length > 3);
   for (const c of calls) assert.ok(allowed.some((re) => re.test(c)), `unexpected command: ${c}`);
   assert.ok(!calls.some((c) => /^herdr (agent|pane send)/.test(c)), "no raw herdr writes");
+  // 23: gamma's stale or foreign panes are never read as its coordinator.
+  assert.ok(!calls.some((c) => / (w3Z|w3Y):p1/.test(c)), "no guessed coordinator pane");
   writeFileSync(join(artifacts, "calls.log"), calls.join("\n") + "\n");
 });

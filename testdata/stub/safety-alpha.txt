@@ -1,0 +1,10 @@
+Safety settings for alpha (yours; no agent may change them):
+  yolo                     on   [all projects]
+  start_threads            auto (yolo)   [built-in]
+  trust_screens            coordinator (follows yolo)   [built-in]
+  coordinator_agent_args   (none)   [built-in]
+  thread_agent_args        (none)   [built-in]
+  routine_commands         off   [built-in]
+
+Yolo starts threads without asking.
+  thread_profiles          every profile

@@ -116,7 +116,8 @@ func (a *Actions) register(mux *http.ServeMux) {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		})
 	}
-	mux.HandleFunc("GET /api/thread/{slug}/{id}/screen", a.screenEvents)
+	mux.HandleFunc("GET /api/thread/{slug}/{id}/screen", a.threadScreen)
+	mux.HandleFunc("GET /api/project/{slug}/screen", a.coordScreen)
 }
 
 // guard applies the checks every write shares: read-only mode, a JSON body
@@ -347,9 +348,13 @@ func (a *Actions) coordinator(r *http.Request, body []byte) (any, error) {
 		return nil, err
 	}
 	out, err := a.hp(time.Minute, text, "coordinator", "prompt", slug, "--text-file", "-")
+	if co, ok := a.col.coordPane(slug); ok {
+		a.col.Burst(co.PaneID)
+	}
 	if err != nil {
 		return nil, err
 	}
+	a.col.Kick()
 	return actionResult{OK: true, Output: out}, nil
 }
 
@@ -406,9 +411,11 @@ type screenEvent struct {
 	PaneAlive  bool   `json:"pane_alive"`
 }
 
-// screenEvents streams a thread's pane screen over SSE: read every few
-// seconds while someone watches, faster for a short burst after a write.
-func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request) {
+// screenTarget says which pane a screen stream reads right now: its id,
+// whether the pane is alive, and whether it may be read.
+type screenTarget func() (pane string, alive, readable bool)
+
+func (a *Actions) threadScreen(w http.ResponseWriter, r *http.Request) {
 	slug, id := r.PathValue("slug"), r.PathValue("id")
 	if !slugRe.MatchString(slug) || !idRe.MatchString(id) {
 		http.Error(w, "bad thread", http.StatusBadRequest)
@@ -418,6 +425,33 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	a.screenEvents(w, r, func() (string, bool, bool) {
+		t, alive, ok := a.col.raw(slug, id)
+		return t.PaneID, alive, ok && alive && t.Status != "resolved" && t.PaneID != ""
+	})
+}
+
+// coordScreen streams the coordinator's pane, re-identified on every read so
+// a restarted coordinator is followed and a vanished one is never guessed.
+func (a *Actions) coordScreen(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if !slugRe.MatchString(slug) {
+		http.Error(w, "bad project", http.StatusBadRequest)
+		return
+	}
+	if !a.col.hasProject(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	a.screenEvents(w, r, func() (string, bool, bool) {
+		co, ok := a.col.coordPane(slug)
+		return co.PaneID, ok, ok
+	})
+}
+
+// screenEvents streams a pane's screen over SSE: read every few seconds
+// while someone watches, faster for a short burst after a write.
+func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target screenTarget) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "no streaming", http.StatusInternalServerError)
@@ -444,9 +478,9 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request) {
 			case <-tick.C:
 			}
 		}
-		t, alive, ok := a.col.raw(slug, id)
+		pane, alive, readable := target()
 		every := 3 * time.Second
-		if a.col.bursting(t.PaneID) {
+		if a.col.bursting(pane) {
 			every = 700 * time.Millisecond
 		}
 		if !first && time.Since(lastRead) < every {
@@ -459,9 +493,9 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		lastRead = time.Now()
 		ev := screenEvent{PaneAlive: alive}
-		if ok && alive && t.Status != "resolved" && t.PaneID != "" {
-			ev.Screen = a.col.Screen(r.Context(), t.PaneID, every-100*time.Millisecond)
-			ev.LiveStatus = a.col.liveStatus(t.PaneID)
+		if readable {
+			ev.Screen = a.col.Screen(r.Context(), pane, every-100*time.Millisecond)
+			ev.LiveStatus = a.col.liveStatus(pane)
 		}
 		b, _ := json.Marshal(ev)
 		if string(b) == string(last) {

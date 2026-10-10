@@ -73,12 +73,58 @@ type RawThread struct {
 
 type Pane struct {
 	PaneID       string `json:"pane_id"`
+	TabID        string `json:"tab_id"`
 	Agent        string `json:"agent"`
 	AgentStatus  string `json:"agent_status"`
+	Cwd          string `json:"cwd"`
 	AgentSession *struct {
 		Agent string `json:"agent"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
+	// herdr-projects' sidebar tokens; hp_sub is its state line ("needs you · ~40%").
+	Tokens map[string]any `json:"tokens"`
+}
+
+func (p Pane) session() string {
+	if p.AgentSession == nil {
+		return ""
+	}
+	return p.AgentSession.Value
+}
+
+// liveCoord is one row of `.state/coordinators.json`: the coordinator panes
+// the herdr-projects ticker last saw.
+type liveCoord struct {
+	PaneID         string `json:"pane_id"`
+	TabID          string `json:"tab_id"`
+	Agent          string `json:"agent"`
+	StateChangeSeq uint64 `json:"state_change_seq"`
+	PairSince      string `json:"pair_since"`
+	AgentSession   string `json:"agent_session"`
+}
+
+// coordRecord is `.state/coordinator.json`: the pane `open` last started.
+type coordRecord struct {
+	PaneID       string `json:"pane_id"`
+	TabID        string `json:"tab_id"`
+	Cwd          string `json:"cwd"`
+	Agent        string `json:"agent"`
+	AgentSession string `json:"agent_session"`
+	Updated      string `json:"updated"`
+}
+
+// Coordinator is a project's coordinator as the page sees it. State is
+// blocked, waiting (herdr-projects says it needs you), working, idle, or
+// none when no live pane can be identified.
+type Coordinator struct {
+	PaneID       string `json:"pane_id"`
+	TabID        string `json:"tab_id"`
+	Agent        string `json:"agent"`
+	LiveStatus   string `json:"live_status"`
+	State        string `json:"state"`
+	Activity     string `json:"activity"`
+	LastActivity string `json:"last_activity"`
+	NeedsYou     bool   `json:"needs_you"`
 }
 
 type ghPR struct {
@@ -95,7 +141,10 @@ type Project struct {
 	Status  string         `json:"status"`
 	Summary string         `json:"summary"`
 	Counts  map[string]int `json:"counts"`
+	Inbox   int            `json:"inbox"`
 	Error   string         `json:"error,omitempty"`
+
+	Coordinator Coordinator `json:"coordinator"`
 }
 
 type Thread struct {
@@ -140,6 +189,8 @@ type projectRaw struct {
 	fetched   time.Time
 	hasOpen   bool
 	listError string
+	coords    []liveCoord
+	record    coordRecord
 }
 
 type Collector struct {
@@ -319,6 +370,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 		}
 		p.Slug, p.Status, p.Summary, p.Counts = slug, f[1], summary, counts
 		p.Name, p.Goal = readProjectMeta(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))
+		p.coords, p.record, p.Inbox = readCoordState(filepath.Join(c.cfg.Root, slug))
 		if p.Name == "" {
 			p.Name = slug
 		}
@@ -352,6 +404,87 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 	c.mu.Lock()
 	c.order = order
 	c.mu.Unlock()
+}
+
+// readCoordState reads the coordinator records herdr-projects keeps and
+// counts the open inbox items (inbox/done/ holds handled ones).
+func readCoordState(dir string) (coords []liveCoord, rec coordRecord, inbox int) {
+	if b, err := os.ReadFile(filepath.Join(dir, ".state/coordinators.json")); err == nil {
+		json.Unmarshal(b, &coords)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, ".state/coordinator.json")); err == nil {
+		json.Unmarshal(b, &rec)
+	}
+	ents, _ := os.ReadDir(filepath.Join(dir, "inbox"))
+	for _, e := range ents {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			inbox++
+		}
+	}
+	return
+}
+
+// coordinator identifies a project's live coordinator pane without guessing:
+// a pane the ticker listed that is still in `herdr pane list` with the same
+// session, else the pane `open` recorded if it still runs in the project
+// folder. Called with c.mu held.
+func (c *Collector) coordinator(p *projectRaw) Coordinator {
+	var pane Pane
+	var since, tab string
+	var best *liveCoord
+	for i := range p.coords {
+		lc := &p.coords[i]
+		pn, ok := c.panes[lc.PaneID]
+		if !ok || lc.PaneID == "" || (lc.AgentSession != "" && pn.session() != "" && lc.AgentSession != pn.session()) {
+			continue
+		}
+		if best == nil || lc.StateChangeSeq > best.StateChangeSeq {
+			best, pane = lc, pn
+		}
+	}
+	if best != nil {
+		since, tab = best.PairSince, best.TabID
+	} else if pn, ok := c.panes[p.record.PaneID]; ok && p.record.PaneID != "" && p.record.Cwd != "" && pn.Cwd == p.record.Cwd {
+		pane, since, tab = pn, p.record.Updated, p.record.TabID
+	} else {
+		return Coordinator{State: "none"}
+	}
+	if tab == "" {
+		tab = pane.TabID
+	}
+	sub, _ := pane.Tokens["hp_sub"].(string)
+	co := Coordinator{PaneID: pane.PaneID, TabID: tab, Agent: pane.Agent, LiveStatus: pane.AgentStatus, Activity: sub}
+	switch {
+	case pane.AgentStatus == "blocked":
+		co.State = "blocked"
+	case strings.HasPrefix(sub, "needs you"):
+		co.State = "waiting"
+	case pane.AgentStatus == "working":
+		co.State = "working"
+	default:
+		co.State = "idle"
+	}
+	co.NeedsYou = co.State == "blocked" || co.State == "waiting"
+	last := parseTime(since)
+	if v := c.lastTranscript(pane); v.After(last) {
+		last = v
+	}
+	if !last.IsZero() {
+		co.LastActivity = last.UTC().Format(time.RFC3339)
+	}
+	return co
+}
+
+// coordPane is the live coordinator pane of slug, if one is identified.
+func (c *Collector) coordPane(slug string) (Coordinator, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p := c.projects[slug]
+	if p == nil {
+		return Coordinator{}, false
+	}
+	co := c.coordinator(p)
+	return co, co.PaneID != ""
 }
 
 var nameRe = regexp.MustCompile(`(?m)^name\s*=\s*"((?:[^"\\]|\\.)*)"`)
@@ -531,6 +664,7 @@ func (c *Collector) rebuild() {
 		}
 		pr := p.Project
 		pr.Error = p.listError
+		pr.Coordinator = c.coordinator(p)
 		if p.listError != "" {
 			snap.Errors = append(snap.Errors, p.listError)
 		}
@@ -692,7 +826,9 @@ func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duratio
 		return h.text
 	}
 	c.mu.Unlock()
-	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "visible", "--lines", "40")
+	// "recent", not "visible": visible is the pane's viewport, which misses
+	// the newest lines whenever someone scrolled the pane up in herdr.
+	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", "40")
 	text := stripANSI(string(out))
 	if err != nil {
 		text = ""
