@@ -1,0 +1,64 @@
+/* Voice: dictation mics, the floating voice-nav button, its HUD, help and settings. */
+.voice-tools { display: flex; gap: 6px; }
+.voice-tools .tbtn { min-width: 14px; text-align: center; }
+
+.tbtn.mic { display: inline-flex; align-items: center; justify-content: center; padding: 5px 8px; align-self: stretch; }
+.tbtn.mic .ico, #voice-fab .ico { display: inline-flex; }
+.tbtn.mic svg { width: 16px; height: 16px; }
+.tbtn.mic.recording { background: var(--red); color: var(--bwhite); animation: vpulse 1.2s infinite; }
+.chat-row textarea.dictating { border-color: var(--red); }
+.voice-interim { font-size: 12px; color: var(--byellow); font-style: italic; min-height: 0; overflow-wrap: anywhere; }
+.voice-interim.on { margin-top: 4px; }
+.voice-interim.on:empty::before { content: "● " attr(data-status); color: var(--bred); font-style: normal; }
+@keyframes vpulse { 50% { box-shadow: 0 0 0 5px rgba(239, 47, 39, .25); } }
+
+#voice-fab { position: fixed; left: max(14px, env(safe-area-inset-left)); bottom: max(14px, env(safe-area-inset-bottom)); z-index: 25;
+  width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--g4); background: var(--g2); color: var(--bwhite);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,.5); padding: 0; }
+#voice-fab svg { width: 24px; height: 24px; }
+#voice-fab:hover:not(:disabled), #voice-fab:focus-visible { background: var(--g4); }
+#voice-fab.listening { background: var(--red); border-color: var(--bred); animation: vpulse 1.2s infinite; }
+#voice-fab:disabled { opacity: .4; cursor: not-allowed; }
+
+#voice-hud { position: fixed; left: max(14px, env(safe-area-inset-left)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 60px); z-index: 25;
+  max-width: min(360px, calc(100vw - 28px)); background: var(--black); border: 1px solid var(--g4); border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; box-shadow: 0 3px 12px rgba(0,0,0,.5); }
+#voice-hud[hidden] { display: none; }
+#voice-hud .st { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--bblack); }
+#voice-hud .heard { color: var(--byellow); overflow-wrap: anywhere; }
+#voice-hud .heard:empty, #voice-hud .result:empty { display: none; }
+#voice-hud .result { color: var(--bwhite); overflow-wrap: anywhere; }
+#voice-hud .confirm { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--g3); }
+#voice-hud .confirm .q { color: var(--byellow); font-weight: 600; overflow-wrap: anywhere; }
+#voice-hud .confirm .btns { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+
+#voice-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 12px; }
+#voice-help[hidden], #voice-settings[hidden] { display: none; }
+#voice-help .card { position: relative; background: var(--black); border: 1px solid var(--g4); border-radius: 10px; padding: 16px 18px;
+  max-width: 620px; width: 100%; max-height: 90dvh; overflow-y: auto; }
+#voice-help h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--white); margin: 4px 0 8px; }
+#voice-help table { border-collapse: collapse; width: 100%; margin-bottom: 12px; font-size: 13px; }
+#voice-help td { padding: 3px 8px 3px 0; vertical-align: top; }
+#voice-help td.say { color: var(--byellow); width: 55%; }
+#voice-help kbd { background: var(--g2); border: 1px solid var(--g4); border-radius: 4px; padding: 1px 6px; font: 12px ui-monospace, monospace; white-space: nowrap; }
+#voice-help .close, #voice-settings .close { all: unset; cursor: pointer; font-size: 20px; color: var(--bblack); padding: 0 4px; }
+#voice-help .close { position: absolute; top: 8px; right: 12px; }
+
+#voice-settings { position: fixed; top: 48px; right: 12px; z-index: 40; width: min(360px, calc(100vw - 24px)); background: var(--black);
+  border: 1px solid var(--g4); border-radius: 10px; padding: 10px 14px; box-shadow: 0 6px 20px rgba(0,0,0,.6); font-size: 13px; }
+#voice-settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+#voice-settings .row.head { margin-top: 0; }
+#voice-settings select, #voice-settings input:not([type=checkbox]) { background: var(--g1); color: var(--bwhite); border: 1px solid var(--g3);
+  border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12px; max-width: 170px; }
+#voice-settings .keycap { width: 120px; text-align: center; cursor: pointer; }
+#voice-settings .keycap:focus { outline: none; border-color: var(--bblue); }
+
+@media (max-width: 700px) {
+  #voice-fab { width: 52px; height: 52px; }
+  .voice-tools { margin-left: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #voice-fab.listening, .tbtn.mic.recording { animation: none; }
+}
+/* Keep the stage's error box clear of the floating mic. */
+#errors { margin-left: 64px; }

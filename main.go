@@ -37,7 +37,7 @@ var (
 
 func main() {
 	home, _ := os.UserHomeDir()
-	cfg := Config{}
+	cfg := Config{Voice: voiceConfigFromEnv()}
 	// Flags win over env; env wins over built-in defaults.
 	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
@@ -81,7 +81,7 @@ func main() {
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
-	log.Printf("herdr-dash listening on %s (herdr-projects %s, root %s, read-only %v, memex %q)", *addr, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex)
+	log.Printf("herdr-dash listening on %s (herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v)", *addr, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT())
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -158,6 +158,7 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 	})
 	NewActions(cfg, col).register(mux)
 	NewSearcher(cfg, col).register(mux)
+	NewVoice(cfg.Voice).register(mux)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")
 		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {

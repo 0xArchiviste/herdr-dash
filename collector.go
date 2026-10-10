@@ -36,6 +36,7 @@ type Config struct {
 	Memex         string        // memex binary, "" when transcript search is off
 	MemexTimeout  time.Duration // per memex search
 	MemexPerMin   int           // memex searches a minute (cached queries are free)
+	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.

@@ -142,7 +142,7 @@
   });
   document.addEventListener("click", (e) => { if (!e.target.closest("#search-box")) box.hidden = true; });
 
-  // For voice navigation: dash.search("text", { mode: "content" | "title" }).
+  // For voice navigation (also hd.search): dash.search("text", { mode: "content" | "title" }).
   dash.search = (text, { mode } = {}) => {
     if (mode === "content" || mode === "title") {
       if ((mode === "content") !== dash.contentMode) setMode(mode === "content");
@@ -152,5 +152,6 @@
     if (dash.contentMode) { shown = ""; run(input.value.trim()); }
   };
 
+  if (window.hd) window.hd.search = dash.search; // voice navigation's hook
   setMode(localStorage.getItem("hd-search-mode") === "content", true);
 })();
