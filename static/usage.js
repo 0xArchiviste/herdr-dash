@@ -109,7 +109,7 @@
     }
     if (s.status === "ok" && s.reason) body.push(el("div", { class: "ureason", text: `Live check failed: ${s.reason}` }));
     const stamp = [];
-    if (s.as_of) stamp.push(`data from ${rel(s.as_of)}${s.stale ? " (stale)" : ""}`);
+    if (s.as_of) { const r = rel(s.as_of); stamp.push(`${r === "now" ? "data just now" : `data from ${r}`}${s.stale ? " (stale)" : ""}`); }
     stamp.push(`checked ${clock(s.checked_at)}`);
     body.push(el("div", { class: "umeta", text: stamp.join(" · ") }));
     return el("section", { class: "usec" + (s.id === openID ? " focus" : ""), "data-id": s.id }, ...body);

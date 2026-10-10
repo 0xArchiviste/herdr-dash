@@ -141,6 +141,7 @@ The unit caps CPU at 25% and memory at 256M.
 | `--herdr`, `--gh` | | `herdr`, `gh` |
 | `--claude-dir`, `--codex-dir` | | `~/.claude/projects`, `~/.codex/sessions` |
 | `--poll`, `--threads-every`, `--quiet-every`, `--gh-every` | | `5s`, 3× poll, `5m`, `10m` |
+| `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 
 ## How it works
 
@@ -231,6 +232,35 @@ Server side (env only, it holds a secret; both features are off without it):
 `HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
 The token is only sent to Cloudflare, never to the page.
 
+## Usage
+
+A strip in the header shows what is left on your agent plans: Claude Code's
+5-hour and weekly limits, Codex's rate-limit windows and credits, and the
+opencode provider's balance. Green, amber and red as it runs low; click for
+reset times (in your local time) and when the numbers were last true
+(`static/usage.js`, `usage.go`). Each source is detected on its own and
+left out when its files are absent:
+
+- **Claude**: Claude Code's own cached `/usage` answer in `~/.claude.json`
+  while it is fresh, else the endpoint Claude Code calls, with the OAuth
+  token from `~/.claude/.credentials.json`. The token is only read: never
+  refreshed or written, and not used once expired. When the call fails the
+  last cached answer is shown, marked stale.
+- **Codex**: the last `rate_limits` event in the newest session file under
+  `~/.codex/sessions`. No network.
+- **opencode**: the configured model's provider. OpenRouter's `/credits`
+  when that is the provider; "unavailable" for providers without a balance
+  API.
+
+Nothing is read until a page asks; local files are re-read at most every
+`--usage-every` (`2m`), providers called at most every `--usage-net-every`
+(`5m`, 3 s timeout), one read per source at a time. Credentials go only to
+the provider's own endpoint, never to the page or the log. Paths:
+`--claude-home`, `--claude-state`, `--codex-dir`, `--opencode-config`,
+`--opencode-data` (each with a `HERDR_DASH_*` env), defaulting to
+`$CLAUDE_CONFIG_DIR` / `~/.claude`, `~/.codex/sessions` and opencode's XDG
+directories.
+
 ## FAQ
 
 **Is there authentication?**
@@ -272,7 +302,10 @@ that the demo names nothing real (no home paths, emails, IPs, real orgs or
 real project names). `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
-token never reaches the page. Screenshots and the API snapshot land in
+token never reaches the page. `e2e/usage.test.mjs` runs the usage strip
+against fixture credentials and sessions and a stub provider server: the
+request shape, caching, timeouts, disabled and unavailable states, and that
+no credential reaches the page, the API or the log. Screenshots and the API snapshot land in
 `e2e/artifacts/`; `node e2e/screenshot.mjs URL DIR` screenshots a running
 instance.
 
