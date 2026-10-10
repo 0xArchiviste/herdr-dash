@@ -19,3 +19,4 @@ case "$q" in
   *zephyr*) sed "s#@TD@#$(dirname "$D")#g" "$D/memex-hits.jsonl" ;;
 esac
 done_
+exit 0

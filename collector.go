@@ -33,6 +33,9 @@ type Config struct {
 	ThreadsEvery  time.Duration // herdr-projects thread list, projects with open threads
 	QuietEvery    time.Duration // projects whose threads are all resolved
 	GHEvery       time.Duration
+	Memex         string        // memex binary, "" when transcript search is off
+	MemexTimeout  time.Duration // per memex search
+	MemexPerMin   int           // memex searches a minute (cached queries are free)
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.
@@ -69,6 +72,8 @@ type RawThread struct {
 	AckedReportHash  string   `json:"acked_report_hash"`
 	ResolvedReason   string   `json:"resolved_reason"`
 	WorktreePath     string   `json:"worktree_path"`
+	Cwd              string   `json:"cwd"`
+	Repo             string   `json:"repo"`
 }
 
 type Pane struct {

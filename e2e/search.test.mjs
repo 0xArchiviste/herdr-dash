@@ -116,7 +116,8 @@ const keysOf = (res) => [...new Set(res.hits.map((h) => h.key))].sort();
 const hit = (res, key, source) => res.hits.find((h) => h.key === key && h.source === source);
 
 before(async () => {
-  ({ url: base, s: server } = await boot(await freePort()));
+  // A roomy memex bucket: this file runs many distinct searches.
+  ({ url: base, s: server } = await boot(await freePort(), ["--memex-per-min", "600"]));
   browser = await chromium.launch();
 });
 
@@ -277,7 +278,7 @@ test("page: content mode searches on debounce or Enter and renders results", asy
 
   // S10: rows say thread, source and time; snippets are text with marks.
   const rows = page.locator("#search-results .hit");
-  assert.ok((await rows.count()) >= 8);
+  assert.equal(await rows.count(), 7, "one row per thread or project");
   const t1 = page.locator('#search-results .hit[data-key="alpha/t-0001"]').first();
   assert.match(await t1.innerText(), /Widget pipeline/);
   assert.match(await page.locator("#search-results").innerText(), /transcript/i);

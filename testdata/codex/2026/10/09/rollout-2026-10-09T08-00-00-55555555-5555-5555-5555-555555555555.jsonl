@@ -1,2 +1,0 @@
-{"timestamp":"2026-10-09T08:00:00Z","type":"session_meta","payload":{"id":"55555555-5555-5555-5555-555555555555","cwd":"/fixture/wt/beta-t-0002","originator":"codex_cli"}}
-{"timestamp":"2026-10-09T08:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"zephyr"}]}}

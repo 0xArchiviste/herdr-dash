@@ -104,7 +104,7 @@ func fail(status int, format string, a ...any) error {
 
 func (a *Actions) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"read_only": a.cfg.ReadOnly, "auth": a.cfg.Auth})
+		writeJSON(w, map[string]any{"read_only": a.cfg.ReadOnly, "auth": a.cfg.Auth, "memex": a.cfg.Memex != ""})
 	})
 	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guard(a.threadAction))
 	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guard(a.coordinator))
