@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -119,6 +120,8 @@ func (a *Actions) register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /api/thread/{slug}/{id}/screen", a.threadScreen)
 	mux.HandleFunc("GET /api/project/{slug}/screen", a.coordScreen)
+	mux.HandleFunc("GET /api/thread/{slug}/{id}/history", a.threadHistory)
+	mux.HandleFunc("GET /api/project/{slug}/history", a.coordHistory)
 }
 
 // guard applies the checks every write shares: read-only mode, a JSON body
@@ -422,38 +425,85 @@ type screenEvent struct {
 // whether the pane is alive, and whether it may be read.
 type screenTarget func() (pane string, alive, readable bool)
 
-func (a *Actions) threadScreen(w http.ResponseWriter, r *http.Request) {
+// threadTarget resolves a thread's pane for its screen and history, or
+// answers the request with an error.
+func (a *Actions) threadTarget(w http.ResponseWriter, r *http.Request) (screenTarget, bool) {
 	slug, id := r.PathValue("slug"), r.PathValue("id")
 	if !slugRe.MatchString(slug) || !idRe.MatchString(id) {
 		http.Error(w, "bad thread", http.StatusBadRequest)
-		return
+		return nil, false
 	}
 	if _, _, ok := a.col.raw(slug, id); !ok {
 		http.NotFound(w, r)
-		return
+		return nil, false
 	}
-	a.screenEvents(w, r, func() (string, bool, bool) {
+	return func() (string, bool, bool) {
 		t, alive, ok := a.col.raw(slug, id)
 		return t.PaneID, alive, ok && alive && t.Status != "resolved" && t.PaneID != ""
-	})
+	}, true
 }
 
-// coordScreen streams the coordinator's pane, re-identified on every read so
-// a restarted coordinator is followed and a vanished one is never guessed.
-func (a *Actions) coordScreen(w http.ResponseWriter, r *http.Request) {
+// coordTarget re-identifies the coordinator's pane on every read, so a
+// restarted coordinator is followed and a vanished one is never guessed.
+func (a *Actions) coordTarget(w http.ResponseWriter, r *http.Request) (screenTarget, bool) {
 	slug := r.PathValue("slug")
 	if !slugRe.MatchString(slug) {
 		http.Error(w, "bad project", http.StatusBadRequest)
-		return
+		return nil, false
 	}
 	if !a.col.hasProject(slug) {
 		http.NotFound(w, r)
-		return
+		return nil, false
 	}
-	a.screenEvents(w, r, func() (string, bool, bool) {
+	return func() (string, bool, bool) {
 		co, ok := a.col.coordPane(slug)
 		return co.PaneID, ok, ok
-	})
+	}, true
+}
+
+func (a *Actions) threadScreen(w http.ResponseWriter, r *http.Request) {
+	if target, ok := a.threadTarget(w, r); ok {
+		a.screenEvents(w, r, target)
+	}
+}
+
+func (a *Actions) coordScreen(w http.ResponseWriter, r *http.Request) {
+	if target, ok := a.coordTarget(w, r); ok {
+		a.screenEvents(w, r, target)
+	}
+}
+
+func (a *Actions) threadHistory(w http.ResponseWriter, r *http.Request) {
+	if target, ok := a.threadTarget(w, r); ok {
+		a.history(w, r, target)
+	}
+}
+
+func (a *Actions) coordHistory(w http.ResponseWriter, r *http.Request) {
+	if target, ok := a.coordTarget(w, r); ok {
+		a.history(w, r, target)
+	}
+}
+
+var linesRe = regexp.MustCompile(`^[0-9]{1,7}$`)
+
+// history answers a reader scrolling up in a screen box: the pane's last
+// ?lines= lines, capped, from a short per-pane cache. Asked for on demand
+// only; the page never polls it.
+func (a *Actions) history(w http.ResponseWriter, r *http.Request, target screenTarget) {
+	q := r.URL.Query().Get("lines")
+	if !linesRe.MatchString(q) {
+		http.Error(w, "lines: a number of lines", http.StatusBadRequest)
+		return
+	}
+	n, _ := strconv.Atoi(q)
+	n = max(liveLines, min(n, maxHistory))
+	pane, alive, readable := target()
+	ev := map[string]any{"screen": "", "lines": n, "pane_alive": alive}
+	if readable {
+		ev["screen"] = a.col.History(r.Context(), pane, n)
+	}
+	writeJSON(w, ev)
 }
 
 // screenEvents streams a pane's screen over SSE: read every few seconds
