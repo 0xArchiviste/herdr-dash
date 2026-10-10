@@ -5,9 +5,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -37,12 +40,14 @@ var (
 
 func main() {
 	home, _ := os.UserHomeDir()
-	cfg := Config{Voice: voiceConfigFromEnv()}
+	// HERDR_DASH_BUILD_ID stands in for a new build in tests.
+	cfg := Config{Voice: voiceConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
 	// Flags win over env; env wins over built-in defaults.
 	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
 	flag.StringVar(&cfg.HerdrProjects, "herdr-projects", env("HERDR_DASH_HERDR_PROJECTS", ""), "herdr-projects binary, $HERDR_DASH_HERDR_PROJECTS (default: on PATH, else the installed herdr plugin)")
 	flag.StringVar(&cfg.Auth, "auth", env("HERDR_DASH_AUTH", "none"), "auth mode, $HERDR_DASH_AUTH; only \"none\" (trusted network) exists yet")
+	flag.StringVar(&cfg.PublicURL, "public-url", env("HERDR_DASH_PUBLIC_URL", ""), "HTTPS address of this dashboard (e.g. a tailscale serve URL), $HERDR_DASH_PUBLIC_URL; remote plain-http page loads redirect there, since browsers only allow the microphone over HTTPS")
 	flag.BoolVar(&cfg.ReadOnly, "read-only", env("HERDR_DASH_READ_ONLY", "") != "", "refuse every write action, $HERDR_DASH_READ_ONLY")
 	flag.IntVar(&cfg.WriteBurst, "write-burst", 10, "write actions allowed in a burst")
 	flag.IntVar(&cfg.WritePerMin, "write-per-min", 30, "write actions refilled per minute")
@@ -70,6 +75,11 @@ func main() {
 	if cfg.Auth != "none" {
 		log.Fatalf("--auth %q is not implemented; only \"none\" is (the network is trusted)", cfg.Auth)
 	}
+	pu, err := parsePublicURL(cfg.PublicURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg.PublicURL = pu
 	if cfg.ThreadsEvery == 0 {
 		cfg.ThreadsEvery = max(3*cfg.Poll, 3*time.Second)
 	}
@@ -79,17 +89,32 @@ func main() {
 	col := NewCollector(cfg)
 	go col.Run(ctx)
 
-	srv := &http.Server{Addr: *addr, Handler: newMux(col, cfg), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg)), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
-	log.Printf("herdr-dash listening on %s (herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v)", *addr, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT())
+	log.Printf("herdr-dash listening on %s (public %q, herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v)", *addr, cfg.PublicURL, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT())
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// buildID is a short hash of the embedded frontend: it changes exactly when
+// an install would give open pages new code.
+func buildID() string {
+	h := sha256.New()
+	fs.WalkDir(staticFS, "static", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			b, _ := staticFS.ReadFile(p)
+			fmt.Fprintf(h, "%s %d\n", p, len(b))
+			h.Write(b)
+		}
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 func env(key, def string) string {

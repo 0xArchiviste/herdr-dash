@@ -82,6 +82,7 @@ ol.next li .tbtn { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
 #dlg menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 16px 0 0; }
 #toasts { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 30; max-width: min(380px, 92vw); }
 .toast { background: var(--g2); border-left: 3px solid var(--bgreen); padding: 7px 11px; border-radius: 6px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+.toast.update { border-left-color: var(--bblue); }
 .toast.err { border-left-color: var(--red); color: var(--bred); background: #2a0f0d; }
 #needs:empty::after { content: "Nothing. Enjoy it."; color: var(--bblack); font-size: 13px; }
 .chip { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; padding: 4px 11px 4px 8px;

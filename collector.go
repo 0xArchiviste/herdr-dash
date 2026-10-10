@@ -39,6 +39,8 @@ type Config struct {
 	MemexPerMin   int           // memex searches a minute (cached queries are free)
 	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
 	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
+	PublicURL     string        // optional https://host[:port] that remote plain-http page loads go to
+	Build         string        // id of the embedded frontend; open pages reload when it changes
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.
@@ -184,6 +186,7 @@ type Thread struct {
 }
 
 type Snapshot struct {
+	Build       string    `json:"build"`
 	GeneratedAt string    `json:"generated_at"`
 	Projects    []Project `json:"projects"`
 	Threads     []Thread  `json:"threads"`
@@ -666,7 +669,7 @@ func parseTime(s string) time.Time {
 
 func (c *Collector) rebuild() {
 	c.mu.Lock()
-	snap := Snapshot{PRsChecked: c.prsChecked, Projects: []Project{}, Threads: []Thread{}, Errors: []string{}}
+	snap := Snapshot{Build: c.cfg.Build, PRsChecked: c.prsChecked, Projects: []Project{}, Threads: []Thread{}, Errors: []string{}}
 	if c.panesErr != "" {
 		snap.Errors = append(snap.Errors, c.panesErr)
 	}
@@ -754,7 +757,9 @@ func (c *Collector) rebuild() {
 func (c *Collector) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.snap
+	s := c.snap
+	s.Build = c.cfg.Build // also before the first refresh
+	return s
 }
 
 func (c *Collector) Subscribe() chan []byte {

@@ -139,6 +139,7 @@ The unit caps CPU at 25% and memory at 256M.
 | `--herdr-projects` | `HERDR_DASH_HERDR_PROJECTS` | on `PATH`, else the herdr plugin build under `~/.config/herdr/plugins/` |
 | `--read-only` | `HERDR_DASH_READ_ONLY` | off: refuses every write when on |
 | `--auth` | `HERDR_DASH_AUTH` | `none` (the only mode so far) |
+| `--public-url` | `HERDR_DASH_PUBLIC_URL` | none; an `https://host[:port]` in front of this server, see Voice |
 | `--write-burst`, `--write-per-min` | | `10`, `30` |
 | `--herdr`, `--gh` | | `herdr`, `gh` |
 | `--claude-dir`, `--codex-dir` | | `~/.claude/projects`, `~/.codex/sessions` |
@@ -175,6 +176,10 @@ The unit caps CPU at 25% and memory at 256M.
 | `gh pr list --repo R --state all` | PRs herdr-projects has not recorded yet | 10m, only repos with such threads |
 | `threads/t-NNNN{.task,,.next}.md`, `PROJECT.md`, `TASKS.md`, `MEMORY.md` | content search | on search only (stat, re-read when the mtime changed) |
 | `memex search --non-interactive --mode lexical …` (opt-in) | content search in transcripts | on search only |
+
+The state carries a build id (a hash of the embedded frontend). After
+`make install`, open pages see it change when the stream reconnects, show
+"Updated — reload", and reload by themselves once nothing is being typed.
 
 State colors follow herdr-projects' own grouping (`group_token`), split into
 blocked vs waiting by the live pane status.
@@ -232,6 +237,11 @@ the keys (stored per browser).
   (`@cf/openai/whisper-large-v3-turbo`).
 - The microphone needs HTTPS (or localhost). On a tailnet, e.g.
   `tailscale serve --bg --https=8793 http://127.0.0.1:8791`.
+  Set `--public-url https://<machine>.<tailnet>.ts.net:8793` and plain-http
+  page loads from other machines are redirected there (302, path and query
+  kept); requests from the proxy itself (loopback, or `X-Forwarded-Proto:
+  https`) and all API, stream and asset requests are not, so open tabs keep
+  working, and their voice buttons link to the secure version.
 
 Server side (env only, it holds a secret; both features are off without it):
 `CLOUDFLARE_API_TOKEN` (Workers AI permission), `CLOUDFLARE_ACCOUNT_ID`,

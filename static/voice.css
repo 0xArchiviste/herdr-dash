@@ -12,7 +12,7 @@
 .voice-interim.on:empty::before { content: "● " attr(data-status); color: var(--bred); font-style: normal; }
 @keyframes vpulse { 50% { box-shadow: 0 0 0 5px rgba(239, 47, 39, .25); } }
 
-#voice-fab { position: fixed; left: max(14px, env(safe-area-inset-left)); bottom: max(14px, env(safe-area-inset-bottom)); z-index: 25;
+#voice-fab { position: fixed; left: calc(14px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 25;
   width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--g4); background: var(--g2); color: var(--bwhite);
   display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,.5); padding: 0; }
 #voice-fab svg { width: 24px; height: 24px; }
@@ -20,7 +20,7 @@
 #voice-fab.listening { background: var(--red); border-color: var(--bred); animation: vpulse 1.2s infinite; }
 #voice-fab:disabled { opacity: .4; cursor: not-allowed; }
 
-#voice-hud { position: fixed; left: max(14px, env(safe-area-inset-left)); bottom: calc(max(14px, env(safe-area-inset-bottom)) + 60px); z-index: 25;
+#voice-hud { position: fixed; left: calc(14px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom) + 60px); z-index: 25;
   max-width: min(360px, calc(100vw - 28px)); background: var(--black); border: 1px solid var(--g4); border-radius: 8px; padding: 8px 10px;
   font-size: 13px; box-shadow: 0 3px 12px rgba(0,0,0,.5); }
 #voice-hud[hidden] { display: none; }
@@ -30,6 +30,8 @@
 #voice-hud .result { color: var(--bwhite); overflow-wrap: anywhere; }
 #voice-hud .confirm { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--g3); }
 #voice-hud .confirm .q { color: var(--byellow); font-weight: 600; overflow-wrap: anywhere; }
+#voice-hud a.secure { display: inline-block; margin-top: 6px; text-decoration: none; }
+#voice-hud a.secure[hidden] { display: none; }
 #voice-hud .confirm .btns { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 
 #voice-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 12px; }
@@ -56,6 +58,12 @@
 @media (max-width: 700px) {
   #voice-fab { width: 52px; height: 52px; }
   .voice-tools { margin-left: auto; }
+  /* Open sheet: the mic sits in its header row, left of the close button,
+     and the HUD moves to the top, above the sheet. */
+  #panel > #voice-fab { position: absolute; left: auto; right: 52px; top: 8px; bottom: auto; z-index: 1; width: 38px; height: 38px; box-shadow: none; }
+  #panel > #voice-fab svg { width: 18px; height: 18px; }
+  body.fab-in-sheet #panel h2.title, body.fab-in-sheet #panel .proj:first-child { margin-right: 96px; }
+  body.fab-in-sheet #voice-hud { top: calc(8px + env(safe-area-inset-top)); bottom: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   #voice-fab.listening, .tbtn.mic.recording { animation: none; }
