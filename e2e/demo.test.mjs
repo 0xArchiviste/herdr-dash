@@ -14,6 +14,16 @@
 //  5. A blocked thread has no permission prompt on screen and no quick
 //     replies, or a coordinator panel is empty.
 //  6. A write in the demo reaches anything but the demo stubs.
+//
+// Graph labels, written before the label layout existed (README hero review):
+//  7. A thread label or a node covers a project (hub) name, or a hub name is
+//     drawn under nodes.
+//  8. Thread labels collide with each other or with other nodes, or every
+//     thread is labelled so the graph turns to soup.
+//     A label is cut at the edge of the graph area.
+//  9. Hovering or selecting a thread does not show its label.
+// 10. Labels have no dark halo, so they vanish over links and glows.
+// 11. Clusters overlap so hub names sit inside another project's threads.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -172,5 +182,91 @@ test("demo page: blocked thread shows its prompt and quick replies, hub opens th
   await page.waitForSelector("#p-tasks li");
   await page.waitForSelector("#p-reports details");
   assert.ok(await page.locator("#p-threads li").count() >= 3, "coordinator lists its open threads");
+  await page.close();
+});
+
+// Rects of every hub name, visible thread label and node core, once the
+// layout has stopped moving.
+async function labelBoxes(page) {
+  let prev = "";
+  return waitFor(async () => {
+    const b = await page.evaluate(() => {
+      const r = (e) => { const x = e.getBoundingClientRect(); return { l: x.left, t: x.top, r: x.right, b: x.bottom }; };
+      const shown = (e) => getComputedStyle(e).visibility !== "hidden" && +getComputedStyle(e).opacity > 0.5 && e.textContent;
+      return {
+        hubs: [...document.querySelectorAll("svg text.name")].map((e) => ({ key: e.dataset.key, ...r(e) })),
+        labels: [...document.querySelectorAll("svg text.label")].filter(shown).map((e) => ({ key: e.dataset.key, ...r(e) })),
+        stage: r(document.querySelector("#stage")),
+        cores: [...document.querySelectorAll("svg g.node")].map((g) => ({ key: g.dataset.key, ...r(g.querySelector(".core")) })),
+      };
+    });
+    const sig = JSON.stringify(b, (k, v) => (typeof v === "number" ? Math.round(v) : v));
+    const still = sig === prev;
+    prev = sig;
+    if (!still) await new Promise((res) => setTimeout(res, 400));
+    return still && b;
+  }, 20_000);
+}
+const hit = (a, b, pad = 1) => a.l + pad < b.r && b.l + pad < a.r && a.t + pad < b.b && b.t + pad < a.b;
+
+function assertLabels(b, where) {
+  assert.equal(b.hubs.length, 7, `${where}: every project named`);
+  for (const h of b.hubs) {
+    for (const l of b.labels) assert.ok(!hit(h, l), `${where}: label ${l.key} covers hub name ${h.key}`);
+    for (const o of b.hubs) if (o !== h) assert.ok(!hit(h, o), `${where}: hub names ${h.key} and ${o.key} collide`);
+    for (const c of b.cores) assert.ok(!hit(h, c), `${where}: node ${c.key} covers hub name ${h.key}`);
+  }
+  for (const l of b.labels) {
+    for (const o of b.labels) if (o !== l) assert.ok(!hit(l, o), `${where}: labels ${l.key} and ${o.key} collide`);
+    for (const c of b.cores) if (c.key !== l.key) assert.ok(!hit(l, c), `${where}: node ${c.key} covers label ${l.key}`);
+    assert.ok(l.l >= b.stage.l - 1 && l.r <= b.stage.r + 1 && l.t >= b.stage.t - 1 && l.b <= b.stage.b + 1, `${where}: label ${l.key} cut at the edge`);
+  }
+  for (const h of b.hubs) assert.ok(h.l >= b.stage.l - 1 && h.r <= b.stage.r + 1, `${where}: hub name ${h.key} cut at the edge`);
+  assert.ok(b.labels.length >= 2 && b.labels.length <= 10, `${where}: a few thread labels, not all (${b.labels.length})`);
+}
+
+test("demo graph: hub names always readable, few thread labels, no collisions", async () => {
+  for (const [where, opts] of [
+    ["desktop", { viewport: { width: 1440, height: 900 } }],
+    ["phone", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }],
+  ]) {
+    const page = await browser.newPage(opts);
+    await page.goto(base);
+    await page.waitForSelector("svg g.node.thread");
+    const b = await labelBoxes(page);
+    // 7, 8, 11
+    assertLabels(b, where);
+    const blockedShown = await page.evaluate(() => [...document.querySelectorAll("svg text.label")].some((e) => e.dataset.key && document.querySelector(`svg g.node.blocked[data-key="${e.dataset.key}"]`) && getComputedStyle(e).visibility !== "hidden" && +getComputedStyle(e).opacity > 0.5));
+    assert.ok(blockedShown, `${where}: a blocked thread is labelled`);
+    // 7: hub names are drawn above every node.
+    assert.ok(await page.evaluate(() => {
+      const n = document.querySelector("svg g.node"), h = document.querySelector("svg text.name");
+      return !!(n.compareDocumentPosition(h) & Node.DOCUMENT_POSITION_FOLLOWING) && !n.contains(h);
+    }), `${where}: hub names in a layer above the nodes`);
+    // 10
+    for (const sel of ["svg text.name", "svg text.label"]) {
+      const st = await page.locator(sel).first().evaluate((e) => { const c = getComputedStyle(e); return { w: parseFloat(c.strokeWidth), order: c.paintOrder }; });
+      assert.ok(st.w >= 3 && /stroke/.test(st.order), `${where}: ${sel} has a halo (${JSON.stringify(st)})`);
+    }
+    await page.close();
+  }
+
+  // 9: hover shows a working thread's label, selecting keeps it.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(base);
+  await page.waitForSelector("svg g.node.thread");
+  await labelBoxes(page);
+  const key = "nebula-api/t-0001";
+  const vis = () => page.evaluate((k) => { const e = document.querySelector(`svg text.label[data-key="${k}"]`); return !!e && getComputedStyle(e).visibility !== "hidden" && +getComputedStyle(e).opacity > 0.5; }, key);
+  assert.equal(await vis(), false, "a working thread is not labelled by default");
+  const c = await page.locator(`svg g.node[data-key="${key}"] .core`).boundingBox();
+  await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2);
+  await waitFor(vis, 3000);
+  await page.mouse.move(5, 300);
+  await waitFor(async () => !(await vis()), 3000);
+  await page.mouse.click(c.x + c.width / 2, c.y + c.height / 2);
+  await page.waitForSelector("#panel.open");
+  await page.mouse.move(5, 300);
+  await waitFor(vis, 3000);
   await page.close();
 });

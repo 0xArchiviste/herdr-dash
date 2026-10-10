@@ -78,6 +78,10 @@
   const root = svg.append("g");
   const linkG = root.append("g");
   const nodeG = root.append("g");
+  // Labels sit above every node; project names above thread labels.
+  const tlabelG = root.append("g").attr("class", "labels threads");
+  const hlabelG = root.append("g").attr("class", "labels hubs");
+  let hovered = null;
   let userZoomed = false;
   const zoom = d3.zoom().scaleExtent([0.15, 4]).on("zoom", (e) => {
     if (e.sourceEvent) userZoomed = true;
@@ -88,8 +92,11 @@
   const nodes = new Map(); // id -> node object, kept across updates for stable positions
   const sim = d3.forceSimulation()
     .force("link", d3.forceLink().id((d) => d.id).distance((l) => 34 + l.target.r * 2.2).strength(0.6))
-    .force("charge", d3.forceManyBody().strength((d) => (d.hub ? -420 : -38)))
-    .force("collide", d3.forceCollide().radius((d) => d.r + (d.hub ? 14 : 3)))
+    // A hub pushes harder the bigger its cluster, and harder still when
+    // there are few projects, so clusters do not overlap.
+    .force("charge", d3.forceManyBody().strength((d) => (d.hub ? -(320 + 45 * (d.size || 0)) * (hubCount() <= 8 ? 1.3 : 1) : -38)))
+    .force("collide", d3.forceCollide().radius((d) => (d.hub ? Math.max(d.r + 14, (d.lw || 0) * 0.8) : d.r + 3)))
+    .force("labelRoom", labelRoom())
     .force("x", d3.forceX().strength(0.045))
     .force("y", d3.forceY().strength(0.06))
     .alphaDecay(0.035)
@@ -103,10 +110,13 @@
     const ns = [...nodes.values()];
     const pad = 40;
     // A project's name can be wider than its hub: keep the whole name in view.
-    nodeSel.select("text.name").each(function (d) { d.lw = this.getComputedTextLength() / 2; });
     const half = (d) => Math.max(d.r, (d.hub && d.lw) || 0);
-    const x0 = d3.min(ns, (d) => d.x - half(d)) - pad, x1 = d3.max(ns, (d) => d.x + half(d)) + pad;
-    const y0 = d3.min(ns, (d) => d.y - d.r) - pad, y1 = d3.max(ns, (d) => d.y + d.r + 18) + pad;
+    // Thread labels too, so none is cut at the edge.
+    const labs = ns.filter((d) => d.lab).map((d) => d.lab);
+    const x0 = Math.min(d3.min(ns, (d) => d.x - half(d)), d3.min(labs, (b) => b.l) ?? Infinity) - pad;
+    const x1 = Math.max(d3.max(ns, (d) => d.x + half(d)), d3.max(labs, (b) => b.r) ?? -Infinity) + pad;
+    const y0 = Math.min(d3.min(ns, (d) => d.y - d.r), d3.min(labs, (b) => b.t) ?? Infinity) - pad;
+    const y1 = Math.max(d3.max(ns, (d) => d.y + d.r + 18), d3.max(labs, (b) => b.b) ?? -Infinity) + pad;
     const r = svg.node().getBoundingClientRect();
     const k = Math.min(2.2, r.width / (x1 - x0), r.height / (y1 - y0));
     const t = d3.zoomIdentity.scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
@@ -144,6 +154,79 @@
 
   let linkSel = linkG.selectAll("line");
   let nodeSel = nodeG.selectAll("g.node");
+  let hlabelSel = hlabelG.selectAll("text");
+  let tlabelSel = tlabelG.selectAll("text");
+  const hubCount = () => hlabelSel.size();
+
+  // ---------------------------------------------------------------- labels
+  // Boxes in graph units: a node's core, and a hub's name under it.
+  const HUB_FONT = 13, LABEL_FONT = 11;
+  const nodeBox = (n, pad = 0) => ({ l: n.x - n.r - pad, r: n.x + n.r + pad, t: n.y - n.r - pad, b: n.y + n.r + pad });
+  const hubBox = (h, pad = 0) => ({ l: h.x - (h.lw || 30) - pad, r: h.x + (h.lw || 30) + pad, t: h.y + h.r + 3 - pad, b: h.y + h.r + 4 + HUB_FONT * 1.3 + pad });
+  const overlaps = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+
+  // A force that keeps every other node, and other hubs' names, off a hub's
+  // name: project names stay readable however the clusters settle.
+  function labelRoom() {
+    let ns = [];
+    // Push a and b apart along the axis where they overlap least.
+    function part(a, ba, b, bb, share) {
+      const dx = Math.min(ba.r - bb.l, bb.r - ba.l), dy = Math.min(ba.b - bb.t, bb.b - ba.t);
+      if (dx <= 0 || dy <= 0) return;
+      const sx = (ba.l + ba.r) / 2 < (bb.l + bb.r) / 2 ? -1 : 1, sy = (ba.t + ba.b) / 2 < (bb.t + bb.b) / 2 ? -1 : 1;
+      const [mx, my] = dx < dy ? [sx * dx, 0] : [0, sy * dy];
+      a.vx += mx * share * 0.5; a.vy += my * share * 0.5;
+      b.vx -= mx * (1 - share) * 0.5; b.vy -= my * (1 - share) * 0.5;
+    }
+    function force() {
+      for (const h of ns) {
+        if (!h.hub) continue;
+        const hb = hubBox(h, 3);
+        for (const n of ns) {
+          if (n === h) continue;
+          part(h, hb, n, nodeBox(n, 2), n.hub ? 0.5 : 0.15);
+          if (n.hub && n.id > h.id) part(h, hb, n, hubBox(n, 3), 0.5);
+        }
+      }
+    }
+    force.initialize = (n) => (ns = n);
+    return force;
+  }
+
+  // Thread labels: the selected and hovered threads, then the few that need
+  // you most (blocked, waiting, landing). Each takes the first free spot
+  // around its node (above, below, right, left) that covers no node, no
+  // project name and no other label; with no free spot it is left out.
+  const MAX_LABELS = 8;
+  function placeLabels() {
+    const all = [...nodes.values()];
+    const taken = all.filter((n) => n.hub).map((h) => hubBox(h, 2));
+    const boxes = all.map((n) => [n, nodeBox(n, 2)]);
+    const forced = (n) => n.id === selected || n.id === hovered;
+    const rank = (n) => (forced(n) ? -1 : ORDER.indexOf(n.t.state));
+    const cands = all.filter((n) => !n.hub && n.t && (forced(n) || (n.t.needs_you && n.t.state !== "review")))
+      .sort((a, b) => rank(a) - rank(b) || ageSec(a.t) - ageSec(b.t));
+    for (const n of all) n.lab = null;
+    let shown = 0;
+    for (const n of cands) {
+      if (!forced(n) && shown >= MAX_LABELS) break;
+      const w = (n.tw || 60) + 4, h = LABEL_FONT * 1.35, g = 3;
+      const spots = [
+        { l: n.x - w / 2, r: n.x + w / 2, t: n.y - n.r - g - h, b: n.y - n.r - g },
+        { l: n.x - w / 2, r: n.x + w / 2, t: n.y + n.r + g, b: n.y + n.r + g + h },
+        { l: n.x + n.r + g, r: n.x + n.r + g + w, t: n.y - h / 2, b: n.y + h / 2 },
+        { l: n.x - n.r - g - w, r: n.x - n.r - g, t: n.y - h / 2, b: n.y + h / 2 },
+      ];
+      const free = (sp) => !taken.some((b) => overlaps(sp, b)) && !boxes.some(([m, b]) => m !== n && overlaps(sp, b));
+      const sp = spots.find(free) || (forced(n) ? spots[0] : null);
+      if (!sp) continue;
+      taken.push(sp);
+      n.lab = sp;
+      if (!forced(n)) shown++;
+    }
+    tlabelSel.classed("off", (d) => !d.lab)
+      .attr("x", (d) => (d.lab ? (d.lab.l + d.lab.r) / 2 : d.x)).attr("y", (d) => (d.lab ? d.lab.b - LABEL_FONT * 0.35 : d.y));
+  }
 
   function renderGraph(threads) {
     const projects = state.projects.filter((p) => !filters.project || p.slug === filters.project);
@@ -156,7 +239,7 @@
       const id = "hub:" + p.slug;
       const n = nodes.get(id) || { id, x: Math.cos(i) * 200, y: Math.sin(i) * 200 };
       const ts = per.get(p.slug) || [];
-      Object.assign(n, { hub: true, p, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => t.state !== "resolved").length });
+      Object.assign(n, { hub: true, p, size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => t.state !== "resolved").length });
       want.push(n);
     });
     const hubIds = new Set(want.map((n) => n.id));
@@ -181,9 +264,9 @@
         g.append("circle").attr("class", "ring");
         g.append("circle").attr("class", "core").attr("r", 0);
         g.filter((d) => d.hub).append("text").attr("class", "count").attr("text-anchor", "middle").attr("dy", "0.35em");
-        g.append("text").attr("class", (d) => (d.hub ? "name" : "label")).attr("text-anchor", "middle");
         g.on("click", (e, d) => { e.stopPropagation(); d.hub ? hubClick(d) : select(d.id); })
-          .on("mouseenter", (e, d) => showTip(e, d)).on("mousemove", moveTip).on("mouseleave", hideTip)
+          .on("mouseenter", (e, d) => { hovered = d.id; placeLabels(); showTip(e, d); }).on("mousemove", moveTip)
+          .on("mouseleave", () => { hovered = null; placeLabels(); hideTip(); })
           .call(d3.drag().on("start", dragStart).on("drag", dragged).on("end", dragEnd));
         g.transition().duration(600).style("opacity", 1);
         return g;
@@ -198,8 +281,14 @@
     nodeSel.filter((d) => d.hub).select("text.count").attr("fill", (d) => d.color);
     nodeSel.select("circle.ring").attr("r", (d) => d.r);
     nodeSel.filter((d) => d.hub).select("text.count").text((d) => d.open || "");
-    nodeSel.select("text.name").attr("dy", (d) => d.r + 16).text((d) => d.p.name);
-    nodeSel.select("text.label").attr("dy", (d) => -d.r - 5).text((d) => d.t && trunc(d.t.title, 34));
+    hlabelSel = hlabelG.selectAll("text.name").data(want.filter((d) => d.hub), (d) => d.id)
+      .join((enter) => enter.append("text").attr("class", "name").attr("text-anchor", "middle"))
+      .attr("data-key", (d) => d.id).text((d) => d.p.name)
+      .each(function (d) { d.lw = this.getComputedTextLength() / 2; });
+    tlabelSel = tlabelG.selectAll("text.label").data(want.filter((d) => !d.hub), (d) => d.id)
+      .join((enter) => enter.append("text").attr("class", "label off").attr("text-anchor", "middle"))
+      .attr("data-key", (d) => d.id).text((d) => trunc(d.t.title, 34))
+      .each(function (d) { d.tw = this.getComputedTextLength(); });
 
     sim.nodes(want);
     sim.force("link").links(links);
@@ -210,6 +299,8 @@
     if (fitted < 3 && sim.alpha() < 0.3) { fitted++; fit(true); }
     linkSel.attr("x1", (l) => l.source.x).attr("y1", (l) => l.source.y).attr("x2", (l) => l.target.x).attr("y2", (l) => l.target.y);
     nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
+    hlabelSel.attr("x", (d) => d.x).attr("y", (d) => d.y + d.r + 3 + HUB_FONT);
+    placeLabels();
   }
   function dragStart(e, d) { if (!e.active) sim.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; }
   function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
@@ -546,6 +637,7 @@
   function select(key) {
     selected = key;
     nodeSel.classed("selected", (d) => d.id === key);
+    placeLabels();
     clearInterval(detailTimer);
     screenES?.close();
     screenES = null;

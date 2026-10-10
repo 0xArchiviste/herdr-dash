@@ -114,8 +114,11 @@ body.dock-bottom #work { flex-direction: column; }
 .node.hub .core { stroke-width: 3.5; }
 .node.hub text { fill: var(--bwhite); font-size: 13px; font-weight: 600; paint-order: stroke; stroke: var(--hard-black); stroke-width: 4px; pointer-events: none; }
 .node.hub .count { font-size: 12px; font-weight: 800; stroke: none; }
-.node.thread text.label { fill: var(--bwhite); font-size: 11px; paint-order: stroke; stroke: var(--hard-black); stroke-width: 3px; pointer-events: none; opacity: 0; transition: opacity .3s; }
-.node.thread:hover text.label, .node.thread.selected text.label, .node.thread.attn text.label { opacity: 1; }
+/* Labels live in their own layers above the nodes, with a dark halo. */
+.labels text { fill: var(--bwhite); pointer-events: none; paint-order: stroke; stroke: var(--hard-black); stroke-linejoin: round; stroke-opacity: .9; }
+.labels text.name { font-size: 13px; font-weight: 600; stroke-width: 5px; }
+.labels text.label { font-size: 11px; stroke-width: 3.5px; transition: opacity .2s; }
+.labels text.label.off { visibility: hidden; opacity: 0; }
 .node.thread.selected .core { stroke: var(--bwhite); stroke-width: 2.5; }
 .node.hub.selected .core { stroke-width: 5; filter: drop-shadow(0 0 6px currentColor); }
 .node.hub.blocked .ring, .node.hub.waiting .ring { stroke-width: 3; }
