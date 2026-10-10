@@ -54,7 +54,10 @@ func main() {
 	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
 	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
 	flag.DurationVar(&cfg.GHEvery, "gh-every", 10*time.Minute, "gh pr list interval")
+	usage := usageFlags(home)
 	flag.Parse()
+	cfg.Usage = *usage
+	cfg.Usage.CodexDir = cfg.CodexDir
 	if cfg.HerdrProjects == "" {
 		cfg.HerdrProjects = defaultHerdrProjects(home)
 	}
@@ -154,6 +157,7 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 	})
 	NewActions(cfg, col).register(mux)
 	NewVoice(cfg.Voice).register(mux)
+	NewUsage(cfg.Usage).register(mux)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")
 		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {

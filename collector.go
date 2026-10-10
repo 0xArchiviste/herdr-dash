@@ -34,6 +34,7 @@ type Config struct {
 	QuietEvery    time.Duration // projects whose threads are all resolved
 	GHEvery       time.Duration
 	Voice         VoiceConfig // optional Cloudflare Workers AI, env only
+	Usage         UsageConfig // optional plan/provider usage strip, see usage.go
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.

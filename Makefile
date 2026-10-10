@@ -5,7 +5,7 @@ build:
 
 vet:
 	go vet ./...
-	node --check static/app.js
+	node --check static/app.js && node --check static/usage.js
 	node --check static/voice.js
 
 e2e/node_modules: e2e/package.json
