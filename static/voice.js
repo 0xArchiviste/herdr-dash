@@ -340,7 +340,7 @@
     eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
   const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
   function parseNum(s) {
-    s = s.replace(/^(number|no|#)\s*/, "").replace(/^t\s*/, "").trim();
+    s = s.replace(/^(number|no|#)\s*/, "").replace(/^t\s*(?=\d)/, "").trim();
     if (/^\d+$/.test(s)) return +s;
     const w = s.split(" ");
     if (w.length === 1 && w[0] in NUM) return NUM[w[0]];
@@ -568,7 +568,7 @@
         if (typeof hd.dock === "function") { hd.dock(arg); return say("Docked " + arg + "."); }
         const b = document.querySelector(`[data-dock="${arg}"]`);
         if (b) { b.click(); return say("Docked " + arg + "."); }
-        return say("Docking isn't available on this dashboard yet.");
+        return say("Docking isn't available on this dashboard.");
       }
       case "help": showHelp(); return say("Help is open: Esc closes it.");
       case "stop": stopNav(); return say("Stopped listening.");
@@ -617,7 +617,7 @@
       ["search <text> / clear search", "the search box"],
       ["close panel", "close the side panel"],
       ["focus chat / dictate", "the open panel's chat box"],
-      ["dock bottom / left / right", "move the panel (when docking exists)"],
+      ["dock bottom / left / right", "move the panel"],
       ["ack this / resolve this / send", "ask yes/no first, by voice or click"],
       ["help / stop listening", ""],
     ];

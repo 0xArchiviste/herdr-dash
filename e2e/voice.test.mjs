@@ -20,7 +20,7 @@
 //      live interim transcript and a recording indicator.
 //  V6. Voice nav misses commands: open project, open thread N in project,
 //      state filters, next/previous needs-you, search, close, focus chat,
-//      dock (absent), help, stop.
+//      dock, help, stop.
 //  V7. A state-changing command (ack, resolve, send) runs without a
 //      confirmation, or runs after "no", or a click on Yes does nothing.
 //  V8. Utterances the grammar cannot resolve are not sent to the model, or
@@ -121,9 +121,14 @@ function mockSpeech() {
     say(text, final = true) {
       const r = [...instances].reverse().find((i) => i._on);
       if (!r) throw new Error("nobody is listening");
+      // Like Chrome: a session's results accumulate; interim ones are
+      // replaced in place until final.
       const res = [{ transcript: text, confidence: 0.9 }];
       res.isFinal = final;
-      r._fire("result", { resultIndex: 0, results: [res] });
+      r._results ??= [];
+      if (r._results.length && !r._results.at(-1).isFinal) r._results.pop();
+      r._results.push(res);
+      r._fire("result", { resultIndex: r._results.length - 1, results: [...r._results] });
       if (final && !r.continuous) r.stop();
     },
   };
@@ -309,7 +314,12 @@ test("voice nav: grammar commands navigate, filter, search and focus", async () 
   await say(page, "focus chat");
   await waitFor(() => page.evaluate(() => document.activeElement?.id === "chat-input"), 2000);
   await say(page, "dock left");
-  await waitFor(async () => /dock/i.test(await hud(page)), 2000);
+  await page.waitForSelector("body.dock-left");
+  assert.equal(await page.getAttribute("#dock-left", "aria-pressed"), "true");
+  await say(page, "move the panel to the bottom");
+  await page.waitForSelector("body.dock-bottom");
+  await say(page, "dock right");
+  await page.waitForSelector("body.dock-right");
 
   await say(page, "help");
   await page.waitForSelector("#voice-help:not([hidden])");

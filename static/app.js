@@ -1006,6 +1006,7 @@
     visible,
     ack: (key) => ackKeys([key]),
     resolve: (key) => resolveKey(key, true),
+    dock: (pos) => { if (DOCKS.includes(pos)) { dock.pos = pos; saveDock(); applyDock(); } },
     toast,
   };
 
