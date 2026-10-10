@@ -1,0 +1,16 @@
+● Read(TASKS.md)
+  ⎿  Read 14 lines
+
+● The backlog has a release checklist item. Starting a thread for it.
+
+╭──────────────────────────────────────────────────────────────╮
+│ Bash command                                                 │
+│                                                              │
+│   herdr-projects thread start mobile-app --title "Release checklist"│
+│   Start a worktree thread for the release checklist          │
+│                                                              │
+│ Do you want to proceed?                                      │
+│ ❯ 1. Yes                                                     │
+│   2. Yes, and don't ask again for herdr-projects commands    │
+│   3. No, and tell Claude what to do differently (esc)        │
+╰──────────────────────────────────────────────────────────────╯

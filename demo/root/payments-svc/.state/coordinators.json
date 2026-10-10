@@ -1,0 +1,13 @@
+[
+ {
+  "pane_id": "w6R:p1",
+  "tab_id": "w6R:t1",
+  "workspace_id": "w6R",
+  "name": "hpc-payments-svc",
+  "agent": "claude",
+  "agent_status": "idle",
+  "state_change_seq": 7,
+  "pair_since": "2026-10-09T08:00:00Z",
+  "agent_session": "00000000-0000-4000-8000-000000000004"
+ }
+]

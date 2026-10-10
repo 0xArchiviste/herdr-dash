@@ -1,0 +1,13 @@
+[
+ {
+  "pane_id": "w7T:p1",
+  "tab_id": "w7T:t1",
+  "workspace_id": "w7T",
+  "name": "hpc-ml-pipeline",
+  "agent": "claude",
+  "agent_status": "working",
+  "state_change_seq": 7,
+  "pair_since": "2026-10-09T08:00:00Z",
+  "agent_session": "00000000-0000-4000-8000-000000000005"
+ }
+]

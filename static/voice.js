@@ -612,7 +612,7 @@
     const cmds = [
       ["open nebula api / show beta", "open a project's panel"],
       ["open widget pipeline / open t-0003", "open a thread by title or id"],
-      ["show thread 27 in kaiba cord", "a thread by number and project"],
+      ["show thread 3 in payments service", "a thread by number and project"],
       ["show blocked / waiting / review / landing / working / needs you", "filter by state"],
       ["show all / clear filters", "clear the filters"],
       ["next / previous", "step through the Needs-you items"],

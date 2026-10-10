@@ -1,0 +1,16 @@
+● Bash(herdr-projects thread list docs-site)
+  ⎿  4 open: 1 working, 1 waiting on you,
+     1 ready for review
+
+● Bash(gh pr view 57 --repo acme-labs/docs-site)
+  ⎿  Migrate to Astro Starlight
+     checks: 7/7 passing · review: pending
+
+● 1 thread(s) moving. Checking reports as they land.
+
+✻ Planning threads… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

@@ -1,0 +1,17 @@
+● Write(src/encode/avif.rs)
+  ⎿  Wrote 132 lines to src/encode/avif.rs
+
+● Bash(cargo build --release)
+  ⎿     Compiling pixel-forge v0.9.0
+        Finished `release` profile in 41.2s
+
+● Bash(./bench.sh avif)
+  ⎿  avif q=60  1.84 MB/s  ssim 0.981
+     webp q=75  3.10 MB/s  ssim 0.976
+
+✻ Tuning encoder speed… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

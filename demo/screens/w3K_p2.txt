@@ -1,0 +1,20 @@
+● Read(src/routes/invoices.ts)
+  ⎿  Read 214 lines
+
+● Update(src/routes/invoices.ts)
+  ⎿  Updated src/routes/invoices.ts with 18 additions
+     and 4 removals
+
+● Bash(npm test -- invoices)
+  ⎿  PASS  test/invoices.test.ts (4.2 s)
+     ✓ paginates with an opaque cursor (38 ms)
+     ✓ rejects a malformed cursor (5 ms)
+     ✓ keeps ?page= for v1 clients (12 ms)
+     … +11 lines (ctrl+r to expand)
+
+✻ Running the contract suite… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)
