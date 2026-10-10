@@ -1,0 +1,10 @@
+● Bash(herdr-projects thread list pixel-forge)
+  ⎿  4 open: 1 working, 1 waiting on you,
+     1 ready for review
+
+● All quiet: nothing needs a decision right now.
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

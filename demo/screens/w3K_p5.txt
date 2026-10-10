@@ -1,0 +1,14 @@
+● Update(src/v1/users.ts)
+  ⎿  Added Deprecation + Sunset headers
+
+● Which sunset date should the notice use?
+
+  1. 2027-03-31 (six months)
+  2. 2027-06-30 (matches the enterprise contract)
+
+  I'll draft the customer notice once you pick.
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

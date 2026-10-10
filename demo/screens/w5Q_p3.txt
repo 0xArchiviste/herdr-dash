@@ -1,0 +1,15 @@
+● Bash(npm run build)
+  ⎿  ✓ 231 page(s) built in 18.4s
+
+● Read(src/components/VersionSwitch.astro)
+  ⎿  Read 58 lines
+
+● Update(src/components/VersionSwitch.astro)
+  ⎿  Updated with 22 additions and 9 removals
+
+✻ Building the v1 reference… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

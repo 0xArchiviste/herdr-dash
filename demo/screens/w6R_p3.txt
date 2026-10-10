@@ -1,0 +1,13 @@
+● Bash(go test ./internal/sca/...)
+  ⎿  ok   payments/internal/sca        2.114s
+     ok   payments/internal/sca/acs    0.902s
+
+● Update(internal/sca/challenge.go)
+  ⎿  Updated with 31 additions and 12 removals
+
+✻ Running the sandbox card matrix… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

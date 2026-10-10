@@ -1,0 +1,13 @@
+• Explored
+  └ Read src/routes/charges.ts, src/db/schema.sql
+    Search Idempotency in src
+
+• Proposed plan
+  └ □ add idempotency_keys table
+    □ middleware: lookup, lock, store response
+    □ tests for replay + conflicting body
+
+▌ Working ({ELAPSED} • Esc to interrupt)
+
+▌ Ask Codex to do anything
+  ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit

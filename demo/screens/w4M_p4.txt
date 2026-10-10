@@ -1,0 +1,15 @@
+● Bash(cargo bench -- tiler)
+  ⎿  tiler/rayon   time: [118.2 ms 119.0 ms 119.9 ms]
+     tiler/legacy  time: [342.7 ms 344.1 ms 345.8 ms]
+
+╭──────────────────────────────────────────────────────────────╮
+│ Bash command                                                 │
+│                                                              │
+│   git rm -r src/tiler_legacy/                                │
+│   Remove the legacy tiler now that rayon is 2.9x faster      │
+│                                                              │
+│ Do you want to proceed?                                      │
+│ ❯ 1. Yes                                                     │
+│   2. Yes, and don't ask again for git rm commands            │
+│   3. No, and tell Claude what to do differently (esc)        │
+╰──────────────────────────────────────────────────────────────╯

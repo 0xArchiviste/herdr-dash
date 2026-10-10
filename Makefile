@@ -1,4 +1,4 @@
-.PHONY: build vet test e2e check install clean
+.PHONY: build vet test e2e check install demo screenshots clean
 
 build:
 	go build -o bin/herdr-dash .
@@ -17,6 +17,15 @@ e2e: build e2e/node_modules
 
 # Local gate (AGENTS.md): vet + E2E against fixtures with stubbed herdr/gh.
 check: vet e2e
+
+# Try it on fictional data: http://127.0.0.1:8792 (DEMO_ADDR to change).
+DEMO_ADDR ?= 127.0.0.1:8792
+demo: build
+	demo/run.sh $(DEMO_ADDR)
+
+# Retake docs/screenshots/ from the demo (needs ffmpeg for the WebP).
+screenshots: build e2e/node_modules
+	demo/screenshots.sh
 
 # Build and (re)start the systemd --user service.
 install: build

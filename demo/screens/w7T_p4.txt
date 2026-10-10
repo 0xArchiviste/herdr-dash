@@ -1,0 +1,15 @@
+$ terraform plan -out tf.plan
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+╭──────────────────────────────────────────────────────────────╮
+│ Permission required                                          │
+│                                                              │
+│   terraform apply tf.plan                                    │
+│   Create the gpu-training node pool (0–4 x L4)               │
+│                                                              │
+│ Do you want to proceed?                                      │
+│ ❯ 1. Allow once                                              │
+│   2. Allow always                                            │
+│   3. Reject                                                  │
+╰──────────────────────────────────────────────────────────────╯
