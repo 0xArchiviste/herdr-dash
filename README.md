@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-fce8c3"></a>
   <a href="go.mod"><img alt="Go 1.26" src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white"></a>
   <img alt="Single binary" src="https://img.shields.io/badge/single%20binary-no%20build%20step-98bc37">
   <img alt="Writes through herdr-projects only" src="https://img.shields.io/badge/writes-allow--listed-fbb829">
@@ -237,3 +238,7 @@ that the demo names nothing real (no home paths, emails, IPs, real orgs or
 real project names). Screenshots and the API snapshot land in
 `e2e/artifacts/`; `node e2e/screenshot.mjs URL DIR` screenshots a running
 instance.
+
+## License
+
+[MIT](LICENSE) © 2026 0xArchiviste
