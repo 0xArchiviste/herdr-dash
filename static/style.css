@@ -118,7 +118,8 @@ ol.next li .tbtn { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
 .hit time { flex: none; color: var(--bblack); font-size: 11px; }
 .hit .s-snip { color: #d7d0bd; overflow-wrap: anywhere; min-width: 0; }
 .hit mark { background: var(--byellow); color: var(--hard-black); border-radius: 2px; padding: 0 1px; }
-#graph.searching .node:not(.hit) { opacity: .22; }
+#graph.searching .node:not(.hit) > :not(.label) { opacity: .22; } /* the g carries d3's inline opacity */
+#graph.searching .node.thread:not(.hit) text.label { opacity: 0; }
 #graph.searching .node.hit .core { stroke: var(--byellow); stroke-width: 3; }
 #graph.searching .node.thread.hit text.label { opacity: 1; }
 .shown { color: var(--bblack); font-size: 12px; margin-left: auto; }

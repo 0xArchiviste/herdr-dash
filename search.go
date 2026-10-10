@@ -177,7 +177,7 @@ func (s *Searcher) Search(ctx context.Context, q string) SearchResult {
 	hits := s.searchFiles(words)
 	m := <-ch
 	res.Memex = m.st
-	mapped, dropped := s.mapMemex(m.hits)
+	mapped, dropped := s.mapMemex(m.hits, words)
 	res.Memex.Dropped = dropped
 	hits = append(hits, mapped...)
 
@@ -396,6 +396,22 @@ func (c *capped) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// memexSnippet is one line of a memex snippet, cut around the first query
+// word when it is long.
+func memexSnippet(snip string, words []string) string {
+	snip = strings.TrimSpace(spaceRe.ReplaceAllString(snip, " "))
+	if len(snip) <= snippetBefore+snippetAfter {
+		return snip
+	}
+	lower := asciiLower(snip)
+	for _, w := range words {
+		if at := strings.Index(lower, w); at >= 0 {
+			return snippetAt(snip, at, len(w))
+		}
+	}
+	return snippetAt(snip, 0, 0)
+}
+
 // ---------------------------------------------------------------- mapping
 
 var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
@@ -464,7 +480,7 @@ func (s *Searcher) rolloutCwd(path string) string {
 // running its session, else by its working directory (a thread's cwd, a
 // project folder, or a subfolder of one), else to the project whose repo it
 // ran in. Hits that fit no herdr project are dropped and counted.
-func (s *Searcher) mapMemex(in []memexHit) (out []SearchHit, dropped int) {
+func (s *Searcher) mapMemex(in []memexHit, words []string) (out []SearchHit, dropped int) {
 	if len(in) == 0 {
 		return nil, 0
 	}
@@ -474,7 +490,7 @@ func (s *Searcher) mapMemex(in []memexHit) (out []SearchHit, dropped int) {
 		if t.IsZero() && h.MtimeMs > 0 {
 			t = time.UnixMilli(h.MtimeMs)
 		}
-		hit := SearchHit{Source: "transcript", Snippet: strings.TrimSpace(spaceRe.ReplaceAllString(h.Snippet, " "))}
+		hit := SearchHit{Source: "transcript", Snippet: memexSnippet(h.Snippet, words)}
 		if h.Kind == "memory" {
 			hit.Source = "agent-memory"
 		}
