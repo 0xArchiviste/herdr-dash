@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Stub of memex for E2E: logs argv, serves fixture hits for "zephyr", and
+# flags overlapping runs. "sleepy" queries take 1s, "slowpoke" ones 5s; a
+# SIGTERM is logged as "memex killed <query>".
+D="$(cd "$(dirname "$0")" && pwd)"
+LOG="${STUB_LOG:-/dev/null}"
+echo "memex $*" >> "$LOG"
+q="${!#}"
+lock="$LOG.memex.lock"
+mkdir "$lock" 2>/dev/null || echo "memex OVERLAP $q" >> "$LOG"
+child=""
+done_() { rmdir "$lock" 2>/dev/null; [ -n "$child" ] && kill "$child" 2>/dev/null; }
+trap 'echo "memex killed $q" >> "$LOG"; done_; exit 143' TERM
+case "$q" in
+  *slowpoke*) sleep 5 & child=$!; wait "$child" ;;
+  *sleepy*) sleep 1 & child=$!; wait "$child" ;;
+esac
+case "$q" in
+  *zephyr*) sed "s#@TD@#$(dirname "$D")#g" "$D/memex-hits.jsonl" ;;
+esac
+done_

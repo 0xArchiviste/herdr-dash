@@ -120,7 +120,7 @@ function startServer(port, extra = []) {
     "--poll", "1s",
     ...extra,
   ], {
-    env: { ...process.env, STUB_LOG: stubLog, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects") },
+    env: { ...process.env, STUB_LOG: stubLog, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_MEMEX: join(stub, "memex") },
     stdio: ["ignore", "inherit", "inherit"],
   });
 }
