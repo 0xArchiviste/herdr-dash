@@ -1,0 +1,9 @@
+● The CSV generator is done (cmd/recon).
+
+● Which address should receive the daily report?
+  There is no finance alias in config/recon.yaml yet.
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

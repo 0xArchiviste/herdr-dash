@@ -1,0 +1,16 @@
+● Bash(herdr-projects thread list ml-pipeline)
+  ⎿  5 open: 2 working, 1 waiting on you,
+     1 ready for review
+
+● Bash(gh pr view 23 --repo acme-labs/ml-pipeline)
+  ⎿  Experiment tracking with MLflow
+     checks: 7/7 passing · review: pending
+
+● 2 thread(s) moving. Checking reports as they land.
+
+✻ Starting threads… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

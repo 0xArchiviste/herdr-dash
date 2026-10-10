@@ -1,0 +1,13 @@
+[
+ {
+  "pane_id": "w5Q:p1",
+  "tab_id": "w5Q:t1",
+  "workspace_id": "w5Q",
+  "name": "hpc-docs-site",
+  "agent": "claude",
+  "agent_status": "working",
+  "state_change_seq": 7,
+  "pair_since": "2026-10-09T08:00:00Z",
+  "agent_session": "00000000-0000-4000-8000-000000000003"
+ }
+]

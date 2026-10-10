@@ -1,0 +1,12 @@
+● Search(pattern: "psi|population stability", path: "pipeline/")
+  ⎿  Found 3 files
+
+● Read(pipeline/monitoring/metrics.py)
+  ⎿  Read 143 lines
+
+✻ Reading the monitoring code… ({ELAPSED} · ↓ {TOKENS}k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)

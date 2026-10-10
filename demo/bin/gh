@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Demo stand-in for gh: every PR the demo shows is already recorded.
+[ "$1 $2" = "pr list" ] && { echo '[]'; exit 0; }
+echo "demo: unsupported: $*" >&2; exit 2
