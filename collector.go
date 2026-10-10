@@ -35,6 +35,7 @@ type Config struct {
 	QuietEvery    time.Duration // projects whose threads are all resolved
 	GHEvery       time.Duration
 	Voice         VoiceConfig // optional Cloudflare Workers AI, env only
+	PublicURL     string      // optional https://host[:port] that remote plain-http page loads go to
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.
@@ -212,7 +213,7 @@ type Collector struct {
 	screens    map[string]screenHit
 	history    map[string]screenHit
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
-	burst      map[string]time.Time // pane -> read its screen fast until
+	burst      map[string]time.Time   // pane -> read its screen fast until
 	kick       chan struct{}
 }
 

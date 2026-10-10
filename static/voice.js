@@ -34,6 +34,7 @@
   const cfg = { ...DEFAULTS, ...JSON.parse(localStorage.getItem("hd-voice") || "{}") };
   const saveCfg = () => localStorage.setItem("hd-voice", JSON.stringify(cfg));
   let server = { intent: false, transcribe: false };
+  let publicURL = ""; // the dashboard's HTTPS address, when the server knows it
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let browserFailed = false; // the browser's speech service was unreachable this session
 
@@ -45,7 +46,7 @@
     return b ? "browser" : s ? "server" : null;
   }
   function unavailable() {
-    if (!window.isSecureContext) return "Voice not available: the microphone needs HTTPS (see the README: tailscale serve).";
+    if (!window.isSecureContext) return "Voice not available: the microphone needs HTTPS" + (publicURL ? "." : " (see the README: tailscale serve).");
     return "Voice not available: this browser has no speech recognition and server transcription is not configured.";
   }
 
@@ -60,7 +61,7 @@
   // transcribes the clip so far.
   function listen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
     const kind = engine();
-    if (!kind) { hd.toast(unavailable(), "err"); return null; }
+    if (!kind) { explain(); return null; }
     return kind === "browser" ? browserListen() : serverListen();
 
     function browserListen() {
@@ -239,12 +240,13 @@
   const fab = el("button", { id: "voice-fab", type: "button", "aria-pressed": "false", "aria-label": "Voice navigation", title: "Voice navigation" }, micIcon());
   const hud = el("div", { id: "voice-hud", hidden: "", role: "status", "aria-live": "polite" },
     el("div", { class: "st" }), el("div", { class: "heard" }), el("div", { class: "result" }));
+  const secureLink = el("a", { class: "secure tbtn primary", text: "Open secure version", hidden: "" });
   let hudTimer = null;
   fab.addEventListener("click", () => toggleNav());
 
   function toggleNav() { navOn ? stopNav() : startNav(); }
   function startNav() {
-    if (!engine()) { hd.toast(unavailable(), "err"); return; }
+    if (!engine()) { explain(); return; }
     navOn = true;
     fab.classList.add("listening");
     fab.setAttribute("aria-pressed", "true");
@@ -293,13 +295,26 @@
     if (navOn) { setHud({ st: "Voice nav: listening…" }); runNav(); }
   }
 
+  // Why voice cannot start. On plain http the HUD says so with a link to the
+  // same view on the HTTPS address (the hash too), when the server knows it.
+  function explain() {
+    if (window.isSecureContext) { hd.toast(unavailable(), "err"); return; }
+    showHud("Voice nav: off", "", unavailable());
+    if (publicURL) {
+      secureLink.href = publicURL + location.pathname + location.search + location.hash;
+      secureLink.hidden = false;
+      hud.append(secureLink);
+    }
+    if (!navOn) hideHudSoon(15000);
+  }
   function showHud(st, heard, result) { clearTimeout(hudTimer); hud.hidden = false; setHud({ st, heard, result }); }
   function setHud({ st, heard, result }) {
+    secureLink.hidden = true;
     if (st != null) hud.querySelector(".st").textContent = st;
     if (heard != null) hud.querySelector(".heard").textContent = heard;
     if (result != null) hud.querySelector(".result").textContent = result;
   }
-  function hideHudSoon() { clearTimeout(hudTimer); hudTimer = setTimeout(() => { if (!navOn && !pending) hud.hidden = true; }, 6000); }
+  function hideHudSoon(ms = 6000) { clearTimeout(hudTimer); hudTimer = setTimeout(() => { if (!navOn && !pending) hud.hidden = true; }, ms); }
   function say(result) { clearTimeout(hudTimer); hud.hidden = false; setHud({ result }); if (!navOn) hideHudSoon(); }
 
   // ---------------------------------------------------------------- confirmation
@@ -740,10 +755,12 @@
   function refreshAvailability() {
     const ok = !!engine();
     const why = ok ? "" : unavailable();
-    fab.disabled = !ok;
+    // On plain http the buttons stay live: a click explains, with the link.
+    const live = ok || !window.isSecureContext;
+    fab.disabled = !live;
     fab.title = ok ? `Voice navigation (${fmtKey(cfg.nav)})` : why;
     document.querySelectorAll(".mic").forEach((m) => {
-      m.disabled = !ok;
+      m.disabled = !live;
       m.title = ok ? `Dictate (${fmtKey(cfg.dict)}${cfg.dictMode === "hold" ? ", hold" : ""}): text goes into the box, never sent` : why;
     });
   }
@@ -753,7 +770,22 @@
     el("button", { id: "help-btn", class: "tbtn", type: "button", title: "Keys and voice commands (?)", text: "?", onclick: () => (help.hidden ? showHelp() : closeOverlays()) }),
     el("button", { id: "voice-settings-btn", class: "tbtn", type: "button", title: "Voice settings", text: "⚙", onclick: () => (settings.hidden ? showSettings() : closeOverlays()) })));
   document.body.append(fab, hud, help, settings);
+  // Phones: the open bottom sheet would sit under the floating mic, so the
+  // mic moves into the sheet's header row, beside the close button.
+  const panel = $("#panel"), phone = matchMedia("(max-width: 700px)");
+  function placeFab() {
+    const inSheet = phone.matches && panel.classList.contains("open");
+    const host = inSheet ? panel : document.body;
+    if (fab.parentElement === host) return;
+    const focused = document.activeElement === fab;
+    if (inSheet) panel.append(fab); else document.body.insertBefore(fab, hud);
+    document.body.classList.toggle("fab-in-sheet", inSheet);
+    if (focused) fab.focus();
+  }
+  new MutationObserver(placeFab).observe(panel, { attributes: true, attributeFilter: ["class"] });
+  phone.addEventListener("change", placeFab);
+  placeFab();
   new MutationObserver(attachMics).observe($("#panel-body"), { childList: true, subtree: true });
   attachMics();
-  fetch("/api/config").then((r) => r.json()).then((c) => { server = c.voice || server; refreshAvailability(); }).catch(() => {});
+  fetch("/api/config").then((r) => r.json()).then((c) => { server = c.voice || server; publicURL = c.public_url || ""; refreshAvailability(); }).catch(() => {});
 })();
