@@ -325,7 +325,8 @@ test("page: content mode searches on debounce or Enter and renders results", asy
   await page.keyboard.press("Alt+KeyC");
   assert.equal(await page.locator("#search-mode").getAttribute("aria-pressed"), "true");
 
-  // S12: the voice hook.
+  // S12: the voice hook, also on the page's add-on hooks (window.hd).
+  assert.equal(await page.evaluate(() => window.hd.search === window.dash.search), true);
   await page.evaluate(() => window.dash.search("widget", { mode: "title" }));
   assert.equal(await page.locator("#search-mode").getAttribute("aria-pressed"), "false");
   await waitFor(async () => (await page.locator("svg g.node.thread").count()) === 2, 3000);

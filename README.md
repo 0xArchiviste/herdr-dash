@@ -79,6 +79,35 @@ Server side (env only, it holds a secret; both features are off without it):
 `HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
 The token is only sent to Cloudflare, never to the page.
 
+## Content search
+
+The search box has two modes; the button next to it or **Alt+C** switches
+(remembered per browser), **/** focuses it.
+
+- **Title**: filters the graph by thread titles as you type, in the page.
+- **Content**: finds threads by what was said or done in them: their task,
+  report and Next files, a project's `PROJECT.md`, `TASKS.md` and
+  `MEMORY.md`, and, when `memex` is
+  installed, agent transcripts and memories. Results list the thread or
+  project, the source, the time and a highlighted snippet; matching nodes
+  light up in the graph and a click opens the panel.
+
+Content search runs only on Enter or after a 400 ms pause with 3+ characters.
+The file index lives in memory and is refreshed by mtime on search, never in
+the background. memex runs lexical searches only (`memex search
+--non-interactive --mode lexical`), one process at a time (a newer search
+cancels the older one), with a 2 s limit, a per-query cache and a rate limit.
+Transcript hits are mapped to threads by the live pane's session, then by
+working directory (a thread's worktree or folder, a project folder); hits
+from a project's repo show under the project, others are dropped. Pages and
+add-ons can call `hd.search(text, { mode: "content" | "title" })`.
+
+`--memex` / `HERDR_DASH_MEMEX` names the binary (default `memex` on `PATH`;
+`off` disables; missing means off), `--memex-timeout` (2s) and
+`--memex-per-min` (30) bound it. Note that `memex search` itself ingests new
+transcripts unless `auto_index_on_search = false` is set in
+`~/.memex/config.toml`.
+
 ## Data sources (reads)
 
 | Source | Used for | Cadence |
@@ -112,12 +141,13 @@ trusted network (e.g. a tailnet). `--herdr-projects` defaults to
 
 Flags: `--addr`, `--root`, `--herdr-projects`, `--herdr`, `--gh`, `--claude-dir`,
 `--codex-dir`, `--poll`, `--threads-every`, `--quiet-every`, `--gh-every`,
-`--read-only`, `--write-burst`, `--write-per-min`, `--auth` (placeholder:
+`--read-only`, `--write-burst`, `--write-per-min`, `--memex`,
+`--memex-timeout`, `--memex-per-min`, `--auth` (placeholder:
 only `none` exists; the network is trusted).
 
 Environment defaults (a flag wins): `HERDR_DASH_ADDR`, `HERDR_DASH_ROOT`
 (then `HERDR_PROJECTS_ROOT`), `HERDR_DASH_HERDR_PROJECTS`, `HERDR_DASH_AUTH`,
-`HERDR_DASH_READ_ONLY`.
+`HERDR_DASH_READ_ONLY`, `HERDR_DASH_MEMEX`.
 
 ## Install as a systemd --user service
 

@@ -73,11 +73,12 @@ type SearchResult struct {
 	Memex MemexStatus `json:"memex"`
 }
 
+// fileDoc keeps only the ASCII-lowered text (same byte offsets as the
+// file); the few files that match are re-read for their snippets.
 type fileDoc struct {
 	mtime   time.Time
 	size    int64
-	text    string
-	lower   string // ASCII-lowered: same byte offsets as text
+	lower   string
 	key     string
 	project string
 	thread  string
@@ -218,8 +219,7 @@ func (s *Searcher) refreshFiles() {
 		if d := s.files[path]; d != nil && d.mtime.Equal(st.ModTime()) && d.size == st.Size() {
 			return
 		}
-		text := readCapped(path)
-		s.files[path] = &fileDoc{mtime: st.ModTime(), size: st.Size(), text: text, lower: asciiLower(text), key: key, project: slug, thread: id, source: source}
+		s.files[path] = &fileDoc{mtime: st.ModTime(), size: st.Size(), lower: asciiLower(readCapped(path)), key: key, project: slug, thread: id, source: source}
 	}
 	for _, slug := range s.col.projectSlugs() {
 		dir := filepath.Join(s.cfg.Root, slug)
@@ -256,15 +256,12 @@ func asciiLower(s string) string {
 func (s *Searcher) searchFiles(words []string) []SearchHit {
 	s.imu.Lock()
 	s.refreshFiles()
-	var docs []*fileDoc
-	for _, d := range s.files {
-		docs = append(docs, d)
+	type match struct {
+		path string
+		d    *fileDoc
 	}
-	s.imu.Unlock()
-	titles := s.col.titles()
-	phrase := strings.Join(words, " ")
-	var hits []SearchHit
-	for _, d := range docs {
+	var found []match
+	for path, d := range s.files {
 		ok := true
 		for _, w := range words {
 			if !strings.Contains(d.lower, w) {
@@ -272,16 +269,30 @@ func (s *Searcher) searchFiles(words []string) []SearchHit {
 				break
 			}
 		}
-		if !ok {
+		if ok {
+			found = append(found, match{path, d})
+		}
+	}
+	s.imu.Unlock()
+	// Newest first; only the files that can be shown are read again.
+	sort.Slice(found, func(i, j int) bool { return found[i].d.mtime.After(found[j].d.mtime) })
+	found = found[:min(len(found), maxHits)]
+	titles := s.col.titles()
+	phrase := strings.Join(words, " ")
+	var hits []SearchHit
+	for _, m := range found {
+		text := readCapped(m.path)
+		lower := asciiLower(text)
+		at := strings.Index(lower, phrase)
+		if at < 0 {
+			at = strings.Index(lower, words[0])
+		}
+		if at < 0 { // changed since the index read it
 			continue
 		}
-		at := strings.Index(d.lower, phrase)
-		if at < 0 {
-			at = strings.Index(d.lower, words[0])
-		}
 		hits = append(hits, SearchHit{
-			Key: d.key, Project: d.project, Thread: d.thread, Title: titles[d.key], Source: d.source,
-			Time: d.mtime.UTC().Format(time.RFC3339), Snippet: snippetAt(d.text, at, len(words[0])),
+			Key: m.d.key, Project: m.d.project, Thread: m.d.thread, Title: titles[m.d.key], Source: m.d.source,
+			Time: m.d.mtime.UTC().Format(time.RFC3339), Snippet: snippetAt(text, at, len(words[0])),
 		})
 	}
 	return hits
