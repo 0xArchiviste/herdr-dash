@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Demo stand-in for herdr-projects: serves the fictional data in demo/data
+# with times relative to now ("@-35m" = 35 minutes ago). Writes change
+# nothing; they answer the way the real binary does when it succeeds.
+D="$(cd "$(dirname "$0")/.." && pwd)"
+[ "$1" = "--root" ] && shift 2
+reltime() { perl -MPOSIX=strftime -pe 's/"\@-(\d+)m"/"\"".strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - $1 * 60))."\""/ge; s/\@now/time - 60/ge'; }
+case "$1 $2" in
+  "list "*|"list") cat "$D/data/list.tsv" ;;
+  "thread list")
+    f="$D/data/thread-list-$3.json"
+    [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }
+    reltime < "$f" ;;
+  "thread prompt") cat > /dev/null; echo "sent to $4 (demo: nothing was sent)" ;;
+  "thread keys") echo "$4: pressed keys (demo: no agent is running)" ;;
+  "thread ack") echo "$4: report acknowledged (demo)" ;;
+  "thread next") echo "sent Next line to $4 (demo)" ;;
+  "thread resolve") echo "$4 resolved (demo: nothing was removed)" ;;
+  "coordinator prompt") cat > /dev/null; echo "sent to the $3 coordinator (demo: nothing was sent)" ;;
+  "progress --pane")
+    f="$D/data/progress-${3//:/_}.json"
+    if [ -f "$f" ]; then reltime < "$f"; else echo null; fi ;;
+  "safety show") sed "s/^Safety settings/Safety settings for $3/" "$D/data/safety.txt" ;;
+  *) echo "demo: unsupported: $*" >&2; exit 2 ;;
+esac

@@ -1,0 +1,8 @@
+• Ran npx pagefind --site dist
+  └ Indexed 214 pages, 18,402 words, 1.1 MB
+
+Question: include the API reference pages in the index?
+It doubles the index size (2.3 MB).
+
+▌ Ask Codex to do anything
+  ⏎ send   ⌃J newline   ⌃T transcript   ⌃C quit

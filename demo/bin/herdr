@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Demo stand-in for herdr: the pane list and fake agent screens in demo/.
+D="$(cd "$(dirname "$0")/.." && pwd)"
+case "$1 $2" in
+  "pane list") cat "$D/data/panes.json" ;;
+  "pane read")
+    f="$D/screens/${3//:/_}.txt"
+    s=$(( $(date +%s) % 600 ))
+    if [ -f "$f" ]; then
+      # A clock in the spinner line, so working agents look alive.
+      sed -e "s/{ELAPSED}/$((s / 60))m $((s % 60))s/" -e "s/{TOKENS}/$(( s / 7 + 1 )).$(( s % 10 ))/" "$f"
+    else
+      printf '● Done. The report is in the thread file.\n\n╭──────────────────────────────────────────────────────────────╮\n│ >                                                            │\n╰──────────────────────────────────────────────────────────────╯\n'
+    fi ;;
+  *) echo "demo: unsupported: $*" >&2; exit 2 ;;
+esac

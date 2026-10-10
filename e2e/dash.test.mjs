@@ -1030,7 +1030,7 @@ async function dockBoxes(page) {
 async function nodesInStage(page) {
   return waitFor(() => page.evaluate(() => {
     const s = document.querySelector("#stage").getBoundingClientRect();
-    const ns = [...document.querySelectorAll("svg g.node .core, svg g.node.hub text.name")].map((c) => c.getBoundingClientRect());
+    const ns = [...document.querySelectorAll("svg g.node .core, svg text.name")].map((c) => c.getBoundingClientRect());
     return ns.length > 0 && ns.every((n) => n.left >= s.left - 1 && n.right <= s.right + 1 && n.top >= s.top - 1 && n.bottom <= s.bottom + 1);
   }), 4000);
 }

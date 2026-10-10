@@ -1,0 +1,17 @@
+● Bash(herdr-projects thread list payments-svc)
+  ⎿  6 open: 1 working, 2 waiting on you,
+     1 ready for review
+
+● Bash(gh pr view 311 --repo acme-labs/payments-svc)
+  ⎿  Partial refunds
+     checks: 7/7 passing · review: pending
+
+● Over to you:
+  - t-0001 Ledger index migration: Approve the staging migration
+  - t-0004 Daily reconciliation report: Give the finance email alias
+  - PR #311 is green and ready to merge
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+  ⏵⏵ accept edits on (shift+tab to cycle)
