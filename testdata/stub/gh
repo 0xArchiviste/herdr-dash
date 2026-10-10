@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub of gh for E2E: `gh pr list --repo acme/<name> ...` serves fixture JSON.
+D="$(cd "$(dirname "$0")" && pwd)"
+echo "gh $*" >> "${STUB_LOG:-/dev/null}"
+[ "$1 $2" = "pr list" ] || { echo "stub: unsupported: $*" >&2; exit 2; }
+repo=""; while [ $# -gt 0 ]; do [ "$1" = "--repo" ] && repo="$2"; shift; done
+cat "$D/prs-${repo#acme/}.json" 2>/dev/null || echo '[]'

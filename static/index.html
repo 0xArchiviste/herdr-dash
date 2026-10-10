@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c1b19">
+<title>herdr-dash</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2398bc37'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand"><span id="live" class="live" title="live updates"></span>herdr<b>dash</b></div>
+  <div id="legend" class="legend"></div>
+  <div class="updated" id="updated"></div>
+</header>
+<section id="needs-wrap">
+  <div class="needs-bar">
+    <span class="needs-label">Needs you <span id="needs-n"></span></span>
+    <select id="needs-filter" aria-label="Acked and snoozed">
+      <option value="active">Hide acked/snoozed</option>
+      <option value="all">Show all</option>
+      <option value="parked">Only acked/snoozed</option>
+    </select>
+    <button id="select-mode" class="tbtn w" aria-pressed="false">Select</button>
+    <button id="bulk-ack" class="tbtn w" hidden>Ack selected</button>
+    <button id="bulk-snooze" class="tbtn" hidden>Snooze 1 day</button>
+    <button id="ack-all" class="tbtn w">Ack all review…</button>
+  </div>
+  <div id="needs"></div>
+</section>
+<section id="filters">
+  <select id="f-project" aria-label="Project"><option value="">All projects</option></select>
+  <select id="f-state" aria-label="State">
+    <option value="">All states</option>
+    <option value="needs">Needs you</option>
+    <option value="working">Working</option>
+    <option value="waiting">Waiting on you</option>
+    <option value="blocked">Blocked</option>
+    <option value="review">Ready for review</option>
+    <option value="landing">Landing</option>
+    <option value="idle">Idle</option>
+    <option value="resolved">Resolved</option>
+  </select>
+  <select id="f-window" aria-label="Time window">
+    <option value="">Any time</option>
+    <option value="3600">Last hour</option>
+    <option value="86400">Last 24h</option>
+    <option value="604800">Last 7 days</option>
+    <option value="2592000">Last 30 days</option>
+  </select>
+  <input id="f-search" type="search" placeholder="Search threads…" aria-label="Search" autocomplete="off">
+  <span id="shown" class="shown"></span>
+</section>
+<main id="stage">
+  <svg id="graph" role="img" aria-label="Projects and threads"></svg>
+  <div id="tip" class="tip" hidden></div>
+  <div id="errors" class="errors" hidden></div>
+</main>
+<aside id="panel" aria-hidden="true">
+  <button id="close" class="close" aria-label="Close">×</button>
+  <div id="panel-body"></div>
+</aside>
+<dialog id="dlg">
+  <form method="dialog">
+    <div id="dlg-msg"></div>
+    <div id="dlg-extra"></div>
+    <menu><button id="dlg-cancel" value="cancel" class="tbtn">Cancel</button><button id="dlg-ok" value="ok" class="tbtn primary">OK</button></menu>
+  </form>
+</dialog>
+<div id="toasts" aria-live="polite"></div>
+<script src="d3.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+[Unit]
+Description=herdr-dash: dashboard of herdr projects and threads
+After=network-online.target
+
+[Service]
+Type=simple
+# Extra flags, e.g. HERDR_DASH_ARGS=--addr 0.0.0.0:8791 to serve other machines.
+EnvironmentFile=-%h/.config/herdr-dash/env
+ExecStart=%h/.local/bin/herdr-dash $HERDR_DASH_ARGS
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+# Keep it tiny so it never starves the agents.
+Nice=10
+CPUQuota=25%
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=default.target

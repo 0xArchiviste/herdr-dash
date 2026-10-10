@@ -1,0 +1,280 @@
+// herdr-dash: an animated web dashboard of every herdr project and thread on
+// this machine, with a few allow-listed actions (see actions.go).
+package main
+
+import (
+	"bytes"
+	"context"
+	"embed"
+	"encoding/json"
+	"flag"
+	"io"
+	"io/fs"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+)
+
+//go:embed static
+var staticFS embed.FS
+
+var (
+	slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,80}$`)
+	idRe   = regexp.MustCompile(`^t-[0-9]{1,6}$`)
+	// No WithUnsafe: raw HTML is dropped and dangerous link schemes emptied.
+	md = goldmark.New(goldmark.WithExtensions(extension.GFM))
+)
+
+func main() {
+	home, _ := os.UserHomeDir()
+	cfg := Config{}
+	// Flags win over env; env wins over built-in defaults.
+	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
+	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
+	flag.StringVar(&cfg.HerdrProjects, "herdr-projects", env("HERDR_DASH_HERDR_PROJECTS", ""), "herdr-projects binary, $HERDR_DASH_HERDR_PROJECTS (default: on PATH, else the installed herdr plugin)")
+	flag.StringVar(&cfg.Auth, "auth", env("HERDR_DASH_AUTH", "none"), "auth mode, $HERDR_DASH_AUTH; only \"none\" (trusted network) exists yet")
+	flag.BoolVar(&cfg.ReadOnly, "read-only", env("HERDR_DASH_READ_ONLY", "") != "", "refuse every write action, $HERDR_DASH_READ_ONLY")
+	flag.IntVar(&cfg.WriteBurst, "write-burst", 10, "write actions allowed in a burst")
+	flag.IntVar(&cfg.WritePerMin, "write-per-min", 30, "write actions refilled per minute")
+	flag.StringVar(&cfg.Herdr, "herdr", "herdr", "herdr binary")
+	flag.StringVar(&cfg.GH, "gh", "gh", "gh binary")
+	flag.StringVar(&cfg.ClaudeDir, "claude-dir", filepath.Join(home, ".claude/projects"), "Claude Code transcripts")
+	flag.StringVar(&cfg.CodexDir, "codex-dir", filepath.Join(home, ".codex/sessions"), "Codex sessions")
+	flag.DurationVar(&cfg.Poll, "poll", 5*time.Second, "herdr pane list interval")
+	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
+	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
+	flag.DurationVar(&cfg.GHEvery, "gh-every", 10*time.Minute, "gh pr list interval")
+	flag.Parse()
+	if cfg.HerdrProjects == "" {
+		cfg.HerdrProjects = defaultHerdrProjects(home)
+	}
+	if cfg.Auth != "none" {
+		log.Fatalf("--auth %q is not implemented; only \"none\" is (the network is trusted)", cfg.Auth)
+	}
+	if cfg.ThreadsEvery == 0 {
+		cfg.ThreadsEvery = max(3*cfg.Poll, 3*time.Second)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	col := NewCollector(cfg)
+	go col.Run(ctx)
+
+	srv := &http.Server{Addr: *addr, Handler: newMux(col, cfg), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		srv.Shutdown(sctx)
+	}()
+	log.Printf("herdr-dash listening on %s (herdr-projects %s, root %s, read-only %v)", *addr, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+}
+
+func env(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// defaultHerdrProjects finds herdr-projects on PATH, else the newest build
+// under herdr's plugin checkouts.
+func defaultHerdrProjects(home string) string {
+	if p, err := exec.LookPath("herdr-projects"); err == nil {
+		return p
+	}
+	best, bestT := "herdr-projects", time.Time{}
+	matches, _ := filepath.Glob(filepath.Join(home, ".config/herdr/plugins/*/herdr-projects-*/target/release/herdr-projects"))
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && fi.ModTime().After(bestT) {
+			best, bestT = m, fi.ModTime()
+		}
+	}
+	return best
+}
+
+func newMux(col *Collector, cfg Config) *http.ServeMux {
+	mux := http.NewServeMux()
+	sub, _ := fs.Sub(staticFS, "static")
+	files := http.FileServer(http.FS(sub))
+	mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
+	}))
+	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, col.Snapshot())
+	})
+	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
+		fl, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "no streaming", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		ch := col.Subscribe()
+		defer col.Unsubscribe(ch)
+		first, _ := json.Marshal(col.Snapshot())
+		send := func(b []byte) bool {
+			_, err := io.WriteString(w, "event: state\ndata: "+string(b)+"\n\n")
+			fl.Flush()
+			return err == nil
+		}
+		if !send(first) {
+			return
+		}
+		ping := time.NewTicker(25 * time.Second)
+		defer ping.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case b := <-ch:
+				if !send(b) {
+					return
+				}
+			case <-ping.C:
+				io.WriteString(w, ": ping\n\n")
+				fl.Flush()
+			}
+		}
+	})
+	NewActions(cfg, col).register(mux)
+	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
+		slug, id := r.PathValue("slug"), r.PathValue("id")
+		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {
+			http.Error(w, "bad thread", http.StatusBadRequest)
+			return
+		}
+		t, alive, ok := col.raw(slug, id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, threadDetail(r.Context(), col, cfg, slug, t, alive))
+	})
+	return mux
+}
+
+type Jump struct {
+	Label   string `json:"label"`
+	Command string `json:"command"`
+}
+
+type Detail struct {
+	Task       string   `json:"task_summary"`
+	TaskHTML   string   `json:"task_html"`
+	ReportHTML string   `json:"report_html"`
+	Next       []string `json:"next"`
+	Screen     string   `json:"screen"`
+	Jump       []Jump   `json:"jump"`
+	Branch     string   `json:"branch"`
+	Worktree   string   `json:"worktree"`
+	Origin     string   `json:"origin"`
+	Profile    string   `json:"profile"`
+	StateLine  string   `json:"state_line"`
+	Resolved   string   `json:"resolved_reason"`
+}
+
+func threadDetail(ctx context.Context, col *Collector, cfg Config, slug string, t RawThread, alive bool) Detail {
+	threads := filepath.Join(cfg.Root, slug, "threads")
+	task := readCapped(filepath.Join(threads, t.ID+".task.md"))
+	report := readCapped(filepath.Join(threads, t.ID+".md"))
+	d := Detail{
+		Task:       summary(task),
+		TaskHTML:   render(task),
+		ReportHTML: render(report),
+		Next:       t.Next,
+		Branch:     t.Branch,
+		Worktree:   t.WorktreePath,
+		Origin:     t.Origin,
+		Profile:    t.Profile,
+		StateLine:  t.StateLine,
+		Resolved:   t.ResolvedReason,
+	}
+	if d.Next == nil {
+		d.Next = []string{}
+	}
+	if alive && t.Status != "resolved" && t.PaneID != "" {
+		d.Screen = col.Screen(ctx, t.PaneID, 5*time.Second)
+	}
+	if t.PaneID != "" && t.Status != "resolved" {
+		d.Jump = append(d.Jump, Jump{"Focus the agent pane", "herdr agent focus " + t.PaneID})
+		if t.TabID != "" {
+			d.Jump = append(d.Jump, Jump{"Focus its tab", "herdr tab focus " + t.TabID})
+		}
+	}
+	hp := shellQuote(cfg.HerdrProjects)
+	d.Jump = append(d.Jump,
+		Jump{"Show the thread", hp + " thread show " + slug + " " + t.ID},
+		Jump{"Open the project coordinator", hp + " open " + slug},
+	)
+	return d
+}
+
+func shellQuote(s string) string {
+	if regexp.MustCompile(`^[\w./:@-]+$`).MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func readCapped(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, 256<<10))
+	return string(b)
+}
+
+func render(src string) string {
+	if strings.TrimSpace(src) == "" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(src), &buf); err != nil {
+		return ""
+	}
+	return buf.String()
+}
+
+// summary is the first paragraph of a task, capped.
+func summary(task string) string {
+	var lines []string
+	for _, l := range strings.Split(task, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			if len(lines) > 0 {
+				break
+			}
+			continue
+		}
+		lines = append(lines, l)
+	}
+	s := strings.Join(lines, " ")
+	if r := []rune(s); len(r) > 400 {
+		s = string(r[:400]) + "…"
+	}
+	return s
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(v)
+}

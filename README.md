@@ -1,0 +1,96 @@
+# herdr-dash
+
+Animated web dashboard of every herdr project and thread on this machine:
+what is moving, done, stuck, or waiting on you, with a few triage and chat
+actions.
+
+- Graph: projects are hubs, threads are nodes. Green pulse = working, amber
+  glow = waiting on you, red = blocked, blue = ready for review, cyan =
+  landing (PR approved), tan = idle, gray = resolved. Bigger = more recent.
+- "Needs you" strip grouped by severity (blocked, waiting, review, landing)
+  with counts; groups collapse. Filters (project, state, time window,
+  search), and a side panel with task, report (sanitized markdown), Next
+  list, PR/branch and copyable jump commands. Times are in the viewer's time zone.
+- Live over SSE; one shared collector, no file watchers.
+
+## Actions
+
+Every write goes through `herdr-projects`, never raw `herdr agent` commands,
+so its refusals (blocked agent, text in the input box, trust screens) apply.
+
+| In the page | Runs |
+| --- | --- |
+| Chat: send a follow-up | `thread prompt SLUG ID --text-file -` (text on stdin) |
+| Chat: quick replies / typed answer when the pane is blocked | `thread keys SLUG ID KEY... [--text=TEXT]` |
+| Next list: Send | `thread next SLUG ID --line N` |
+| Ack, Ack selected, Ack all review (per project / age) | `thread ack SLUG ID` |
+| Resolve (after a confirm dialog) | `thread resolve SLUG ID` |
+| Coordinator box | `coordinator prompt SLUG --text-file -` |
+
+- Chat shows the pane's screen, streamed over SSE (every 3s, every 0.7s for
+  15s after a send). `agent_blocked` and `prompt_unconfirmed` are shown, not
+  retried; an unconfirmed prompt gets a manual "Press Enter" button.
+- Snooze (1 day) is per browser (localStorage). The strip hides acked and
+  snoozed threads by default; its filter shows all or only those.
+- Server side: POST with a JSON body only, same-origin, slug/id/keys/line
+  validated (keys: `enter esc up down left right tab space backspace y n 0-9`,
+  no ctrl chords), text length and control characters checked, one write at
+  a time, a token bucket (`--write-burst` 10, `--write-per-min` 30), and every
+  action logged. `--read-only` turns all of it off.
+
+## Data sources (reads)
+
+| Source | Used for | Cadence |
+| --- | --- | --- |
+| `herdr-projects --root R list` | projects, counts | 15s |
+| `herdr-projects --root R thread list SLUG --json` | threads, group, activity, PR | 15s (5m for all-resolved projects) |
+| `PROJECT.md` front matter | project name, goal | with the list |
+| `herdr pane list` | live agent status, session id | 5s |
+| `~/.claude/projects/*/ID.jsonl`, `~/.codex/sessions/Y/M/D/*ID.jsonl` mtime | last activity | 5s (stat only, paths cached) |
+| `herdr pane read PANE --source visible` | screen snippet | while a panel is open: 3s, 0.7s after a send |
+| `threads/t-NNNN.md`, `.task.md` | report, task | on panel open |
+| `gh pr list --repo R --state all` | PRs herdr-projects has not recorded yet | 10m, only repos with such threads |
+
+The state colors follow herdr-projects' own grouping (`group_token`), split
+into blocked vs waiting by the live pane status.
+
+## Run
+
+    make build && ./bin/herdr-dash     # http://127.0.0.1:8791
+
+It listens on `127.0.0.1:8791` by default. It has no authentication and shows
+task text, reports and pane screens and can prompt agents, so only use `--addr 0.0.0.0:8791` on a
+trusted network (e.g. a tailnet). `--herdr-projects` defaults to
+`herdr-projects` on `PATH`, else the herdr plugin build under
+`~/.config/herdr/plugins/`.
+
+Flags: `--addr`, `--root`, `--herdr-projects`, `--herdr`, `--gh`, `--claude-dir`,
+`--codex-dir`, `--poll`, `--threads-every`, `--quiet-every`, `--gh-every`,
+`--read-only`, `--write-burst`, `--write-per-min`, `--auth` (placeholder:
+only `none` exists; the network is trusted).
+
+Environment defaults (a flag wins): `HERDR_DASH_ADDR`, `HERDR_DASH_ROOT`
+(then `HERDR_PROJECTS_ROOT`), `HERDR_DASH_HERDR_PROJECTS`, `HERDR_DASH_AUTH`,
+`HERDR_DASH_READ_ONLY`.
+
+## Install as a systemd --user service
+
+    make install     # copies to ~/.local/bin, installs deploy/herdr-dash.service, enables + restarts
+
+Extra flags go in `~/.config/herdr-dash/env`, e.g.
+`HERDR_DASH_ARGS=--addr 0.0.0.0:8791`. Logs: `journalctl --user -u herdr-dash -f`. Needs lingering
+(`loginctl enable-linger $USER`) to start without a login session. The unit
+caps CPU at 25% and memory at 256M.
+
+## Test
+
+    make check
+
+Runs `go vet`, `node --check`, and the Playwright E2E in `e2e/` against the
+fixtures in `testdata/` with stubbed `herdr-projects`, `herdr` and `gh`. It
+asserts the API, sanitization, SSE, the page (graph, strip, panel, filters,
+phone layout), the exact `herdr-projects` command each action runs, that
+injection attempts, GET, non-JSON and cross-origin writes are refused, the
+rate limit, and that nothing outside the allow-list ran. Screenshots and the API
+snapshot land in `e2e/artifacts/`. `node e2e/screenshot.mjs URL DIR`
+screenshots a running instance.

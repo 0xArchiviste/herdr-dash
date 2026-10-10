@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Stub of herdr-projects for E2E: serves fixture JSON and logs every call.
+# Write commands only log (and their stdin); a few fixture threads refuse the
+# way the real binary does so the UI's error paths can be driven.
+D="$(cd "$(dirname "$0")" && pwd)"
+echo "herdr-projects $*" >> "${STUB_LOG:-/dev/null}"
+[ "$1" = "--root" ] && shift 2
+logstdin() { local s; s="$(cat)"; printf 'stdin: %s\n' "${s//$'\n'/\\n}" >> "${STUB_LOG:-/dev/null}"; }
+case "$1 $2" in
+  "list "*|"list") printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tactive\tWorking: 1\n' ;;
+  "thread list")
+    f="$D/thread-list-$3.json"
+    [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }
+    cat "$f" ;;
+  "thread prompt")
+    logstdin
+    case "$3/$4" in
+      alpha/t-0002) echo "herdr-projects: agent_blocked: t-0002 is waiting on a prompt in its pane (w1B:p1); \`thread read\` shows it, \`thread keys\` answers it" >&2; exit 1 ;;
+      beta/t-0002) echo "herdr-projects: prompt_unconfirmed: the text was typed into t-0002's pane (w2B:p1) but the agent was not seen starting on it (timeout). Do not send it again" >&2; exit 1 ;;
+    esac
+    echo "sent to $4" ;;
+  "thread keys") echo "$4 (agent was blocked): pressed keys" ;;
+  "thread ack")
+    [ "$3/$4" = "beta/t-0001" ] && { echo "herdr-projects: stub refuses to ack beta/t-0001" >&2; exit 1; }
+    echo "$4: report acknowledged" ;;
+  "thread next") echo "sent Next line to $4" ;;
+  "thread resolve") echo "$4 resolved" ;;
+  "coordinator prompt") logstdin; echo "sent to the coordinator in pane w1Z:p1 (agent was idle)" ;;
+  *) echo "stub: unsupported: $*" >&2; exit 2 ;;
+esac

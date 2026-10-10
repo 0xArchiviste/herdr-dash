@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub of herdr for E2E: serves fixture JSON and logs every call.
+D="$(cd "$(dirname "$0")" && pwd)"
+echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
+case "$1 $2" in
+  "pane list") cat "$D/panes.json" ;;
+  "pane read") printf 'screen of %s\n❯ waiting for approval <b>bold?</b>\n' "$3" ;;
+  *) echo "stub: unsupported: $*" >&2; exit 2 ;;
+esac
