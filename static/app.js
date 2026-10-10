@@ -627,7 +627,7 @@
     send.addEventListener("click", go);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
     box.append(
-      el("pre", { class: "screen" }),
+      screenBox(tpath(key, "history"), key),
       el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Answer the prompt:" }),
         ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => pressKeys(key, [k]) }))),
       el("div", { class: "chat-row" }, input, send),
@@ -636,20 +636,20 @@
     return box;
   }
 
-  // The newest lines are at the bottom: keep the box pinned there unless the
-  // reader scrolled up, and re-pin once they scroll back down.
+  // The open panel's screen box (static/scrollback.js): the live stream's
+  // tails merge into a longer buffer, earlier lines load on scroll up.
+  let screen = null;
+  function screenBox(historyURL, key) {
+    screen = HDScrollback.box((n) => `${historyURL}?lines=${n}`, () => selected === key);
+    return screen.el;
+  }
+
+  // The newest lines are at the bottom: the box stays pinned there unless the
+  // reader scrolled up, and re-pins once they scroll back down.
   function showScreen(d) {
     const box = $("#p-chat");
-    const pre = box?.querySelector(".screen");
-    if (!pre) return;
-    const stick = !pre.dataset.n || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
-    pre.textContent = (d.screen || "").replace(/\s+$/, ""); // textContent: never HTML; drops blank rows only
-    pre.dataset.n = (+pre.dataset.n || 0) + 1;
-    if (stick) {
-      pre.scrollTop = pre.scrollHeight;
-      // Again after layout: the box may have just appeared (was :empty).
-      requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
-    }
+    if (!box?.querySelector(".screen") || !screen) return;
+    screen.live(d.screen);
     live = d.live_status || "";
     const blocked = live === "blocked";
     if (isHub(selected || "")) { coordNote(d.pane_alive, blocked); return; }
@@ -724,7 +724,7 @@
       el("div", { id: "p-actions" }),
       el("dl", { class: "meta", id: "p-meta" }),
       el("section", { id: "p-chat" }, el("h3", { text: "Coordinator" }),
-        el("pre", { class: "screen" }),
+        screenBox(`/api/project/${encodeURIComponent(slug)}/history`, "hub:" + slug),
         el("div", { id: "coord-note" }),
         el("div", { class: "chat-row" }, input, send),
         el("div", { id: "chat-log" })),

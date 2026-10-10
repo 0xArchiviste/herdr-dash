@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,6 +209,8 @@ type Collector struct {
 	snap       Snapshot
 	subs       map[chan []byte]struct{}
 	screens    map[string]screenHit
+	history    map[string]screenHit
+	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
 	burst      map[string]time.Time // pane -> read its screen fast until
 	kick       chan struct{}
 }
@@ -218,8 +221,9 @@ type transcriptHit struct {
 }
 
 type screenHit struct {
-	text string
-	at   time.Time
+	text  string
+	lines int // lines asked for (history reads)
+	at    time.Time
 }
 
 func NewCollector(cfg Config) *Collector {
@@ -231,6 +235,8 @@ func NewCollector(cfg Config) *Collector {
 		transcript: map[string]transcriptHit{},
 		subs:       map[chan []byte]struct{}{},
 		screens:    map[string]screenHit{},
+		history:    map[string]screenHit{},
+		paneLocks:  map[string]*sync.Mutex{},
 		burst:      map[string]time.Time{},
 		kick:       make(chan struct{}, 1),
 		snap:       Snapshot{Projects: []Project{}, Threads: []Thread{}, Errors: []string{}},
@@ -817,31 +823,111 @@ func (c *Collector) hasProject(slug string) bool {
 	return c.projects[slug] != nil
 }
 
-// Screen reads the visible screen of a pane, reusing a read younger than
-// maxAge so several viewers cost one read.
-func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duration) string {
+const (
+	// liveLines is what the live stream reads every few seconds: small, the
+	// page merges it into its own longer buffer.
+	liveLines = 60
+	// maxHistory caps the lines one history read may ask for.
+	maxHistory = 2000
+	// historyAge is how long a history read is reused, for any request of
+	// at most as many lines.
+	historyAge = 5 * time.Second
+)
+
+// lockPane serializes reads of one pane, so concurrent viewers wait for
+// one read and reuse it instead of each running their own.
+func (c *Collector) lockPane(pane string) func() {
 	c.mu.Lock()
-	if h, ok := c.screens[pane]; ok && time.Since(h.at) < maxAge {
-		c.mu.Unlock()
-		return h.text
+	l := c.paneLocks[pane]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.paneLocks[pane] = l
 	}
 	c.mu.Unlock()
-	// "recent", not "visible": visible is the pane's viewport, which misses
-	// the newest lines whenever someone scrolled the pane up in herdr.
-	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", "40")
-	text := stripANSI(string(out))
-	if err != nil {
-		text = ""
-	}
+	l.Lock()
+	return l.Unlock
+}
+
+// cached returns the hit for pane in m if it is younger than maxAge and
+// holds at least lines lines (0: any).
+func (c *Collector) cached(m map[string]screenHit, pane string, maxAge time.Duration, lines int) (string, bool) {
 	c.mu.Lock()
-	c.screens[pane] = screenHit{text: text, at: time.Now()}
-	for k, h := range c.screens {
+	defer c.mu.Unlock()
+	h, ok := m[pane]
+	if !ok || time.Since(h.at) >= maxAge || h.lines < lines {
+		return "", false
+	}
+	return h.text, true
+}
+
+func (c *Collector) store(m map[string]screenHit, pane string, h screenHit) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m[pane] = h
+	for k, h := range m {
 		if time.Since(h.at) > time.Minute {
-			delete(c.screens, k)
+			delete(m, k)
 		}
 	}
-	c.mu.Unlock()
+	for k := range c.paneLocks {
+		if _, a := c.screens[k]; !a {
+			if _, b := c.history[k]; !b {
+				delete(c.paneLocks, k)
+			}
+		}
+	}
+}
+
+// readPane reads the newest lines of a pane. "recent", not "visible":
+// visible is the pane's viewport, which misses the newest lines whenever
+// someone scrolled the pane up in herdr.
+func (c *Collector) readPane(ctx context.Context, pane string, lines int) string {
+	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", strconv.Itoa(lines))
+	if err != nil {
+		return ""
+	}
+	return stripANSI(string(out))
+}
+
+// Screen reads the newest lines of a pane, reusing a read younger than
+// maxAge so several viewers cost one read.
+func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duration) string {
+	if text, ok := c.cached(c.screens, pane, maxAge, 0); ok {
+		return text
+	}
+	defer c.lockPane(pane)()
+	if text, ok := c.cached(c.screens, pane, maxAge, 0); ok {
+		return text
+	}
+	text := c.readPane(ctx, pane, liveLines)
+	c.store(c.screens, pane, screenHit{text: text, at: time.Now()})
 	return text
+}
+
+// History reads the last n lines of a pane (n capped at maxHistory) for a
+// reader scrolling up. A recent read of at least n lines is reused.
+func (c *Collector) History(ctx context.Context, pane string, n int) string {
+	n = max(1, min(n, maxHistory))
+	text, ok := c.cached(c.history, pane, historyAge, n)
+	if !ok {
+		unlock := c.lockPane(pane)
+		if text, ok = c.cached(c.history, pane, historyAge, n); !ok {
+			text = c.readPane(ctx, pane, n)
+			c.store(c.history, pane, screenHit{text: text, lines: n, at: time.Now()})
+		}
+		unlock()
+	}
+	return lastLines(text, n)
+}
+
+// lastLines is the last n lines of s, trailing blank lines dropped.
+func lastLines(s string, n int) string {
+	s = strings.TrimRight(s, " \t\r\n")
+	if s == "" {
+		return ""
+	}
+	ls := strings.Split(s, "\n")
+	return strings.Join(ls[max(0, len(ls)-n):], "\n")
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
