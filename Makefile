@@ -7,6 +7,7 @@ vet:
 	go vet ./...
 	node --check static/app.js
 	node --check static/scrollback.js
+	node --check static/voice.js
 
 e2e/node_modules: e2e/package.json
 	cd e2e && npm install --no-audit --no-fund
