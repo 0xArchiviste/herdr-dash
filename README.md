@@ -54,6 +54,8 @@ always through `herdr-projects` and its safety checks.
 - Task, latest report (sanitized markdown), PR and branch links, and
   copyable jump commands (`herdr agent focus …`) to reach the pane in your
   terminal.
+- **Dock the panel** right, left or bottom and drag it to size; the graph
+  refits around it, and the choice sticks per browser.
 
 ### Coordinator panel
 
