@@ -64,6 +64,20 @@
 //     first, each collapsed, with title, id, time and a way to the thread.
 // 34. The thread panel's report is still open by default, or above the chat
 //     and Next.
+//
+// Dockable panel, written before the change:
+// 35. The panel cannot be docked left or bottom, or the choice is lost on
+//     reload.
+// 36. The panel still overlays the graph: the graph area does not shrink
+//     when it opens or moves, nor grow back when it closes, or nodes are
+//     left outside the remaining area.
+// 37. The splitter does not resize the panel, ignores its limits, or the
+//     size is not kept per position.
+// 38. The panel covers the Needs-you strip or the filters.
+// 39. The bottom dock wastes its width: chat and details are not side by
+//     side on a wide screen.
+// 40. Phones lose the bottom sheet, or show a dock control, whatever dock
+//     was chosen on desktop.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -829,6 +843,161 @@ test("phone: coordinator panel fits", async () => {
   assert.equal(overflow, false);
   await page.screenshot({ path: join(artifacts, "phone-coordinator-threads.png") });
   await page.close();
+});
+
+// Boxes of the stage (graph area) and the panel, after the panel's transition.
+async function dockBoxes(page) {
+  await page.waitForTimeout(450);
+  return page.evaluate(() => {
+    const b = (s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom }; };
+    return { stage: b("#stage"), panel: b("#panel"), needs: b("#needs-wrap"), filters: b("#filters") };
+  });
+}
+// Every node, and every project name, lies inside the stage once the graph
+// has re-fit.
+async function nodesInStage(page) {
+  return waitFor(() => page.evaluate(() => {
+    const s = document.querySelector("#stage").getBoundingClientRect();
+    const ns = [...document.querySelectorAll("svg g.node .core, svg g.node.hub text.name")].map((c) => c.getBoundingClientRect());
+    return ns.length > 0 && ns.every((n) => n.left >= s.left - 1 && n.right <= s.right + 1 && n.top >= s.top - 1 && n.bottom <= s.bottom + 1);
+  }), 4000);
+}
+const near = (a, b, tol = 4) => Math.abs(a - b) <= tol;
+
+test("desktop: panel docks right, left and bottom; graph area follows; sizes persist", async () => {
+  // 35-39
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(base + "/");
+  await page.waitForSelector("svg g.node.thread");
+  await page.waitForTimeout(1500);
+  const full = (await dockBoxes(page)).stage;
+  assert.ok(near(full.w, 1440), "closed panel takes no room");
+  assert.equal(await page.locator("#splitter").isVisible(), false);
+
+  // Right is the default.
+  await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+  await page.waitForSelector("#panel.open");
+  assert.equal(await page.locator("#dock-right").getAttribute("aria-pressed"), "true");
+  let b = await dockBoxes(page);
+  assert.ok(near(b.panel.r, 1440) && near(b.panel.w, 480, 6), `right panel ${JSON.stringify(b.panel)}`);
+  assert.ok(near(b.stage.w, 1440 - b.panel.w, 8) && b.stage.r <= b.panel.x + 1, "graph shrinks beside the panel");
+  assert.ok(b.panel.y >= b.filters.b - 1, "needs strip and filters stay uncovered");
+  await nodesInStage(page);
+  await page.screenshot({ path: join(artifacts, "dock-right.png") });
+
+  // Left.
+  await page.locator("#dock-left").click();
+  assert.equal(await page.locator("#dock-left").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#dock-right").getAttribute("aria-pressed"), "false");
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.x, 0) && near(b.panel.w, 480, 6), `left panel ${JSON.stringify(b.panel)}`);
+  assert.ok(b.stage.x >= b.panel.r - 1 && near(b.stage.r, 1440), "graph to the right of the panel");
+  await nodesInStage(page);
+  await page.screenshot({ path: join(artifacts, "dock-left.png") });
+
+  // Bottom: full width, ~40% high, chat beside the details.
+  await page.locator("#dock-bottom").click();
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.x, 0) && near(b.panel.w, 1440) && near(b.panel.b, 900), `bottom panel ${JSON.stringify(b.panel)}`);
+  assert.ok(near(b.panel.h, 360, 8), `default height ~40% of the viewport: ${b.panel.h}`);
+  assert.ok(near(b.stage.w, 1440) && b.stage.b <= b.panel.y + 1 && b.stage.y >= b.filters.b - 1, "graph above the panel");
+  await nodesInStage(page);
+  const chat = await page.locator("#p-chat").boundingBox();
+  const meta = await page.locator("#p-meta").boundingBox();
+  assert.ok(chat.x >= meta.x + meta.width - 1 && chat.y < meta.y + meta.height, "chat in a column beside the details");
+  await page.screenshot({ path: join(artifacts, "dock-bottom.png") });
+  // The strip stays usable with the panel open.
+  await page.locator('#needs .chip[data-key="hub:alpha"]').click();
+  await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Alpha Project", 3000);
+  await page.screenshot({ path: join(artifacts, "dock-bottom-coordinator.png") });
+
+  // Splitter: drag the bottom panel 100px taller.
+  const drag = async (dx, dy) => {
+    const s = await page.locator("#splitter").boundingBox();
+    const x = s.x + s.width / 2, y = s.y + s.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + dx / 2, y + dy / 2, { steps: 4 });
+    await page.mouse.move(x + dx, y + dy, { steps: 4 });
+    await page.mouse.up();
+  };
+  await drag(0, -100);
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.h, 460, 8), `dragged height ${b.panel.h}`);
+  assert.ok(b.stage.b <= b.panel.y + 1);
+  await nodesInStage(page);
+  // Limits: cannot swallow the graph or vanish.
+  await drag(0, -2000);
+  b = await dockBoxes(page);
+  assert.ok(b.stage.h >= 120 && b.panel.h <= 0.85 * 900, `max height ${b.panel.h}`);
+  await drag(0, 2000);
+  b = await dockBoxes(page);
+  assert.ok(b.panel.h >= 150 && b.panel.h < 300, `min height ${b.panel.h}`);
+  await drag(0, -300);
+  const bottomH = (await dockBoxes(page)).panel.h;
+
+  // Sizes are per position: right still has its default, then resize it.
+  await page.locator("#dock-right").click();
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.w, 480, 6), `right keeps its own size ${b.panel.w}`);
+  await drag(-120, 0);
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.w, 600, 8), `dragged width ${b.panel.w}`);
+  assert.ok(near(b.stage.w, 1440 - b.panel.w, 8));
+  await drag(2000, 0);
+  b = await dockBoxes(page);
+  assert.ok(b.panel.w >= 300, `min width ${b.panel.w}`);
+  await drag(-3000, 0);
+  b = await dockBoxes(page);
+  assert.ok(b.stage.w >= 240, `max width leaves graph room: ${b.stage.w}`);
+  await drag(1000, 0); // back to something sane
+  const rightW = (await dockBoxes(page)).panel.w;
+
+  // Esc closes and the graph takes the room back.
+  await page.keyboard.press("Escape");
+  b = await dockBoxes(page);
+  assert.equal(await page.locator("#panel.open").count(), 0);
+  assert.ok(near(b.stage.w, 1440) && near(b.stage.b, 900), "graph regains the space");
+  assert.equal(await page.locator("#splitter").isVisible(), false);
+  await nodesInStage(page);
+
+  // Persistence: dock and per-position sizes survive a reload.
+  await page.locator("#dock-bottom").evaluate((e) => e.click()); // control works while closed too
+  await page.reload();
+  await page.waitForSelector("svg g.node.thread");
+  await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+  await page.waitForSelector("#panel.open");
+  assert.equal(await page.locator("#dock-bottom").getAttribute("aria-pressed"), "true");
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.h, bottomH, 3) && near(b.panel.w, 1440), `bottom persisted ${b.panel.h} vs ${bottomH}`);
+  await page.locator("#dock-right").click();
+  b = await dockBoxes(page);
+  assert.ok(near(b.panel.w, rightW, 3), `right persisted ${b.panel.w} vs ${rightW}`);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("phone: bottom sheet and no dock control, whatever the saved dock", async () => {
+  // 40
+  for (const pos of ["left", "bottom"]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await page.addInitScript((p) => localStorage.setItem("hd-dock", JSON.stringify({ pos: p, left: 700, bottom: 600 })), pos);
+    await page.goto(base + "/");
+    await page.waitForSelector("svg g.node.thread");
+    await page.locator('#needs .chip[data-key="alpha/t-0002"]').tap();
+    await page.waitForSelector("#panel.open");
+    const b = await dockBoxes(page);
+    assert.ok(b.panel.w <= 390 && b.panel.y > 100 && near(b.panel.b, 844), `sheet (${pos}) ${JSON.stringify(b.panel)}`);
+    assert.ok(near(b.stage.w, 390), "sheet overlays, graph keeps its width");
+    assert.equal(await page.locator("#dock").isVisible(), false, "no dock control on phones");
+    assert.equal(await page.locator("#splitter").isVisible(), false);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    assert.equal(overflow, false);
+    await page.screenshot({ path: join(artifacts, `phone-dock-${pos}.png`) });
+    await page.close();
+  }
 });
 
 test("writes are rate limited", async () => {
