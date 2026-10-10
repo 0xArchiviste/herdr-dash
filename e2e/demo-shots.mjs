@@ -60,7 +60,10 @@ await shot(page, "phone-overview");
 await page.locator(`${blockedChip}[data-key="pixel-forge/t-0003"]`).click();
 await page.waitForSelector("#panel.open .quick:not([hidden])");
 await page.waitForTimeout(1500);
-await shot(page, "phone-panel");
+// Scroll the quick replies clear of the floating voice mic, crop above it.
+await page.evaluate(() => { document.querySelector("#panel").scrollTop = 150; });
+await page.waitForTimeout(300);
+await shot(page, "phone-panel", { clip: { x: 0, y: 0, width: 390, height: 770 } });
 await page.close();
 
 // Hero recording: the graph pulsing, a hover, then a node opening its panel.
