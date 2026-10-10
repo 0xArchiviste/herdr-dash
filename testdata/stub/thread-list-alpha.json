@@ -30,7 +30,9 @@
     "agent_name": "hp-alpha-t-0001",
     "resolved_reason": "",
     "report_hash": "",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": "/fixture/wt/alpha-t-0001"
   },
   {
     "id": "t-0002",
@@ -63,7 +65,9 @@
     "agent_name": "hp-alpha-t-0002",
     "resolved_reason": "",
     "report_hash": "",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": ""
   },
   {
     "id": "t-0003",
@@ -96,7 +100,9 @@
     "agent_name": "hp-alpha-t-0003",
     "resolved_reason": "",
     "report_hash": "h3",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": ""
   },
   {
     "id": "t-0004",
@@ -129,7 +135,9 @@
     "agent_name": "hp-alpha-t-0004",
     "resolved_reason": "",
     "report_hash": "",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": "/fixture/wt/alpha-t-0004"
   },
   {
     "id": "t-0005",
@@ -162,7 +170,9 @@
     "agent_name": "hp-alpha-t-0005",
     "resolved_reason": "",
     "report_hash": "",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": ""
   },
   {
     "id": "t-0006",
@@ -196,7 +206,9 @@
     "agent_name": "hp-alpha-t-0006",
     "resolved_reason": "",
     "report_hash": "h6",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/alpha",
+    "cwd": ""
   },
   {
     "id": "t-0007",
@@ -229,6 +241,8 @@
     "agent_name": "hp-alpha-t-0007",
     "resolved_reason": "",
     "report_hash": "h7",
-    "acked_report_hash": "h7"
+    "acked_report_hash": "h7",
+    "repo": "/fixture/repos/alpha",
+    "cwd": ""
   }
 ]
