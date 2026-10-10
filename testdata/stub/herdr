@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stub of herdr for E2E: serves fixture JSON and logs every call.
-# `pane read` serves a 54-line screen whose newest lines are at the bottom;
+# `pane read` serves a screen whose newest lines are at the bottom;
 # `--source visible` acts like a pane someone scrolled up in herdr: it misses
 # the last lines, so only `--source recent` shows the newest output.
 D="$(cd "$(dirname "$0")" && pwd)"
@@ -15,10 +15,23 @@ case "$1 $2" in
       shift
     done
     screen() {
-      for i in $(seq 1 50); do echo "scrollback line $i"; done
+      # STUB_REDRAW names a file: while it exists the pane shows a full-screen
+      # TUI frame that shares no line with its history.
+      if [ -n "${STUB_REDRAW:-}" ] && [ -e "$STUB_REDRAW" ]; then
+        for i in $(seq 1 30); do echo "full-screen frame row $i"; done
+        echo "frame clock $(date +%s%N)"
+        return
+      fi
+      # STUB_T0 (epoch seconds) gives a long, growing history: 2400 lines,
+      # plus two more every second, each line unique and stable.
+      h=50
+      if [ -n "${STUB_T0:-}" ]; then h=$(( 2400 + 2 * ($(date +%s) - STUB_T0) )); fi
+      seq -f "scrollback line %.0f" 1 "$h"
       echo "clock $(date +%s%N)" # every read differs, like a live agent
       printf 'screen of %s\n❯ waiting for approval <b>bold?</b>\nLAST LINE of %s\n' "$pane" "$pane"
     }
+    # A long read takes a while, so concurrent readers would overlap.
+    if [ "${lines:-0}" -gt 60 ]; then sleep 0.3; fi
     if [ "$src" = "visible" ]; then screen | head -n -9; else screen; fi | tail -n "${lines:-+1}" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac
