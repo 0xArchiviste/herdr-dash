@@ -1092,8 +1092,29 @@
   }
   function connect() {
     const es = new EventSource("/api/events");
-    es.addEventListener("state", (e) => { $("#live").className = "live on"; apply(JSON.parse(e.data)); });
+    es.addEventListener("state", (e) => { $("#live").className = "live on"; const s = JSON.parse(e.data); checkBuild(s.build); apply(s); });
     es.onerror = () => { $("#live").className = "live off"; };
+  }
+
+  // After an install the server restarts with a new frontend: the stream
+  // reconnects with a new build id. Say so, and reload once nobody is
+  // typing (text in a visible field, a focused field, a dialog, dictation).
+  let build = null, updateTimer = null;
+  function checkBuild(b) {
+    if (!b) return;
+    if (build === null) build = b;
+    if (b === build || updateTimer) return;
+    const t = el("div", { class: "toast update", role: "status", title: "A new version is installed: click to reload now", text: "Updated — reload" });
+    t.addEventListener("click", () => location.reload());
+    $("#toasts").append(t);
+    updateTimer = setInterval(() => { if (idleForReload()) location.reload(); }, 1000);
+  }
+  function idleForReload() {
+    const a = document.activeElement;
+    if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return false;
+    if ($("#dlg").open || document.querySelector(".dictating, .recording, #voice-fab.listening, #voice-hud .confirm")) return false;
+    return ![...document.querySelectorAll("input, textarea")].some((f) =>
+      !/^(checkbox|radio|button|submit|range|color|hidden)$/.test(f.type) && f.value.trim() && f.getClientRects().length);
   }
 
   // Open a thread or hub panel, clearing filters that hide its node.

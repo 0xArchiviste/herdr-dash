@@ -177,6 +177,10 @@ The unit caps CPU at 25% and memory at 256M.
 | `threads/t-NNNN{.task,,.next}.md`, `PROJECT.md`, `TASKS.md`, `MEMORY.md` | content search | on search only (stat, re-read when the mtime changed) |
 | `memex search --non-interactive --mode lexical …` (opt-in) | content search in transcripts | on search only |
 
+The state carries a build id (a hash of the embedded frontend). After
+`make install`, open pages see it change when the stream reconnects, show
+"Updated — reload", and reload by themselves once nothing is being typed.
+
 State colors follow herdr-projects' own grouping (`group_token`), split into
 blocked vs waiting by the live pane status.
 

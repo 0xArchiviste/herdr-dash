@@ -5,9 +5,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -37,7 +40,8 @@ var (
 
 func main() {
 	home, _ := os.UserHomeDir()
-	cfg := Config{Voice: voiceConfigFromEnv()}
+	// HERDR_DASH_BUILD_ID stands in for a new build in tests.
+	cfg := Config{Voice: voiceConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
 	// Flags win over env; env wins over built-in defaults.
 	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
@@ -96,6 +100,21 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// buildID is a short hash of the embedded frontend: it changes exactly when
+// an install would give open pages new code.
+func buildID() string {
+	h := sha256.New()
+	fs.WalkDir(staticFS, "static", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			b, _ := staticFS.ReadFile(p)
+			fmt.Fprintf(h, "%s %d\n", p, len(b))
+			h.Write(b)
+		}
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 func env(key, def string) string {
