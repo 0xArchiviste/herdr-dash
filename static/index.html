@@ -52,15 +52,23 @@
   <input id="f-search" type="search" placeholder="Search threads…" aria-label="Search" autocomplete="off">
   <span id="shown" class="shown"></span>
 </section>
+<div id="work">
 <main id="stage">
   <svg id="graph" role="img" aria-label="Projects and threads"></svg>
   <div id="tip" class="tip" hidden></div>
   <div id="errors" class="errors" hidden></div>
 </main>
+<div id="splitter" role="separator" tabindex="0" aria-label="Resize panel" title="Drag to resize (double-click resets)" hidden></div>
 <aside id="panel" aria-hidden="true">
+  <div id="dock" role="group" aria-label="Dock panel">
+    <button id="dock-left" class="dockbtn" data-pos="left" aria-pressed="false" title="Dock left" aria-label="Dock left"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="1.5" y="2.5" width="5" height="11" rx="1.5"/></svg></button>
+    <button id="dock-bottom" class="dockbtn" data-pos="bottom" aria-pressed="false" title="Dock bottom" aria-label="Dock bottom"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="1.5" y="8.5" width="13" height="5" rx="1.5"/></svg></button>
+    <button id="dock-right" class="dockbtn" data-pos="right" aria-pressed="true" title="Dock right" aria-label="Dock right"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="9.5" y="2.5" width="5" height="11" rx="1.5"/></svg></button>
+  </div>
   <button id="close" class="close" aria-label="Close">×</button>
   <div id="panel-body"></div>
 </aside>
+</div>
 <dialog id="dlg">
   <form method="dialog">
     <div id="dlg-msg"></div>

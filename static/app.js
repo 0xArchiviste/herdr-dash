@@ -102,7 +102,10 @@
     if (userZoomed || !nodes.size) return;
     const ns = [...nodes.values()];
     const pad = 40;
-    const x0 = d3.min(ns, (d) => d.x - d.r) - pad, x1 = d3.max(ns, (d) => d.x + d.r) + pad;
+    // A project's name can be wider than its hub: keep the whole name in view.
+    nodeSel.select("text.name").each(function (d) { d.lw = this.getComputedTextLength() / 2; });
+    const half = (d) => Math.max(d.r, (d.hub && d.lw) || 0);
+    const x0 = d3.min(ns, (d) => d.x - half(d)) - pad, x1 = d3.max(ns, (d) => d.x + half(d)) + pad;
     const y0 = d3.min(ns, (d) => d.y - d.r) - pad, y1 = d3.max(ns, (d) => d.y + d.r + 18) + pad;
     const r = svg.node().getBoundingClientRect();
     const k = Math.min(2.2, r.width / (x1 - x0), r.height / (y1 - y0));
@@ -118,7 +121,19 @@
     sim.force("x").strength(0.05 * aspect);
     sim.force("y").strength(0.05 / aspect);
   }
-  window.addEventListener("resize", size);
+  // The stage shrinks and grows with the docked panel and the window: keep
+  // the viewBox in step every frame, then re-fit once it settles.
+  let refitTimer = null;
+  function refit() {
+    if (!userZoomed) return fit(true);
+    const n = selected && nodes.get(selected);
+    if (n) svg.transition().duration(500).call(zoom.translateTo, n.x, n.y);
+  }
+  new ResizeObserver(() => {
+    size();
+    clearTimeout(refitTimer);
+    refitTimer = setTimeout(refit, 120);
+  }).observe($("#stage"));
 
   function threadRadius(t) {
     if (t.state === "resolved") return 4;
@@ -448,6 +463,76 @@
     if (selected) isHub(selected) ? refreshCoordHeader() : refreshPanelHeader();
   }
 
+  // ---------------------------------------------------------------- dock
+  // The panel docks right (default), left or bottom, with a size kept per
+  // position. Phones always get the bottom sheet (CSS hides the controls).
+  const work = $("#work");
+  const splitter = $("#splitter");
+  const DOCKS = ["right", "left", "bottom"];
+  const dock = { pos: "right" };
+  try { Object.assign(dock, JSON.parse(localStorage.getItem("hd-dock") || "{}")); } catch {}
+  if (!DOCKS.includes(dock.pos)) dock.pos = "right";
+  const saveDock = () => localStorage.setItem("hd-dock", JSON.stringify(dock));
+  const vertical = () => dock.pos === "bottom";
+  // [min, max] panel size: never so small it is useless, nor so big the graph vanishes.
+  function dockLimits() {
+    const r = work.getBoundingClientRect();
+    return vertical() ? [160, Math.max(160, Math.min(r.height * 0.8, r.height - 120))]
+      : [320, Math.max(320, Math.min(r.width * 0.75, r.width - 280))];
+  }
+  const clampSize = (px) => { const [lo, hi] = dockLimits(); return Math.round(Math.min(hi, Math.max(lo, px))); };
+  function applyDock() {
+    for (const p of DOCKS) {
+      document.body.classList.toggle("dock-" + p, p === dock.pos);
+      $("#dock-" + p).setAttribute("aria-pressed", String(p === dock.pos));
+    }
+    splitter.setAttribute("aria-orientation", vertical() ? "horizontal" : "vertical");
+    const want = +dock[dock.pos] || (vertical() ? innerHeight * 0.4 : 480);
+    work.style.setProperty("--panel-size", clampSize(want) + "px");
+  }
+  function resizePanel(px) {
+    dock[dock.pos] = clampSize(px);
+    work.style.setProperty("--panel-size", dock[dock.pos] + "px");
+  }
+  const panelPx = () => parseFloat(work.style.getPropertyValue("--panel-size")) || 480;
+  $("#dock").addEventListener("click", (e) => {
+    const b = e.target.closest(".dockbtn");
+    if (!b) return;
+    dock.pos = b.dataset.pos;
+    saveDock();
+    applyDock();
+  });
+  // Drag the splitter; the panel grows toward the graph.
+  splitter.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    splitter.setPointerCapture(e.pointerId);
+    document.body.classList.add("dragging");
+    const start = panelPx(), x0 = e.clientX, y0 = e.clientY, sign = dock.pos === "left" ? 1 : -1;
+    const move = (ev) => resizePanel(start + (vertical() ? y0 - ev.clientY : sign * (ev.clientX - x0)));
+    const up = () => {
+      splitter.removeEventListener("pointermove", move);
+      splitter.removeEventListener("pointerup", up);
+      splitter.removeEventListener("pointercancel", up);
+      document.body.classList.remove("dragging");
+      saveDock();
+    };
+    splitter.addEventListener("pointermove", move);
+    splitter.addEventListener("pointerup", up);
+    splitter.addEventListener("pointercancel", up);
+  });
+  splitter.addEventListener("keydown", (e) => {
+    const grow = { right: ["ArrowLeft", "ArrowRight"], left: ["ArrowRight", "ArrowLeft"], bottom: ["ArrowUp", "ArrowDown"] }[dock.pos];
+    const d = e.key === grow[0] ? 24 : e.key === grow[1] ? -24 : 0;
+    if (!d) return;
+    e.preventDefault();
+    resizePanel(panelPx() + d);
+    saveDock();
+  });
+  splitter.addEventListener("dblclick", () => { delete dock[dock.pos]; saveDock(); applyDock(); });
+  window.addEventListener("resize", applyDock);
+  applyDock();
+
   // ---------------------------------------------------------------- panel
   const panel = $("#panel");
   $("#close").addEventListener("click", () => select(null));
@@ -470,12 +555,17 @@
     if (!key) {
       panel.classList.remove("open");
       panel.setAttribute("aria-hidden", "true");
+      splitter.hidden = true;
       return;
     }
     const n = nodes.get(key);
-    if (n) svg.transition().duration(600).call(zoom.translateTo, n.x + (innerWidth > 700 ? 160 : 0), n.y + (innerWidth > 700 ? 0 : 150));
+    // Phones: the sheet covers the lower part, so lift the node above it.
+    // Desktop: the graph re-fits beside the panel; only a zoomed-in view pans.
+    if (n && innerWidth <= 700) svg.transition().duration(600).call(zoom.translateTo, n.x, n.y + 150);
+    else if (n && userZoomed) svg.transition().duration(600).call(zoom.translateTo, n.x, n.y);
     panel.classList.add("open");
     panel.setAttribute("aria-hidden", "false");
+    splitter.hidden = false;
     panel.scrollTop = 0;
     if (isHub(key)) {
       const slug = key.slice(4);
