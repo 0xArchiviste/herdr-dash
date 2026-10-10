@@ -98,7 +98,30 @@ ol.next li .tbtn { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
 
 #filters { display: flex; gap: 8px; padding: 7px 14px; flex-wrap: wrap; align-items: center; background: var(--black); border-bottom: 1px solid var(--g2); }
 #filters select, #filters input { background: var(--g1); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; min-width: 0; }
-#filters input { flex: 1; min-width: 140px; max-width: 320px; }
+#search-box { position: relative; flex: 1; min-width: 180px; max-width: 420px; display: flex; gap: 4px; align-items: center; }
+#filters #search-box input { flex: 1; min-width: 0; }
+#search-mode { padding: 5px 9px; }
+#search-mode[aria-pressed="true"] { background: var(--bblue); color: var(--hard-black); }
+#search-results { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; width: min(580px, calc(100vw - 20px)); max-height: 62vh; overflow-y: auto;
+  background: var(--black); border: 1px solid var(--g4); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.6); padding: 4px; }
+#search-results .s-status { font-size: 12px; color: var(--bblack); padding: 5px 8px; }
+#search-results .s-status.warn { color: var(--byellow); }
+#search-results .s-status.err { color: var(--bred); }
+#search-results .hit { all: unset; display: block; box-sizing: border-box; width: 100%; cursor: pointer; padding: 7px 8px; border-radius: 6px; border-top: 1px solid var(--g2); }
+#search-results .hit:hover, #search-results .hit:focus-visible { background: var(--g1); }
+.hit .s-head { display: flex; gap: 6px; align-items: center; font-size: 13px; min-width: 0; }
+.hit .s-proj { color: var(--borange); white-space: nowrap; }
+.hit .s-title { color: var(--bwhite); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.hit .s-row { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; font-size: 12px; min-width: 0; }
+.hit .s-src { flex: none; padding: 0 6px; border-radius: 999px; background: var(--g3); color: var(--bwhite); font-size: 11px; }
+.hit .s-src.transcript, .hit .s-src.agent-memory { background: #1d3550; color: var(--bblue); }
+.hit time { flex: none; color: var(--bblack); font-size: 11px; }
+.hit .s-snip { color: #d7d0bd; overflow-wrap: anywhere; min-width: 0; }
+.hit mark { background: var(--byellow); color: var(--hard-black); border-radius: 2px; padding: 0 1px; }
+#graph.searching .node:not(.hit) > :not(.label) { opacity: .22; } /* the g carries d3's inline opacity */
+#graph.searching .node.thread:not(.hit) text.label { opacity: 0; }
+#graph.searching .node.hit .core { stroke: var(--byellow); stroke-width: 3; }
+#graph.searching .node.thread.hit text.label { opacity: 1; }
 .shown { color: var(--bblack); font-size: 12px; margin-left: auto; }
 
 #work { flex: 1; min-height: 0; display: flex; overflow: hidden; --panel-size: 480px; }
@@ -241,7 +264,7 @@ details.fold > .md { margin-top: 6px; }
   .group-head .lbl { display: none; }
   #toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
   #filters select { flex: 1 1 30%; }
-  #filters input { max-width: none; flex-basis: 100%; }
+  #search-box { max-width: none; flex-basis: 100%; }
   .shown { display: none; }
   /* Phones keep the bottom sheet over the graph, whatever the saved dock. */
   #panel, body.dock-bottom #panel { position: fixed; left: 0; top: auto; bottom: 0; height: 82dvh; width: 100vw; margin: 0 !important; z-index: 10;

@@ -6,6 +6,7 @@ build:
 vet:
 	go vet ./...
 	node --check static/app.js
+	node --check static/search.js
 	node --check static/scrollback.js
 	node --check static/voice.js
 

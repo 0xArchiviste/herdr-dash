@@ -50,7 +50,11 @@
     <option value="604800">Last 7 days</option>
     <option value="2592000">Last 30 days</option>
   </select>
-  <input id="f-search" type="search" placeholder="Search threads…" aria-label="Search" autocomplete="off">
+  <div id="search-box">
+    <input id="f-search" type="search" placeholder="Search threads…" aria-label="Search" autocomplete="off">
+    <button id="search-mode" class="tbtn" type="button" aria-pressed="false" title="Search thread titles (Alt+C toggles)">Title</button>
+    <div id="search-results" role="listbox" aria-label="Content search results" hidden></div>
+  </div>
   <span id="shown" class="shown"></span>
 </section>
 <div id="work">
@@ -82,5 +86,6 @@
 <script src="scrollback.js"></script>
 <script src="app.js"></script>
 <script src="voice.js"></script>
+<script src="search.js"></script>
 </body>
 </html>
