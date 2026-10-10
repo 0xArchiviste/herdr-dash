@@ -721,7 +721,8 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   const evil = "status? $(id) `x`; ok";
   await page.fill("#coord-input", evil);
   await page.keyboard.press("Control+Enter");
-  await waitFor(() => since(m).includes(`${hp} coordinator prompt alpha --text-file -`), 4000);
+  // The stub logs the command, then its stdin: wait for both lines.
+  await waitFor(() => since(m).includes(`stdin: ${evil}`), 4000);
   assert.deepEqual(since(m), [`${hp} coordinator prompt alpha --text-file -`, `stdin: ${evil}`]);
   await page.waitForSelector("#chat-log .msg.ok");
   assert.equal(await page.locator("#coord-input").inputValue(), "");
