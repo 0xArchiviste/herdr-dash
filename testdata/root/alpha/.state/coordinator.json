@@ -1,0 +1,11 @@
+{
+  "workspace_id": "w1Z",
+  "tab_id": "w1Z:t1",
+  "pane_id": "w1Z:p1",
+  "agent_name": "hpc-alpha",
+  "cwd": "/projects/alpha",
+  "agent": "claude",
+  "profile": "claude",
+  "agent_session": "44444444-4444-4444-4444-444444444444",
+  "updated": "2026-10-01T12:00:00Z"
+}

@@ -1,9 +1,24 @@
 #!/usr/bin/env bash
 # Stub of herdr for E2E: serves fixture JSON and logs every call.
+# `pane read` serves a 54-line screen whose newest lines are at the bottom;
+# `--source visible` acts like a pane someone scrolled up in herdr: it misses
+# the last lines, so only `--source recent` shows the newest output.
 D="$(cd "$(dirname "$0")" && pwd)"
 echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
 case "$1 $2" in
   "pane list") cat "$D/panes.json" ;;
-  "pane read") printf 'screen of %s\n❯ waiting for approval <b>bold?</b>\n' "$3" ;;
+  "pane read")
+    pane="$3"; src=""; lines=""
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in --source) src="$2"; shift ;; --lines) lines="$2"; shift ;; esac
+      shift
+    done
+    screen() {
+      for i in $(seq 1 50); do echo "scrollback line $i"; done
+      echo "clock $(date +%s%N)" # every read differs, like a live agent
+      printf 'screen of %s\n❯ waiting for approval <b>bold?</b>\nLAST LINE of %s\n' "$pane" "$pane"
+    }
+    if [ "$src" = "visible" ]; then screen | head -n -9; else screen; fi | tail -n "${lines:-+1}" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

@@ -166,6 +166,19 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 		}
 		writeJSON(w, threadDetail(r.Context(), col, cfg, slug, t, alive))
 	})
+	safety := newSafetyCache()
+	mux.HandleFunc("GET /api/project/{slug}", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		if !slugRe.MatchString(slug) {
+			http.Error(w, "bad project", http.StatusBadRequest)
+			return
+		}
+		if !col.hasProject(slug) {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, projectDetail(r.Context(), col, cfg, safety, slug))
+	})
 	return mux
 }
 
@@ -178,6 +191,7 @@ type Detail struct {
 	Task       string   `json:"task_summary"`
 	TaskHTML   string   `json:"task_html"`
 	ReportHTML string   `json:"report_html"`
+	ReportSum  string   `json:"report_summary"`
 	Next       []string `json:"next"`
 	Screen     string   `json:"screen"`
 	Jump       []Jump   `json:"jump"`
@@ -197,6 +211,7 @@ func threadDetail(ctx context.Context, col *Collector, cfg Config, slug string, 
 		Task:       summary(task),
 		TaskHTML:   render(task),
 		ReportHTML: render(report),
+		ReportSum:  reportSummary(report),
 		Next:       t.Next,
 		Branch:     t.Branch,
 		Worktree:   t.WorktreePath,
@@ -252,6 +267,24 @@ func render(src string) string {
 	}
 	return buf.String()
 }
+
+// reportSummary is a one-line preview of a report: its first paragraph after
+// the `PR:` line and the headings, without markup.
+func reportSummary(report string) string {
+	var keep []string
+	for _, l := range strings.Split(report, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "PR: ") {
+			keep = append(keep, l)
+		}
+	}
+	s := tagRe.ReplaceAllString(summary(strings.Join(keep, "\n")), "")
+	if r := []rune(s); len(r) > 160 {
+		s = string(r[:160]) + "…"
+	}
+	return strings.TrimSpace(s)
+}
+
+var tagRe = regexp.MustCompile(`<[^>]*>`)
 
 // summary is the first paragraph of a task, capped.
 func summary(task string) string {

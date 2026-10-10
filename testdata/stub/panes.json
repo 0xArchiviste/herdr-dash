@@ -3,5 +3,8 @@
 {"agent":"claude","agent_session":{"agent":"claude","kind":"id","value":"33333333-3333-3333-3333-333333333333"},"agent_status":"blocked","cwd":"/x","pane_id":"w1B:p1","tab_id":"w1B:t1","workspace_id":"w1B"},
 {"agent":"codex","agent_session":{"agent":"codex","kind":"id","value":"22222222-2222-2222-2222-222222222222"},"agent_status":"done","cwd":"/x","pane_id":"w1C:p1","tab_id":"w1C:t1","workspace_id":"w1C"},
 {"agent":"claude","agent_status":"idle","cwd":"/x","pane_id":"w2A:p1","tab_id":"w2A:t1","workspace_id":"w2A"},
-{"agent":"claude","agent_status":"idle","cwd":"/x","pane_id":"w2B:p1","tab_id":"w2B:t1","workspace_id":"w2B"}
+{"agent":"claude","agent_status":"idle","cwd":"/x","pane_id":"w2B:p1","tab_id":"w2B:t1","workspace_id":"w2B"},
+{"agent":"claude","agent_session":{"agent":"claude","kind":"id","value":"44444444-4444-4444-4444-444444444444"},"agent_status":"done","cwd":"/projects/alpha","pane_id":"w1Z:p1","tab_id":"w1Z:t1","workspace_id":"w1Z","tokens":{"hp_group":"alpha!0!w1Z:p1","hp_project":"alpha","hp_rank":"1","hp_sub":"needs you · ~35%"}},
+{"agent":"codex","agent_status":"blocked","cwd":"/projects/beta","pane_id":"w2Z:p1","tab_id":"w2Z:t1","workspace_id":"w2Z","tokens":{"hp_group":"beta!0!w2Z:p1","hp_project":"beta","hp_rank":"1","hp_sub":"needs you"}},
+{"agent":"claude","agent_status":"idle","cwd":"/elsewhere","pane_id":"w3Y:p1","tab_id":"w3Y:t1","workspace_id":"w3Y"}
 ]}}

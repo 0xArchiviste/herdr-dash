@@ -10,6 +10,8 @@
     idle: { label: "Idle", color: "#baa67f" },
     resolved: { label: "Resolved", color: "#4e4e4e" },
   };
+  // A coordinator's state: herdr's live status, plus herdr-projects' "needs you".
+  const COORD = { blocked: "Blocked", waiting: "Waiting on you", working: "Working", idle: "Idle", none: "No live pane" };
   const ORDER = ["blocked", "waiting", "review", "landing", "working", "idle", "resolved"];
   const HUB_COLORS = ["#ff8700", "#ff5c8f", "#2be4d0", "#fed06e", "#68a8e4", "#98bc37", "#e02c6d", "#0aaeb3", "#f75341", "#fce8c3"];
   // Viewer's local time zone, labelled (e.g. "Oct 10, 5:00 PM EDT").
@@ -174,7 +176,7 @@
       (update) => update,
       (exit) => exit.attr("class", "node leaving").transition().duration(400).style("opacity", 0).remove(),
     );
-    nodeSel.attr("class", (d) => d.hub ? "node hub" : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
+    nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
     nodeSel.select("circle.core").transition().duration(800).attr("r", (d) => d.r)
       .attr("fill", (d) => (d.hub ? "#262626" : d.color)).style("stroke", (d) => (d.hub ? d.color : null));
@@ -197,8 +199,9 @@
   function dragStart(e, d) { if (!e.active) sim.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; }
   function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
   function dragEnd(e, d) { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }
-  function hubClick(d) {
-    filters.project = filters.project === d.p.slug ? "" : d.p.slug;
+  function hubClick(d) { select(d.id); }
+  function toggleProjectFilter(slug) {
+    filters.project = filters.project === slug ? "" : slug;
     $("#f-project").value = filters.project;
     saveFilters();
     render();
@@ -210,6 +213,8 @@
     if (d.hub) {
       tip.append(el("div", { class: "tt", text: d.p.name }), el("div", { class: "sub", text: d.p.summary || "no threads" }));
       if (d.p.goal) tip.append(el("div", { text: d.p.goal }));
+      const co = d.p.coordinator;
+      if (co) tip.append(el("div", { class: "s-" + co.state, text: "Coordinator: " + (COORD[co.state] || co.state) + (co.activity ? " · " + co.activity : "") }));
     } else {
       const t = d.t;
       tip.append(el("div", { class: "tt", text: t.title }),
@@ -268,13 +273,21 @@
   function needsList() {
     const mode = $("#needs-filter").value;
     const rank = (t) => ORDER.indexOf(t.state);
-    return state.threads.filter((t) => t.needs_you && (mode === "all" || (mode === "parked") === parked(t)))
+    // Coordinators that need you are never acked or snoozed: they show until answered.
+    const coords = mode === "parked" ? [] : coordItems();
+    return state.threads.filter((t) => t.needs_you && (mode === "all" || (mode === "parked") === parked(t))).concat(coords)
       .sort((a, b) => rank(a) - rank(b) || ageSec(a) - ageSec(b));
+  }
+  function coordItems() {
+    return state.projects.filter((p) => p.coordinator?.needs_you).map((p) => ({
+      key: "hub:" + p.slug, project: p.slug, coord: true, needs_you: true, state: p.coordinator.state,
+      title: "Coordinator" + (p.coordinator.activity ? " · " + p.coordinator.activity : ""), last_activity: p.coordinator.last_activity,
+    }));
   }
 
   function renderNeeds() {
     const list = needsList();
-    const hidden = state.threads.filter((t) => t.needs_you).length - list.length;
+    const hidden = state.threads.filter((t) => t.needs_you).length + coordItems().length - list.length;
     const names = Object.fromEntries(state.projects.map((p) => [p.slug, p.name]));
     $("#needs-n").textContent = (list.length || "") + (hidden > 0 && $("#needs-filter").value === "active" ? ` (+${hidden} parked)` : "");
     const by = d3.group(list, (t) => t.state);
@@ -287,10 +300,14 @@
         el("span", { class: "dot", style: `background:${STATES[s].color}` }), el("span", { class: "lbl", text: STATES[s].label }), el("span", { class: "n", text: ts.length }), el("span", { class: "caret", text: closed ? "▸" : "▾" }));
       return el("div", { class: "group " + s + (closed ? " collapsed" : ""), "data-state": s }, head,
         ...(closed ? [] : ts.map((t) => el("button", {
-          class: "chip " + t.state + (picked.has(t.key) ? " picked" : "") + (parked(t) ? " parked" : ""), "data-key": t.key,
+          class: "chip " + t.state + (t.coord ? " coord" : "") + (picked.has(t.key) ? " picked" : "") + (!t.coord && parked(t) ? " parked" : ""), "data-key": t.key,
           title: `${STATES[t.state].label}: ${t.title}${t.acked ? " (acked)" : ""}${isSnoozed(t) ? " (snoozed)" : ""}`,
           onclick: () => {
-            if (selecting) { picked.has(t.key) ? picked.delete(t.key) : picked.add(t.key); renderNeeds(); return; }
+            if (selecting) {
+              if (t.coord) return; // nothing to ack on a coordinator
+              picked.has(t.key) ? picked.delete(t.key) : picked.add(t.key); renderNeeds(); return;
+            }
+            if (t.coord) { select(t.key); return; }
             // Make sure the node is visible before selecting it.
             if (!visible(t)) { Object.assign(filters, { project: "", state: "", window: "", q: "" }); syncFilterInputs(); saveFilters(); render(); }
             select(t.key);
@@ -427,7 +444,7 @@
     renderNeeds();
     renderErrors();
     renderGraph(threads);
-    if (selected) refreshPanelHeader();
+    if (selected) isHub(selected) ? refreshCoordHeader() : refreshPanelHeader();
   }
 
   // ---------------------------------------------------------------- panel
@@ -438,7 +455,8 @@
     select(null);
   });
   let screenES = null;
-  let live = ""; // live status of the open thread's pane, from its screen stream
+  let live = ""; // live status of the open panel's pane, from its screen stream
+  const isHub = (key) => key.startsWith("hub:");
 
   function select(key) {
     selected = key;
@@ -447,6 +465,7 @@
     screenES?.close();
     screenES = null;
     live = "";
+    coordDetail = null;
     if (!key) {
       panel.classList.remove("open");
       panel.setAttribute("aria-hidden", "true");
@@ -456,6 +475,18 @@
     if (n) svg.transition().duration(600).call(zoom.translateTo, n.x + (innerWidth > 700 ? 160 : 0), n.y + (innerWidth > 700 ? 0 : 150));
     panel.classList.add("open");
     panel.setAttribute("aria-hidden", "false");
+    panel.scrollTop = 0;
+    if (isHub(key)) {
+      const slug = key.slice(4);
+      buildCoordPanel(slug);
+      loadProject(slug);
+      detailTimer = setInterval(() => loadProject(slug), 10000);
+      // Always streamed while open: the server re-identifies the pane on each
+      // read, so a coordinator that starts later shows up, and none is guessed.
+      screenES = new EventSource(`/api/project/${encodeURIComponent(slug)}/screen`);
+      screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
+      return;
+    }
     buildPanel(key);
     loadDetail(key);
     detailTimer = setInterval(() => loadDetail(key), 10000);
@@ -473,17 +504,19 @@
     if (!t) { body.replaceChildren(el("p", { text: "Thread not found." })); return; }
     const p = state.projects.find((x) => x.slug === t.project) || { name: t.project };
     body.replaceChildren(
-      el("div", { class: "proj", text: `${p.name} · ${t.id}` }),
+      el("div", { class: "proj" }, el("button", { id: "open-coord", class: "projlink", title: "Open the project's coordinator panel", text: p.name, onclick: () => select("hub:" + t.project) }), ` · ${t.id}`),
       el("h2", { class: "title", text: t.title }),
       el("div", { id: "p-head" }),
       el("div", { id: "p-actions", class: "w" }),
       el("dl", { class: "meta", id: "p-meta" }),
       buildChat(t),
       el("div", { id: "p-next" }),
+      // The report lives mainly in the coordinator panel; here it is a one-liner.
+      el("details", { id: "p-report-box", class: "fold" },
+        el("summary", {}, el("span", { class: "fold-h", text: "Latest report" }), el("span", { class: "preview" })),
+        el("div", { class: "md", id: "p-report", text: "…" })),
       el("h3", { text: "Task" }), el("div", { class: "md", id: "p-task", text: "…" }),
-      buildCoord(t, p),
       el("h3", { text: "Jump to it" }), el("div", { id: "p-jump" }),
-      el("h3", { text: "Latest report" }), el("div", { class: "md", id: "p-report", text: "…" }),
     );
     refreshPanelHeader();
   }
@@ -513,16 +546,23 @@
     return box;
   }
 
+  // The newest lines are at the bottom: keep the box pinned there unless the
+  // reader scrolled up, and re-pin once they scroll back down.
   function showScreen(d) {
     const box = $("#p-chat");
-    if (!box) return;
-    const pre = box.querySelector(".screen");
-    const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
-    pre.textContent = (d.screen || "").replace(/\s+$/, ""); // textContent: never HTML
-    if (stick || !pre.dataset.seen) pre.scrollTop = pre.scrollHeight;
-    pre.dataset.seen = "1";
+    const pre = box?.querySelector(".screen");
+    if (!pre) return;
+    const stick = !pre.dataset.n || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+    pre.textContent = (d.screen || "").replace(/\s+$/, ""); // textContent: never HTML; drops blank rows only
+    pre.dataset.n = (+pre.dataset.n || 0) + 1;
+    if (stick) {
+      pre.scrollTop = pre.scrollHeight;
+      // Again after layout: the box may have just appeared (was :empty).
+      requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+    }
     live = d.live_status || "";
     const blocked = live === "blocked";
+    if (isHub(selected || "")) { coordNote(d.pane_alive, blocked); return; }
     box.querySelector(".quick").hidden = !blocked;
     const input = $("#chat-input");
     if (input) input.placeholder = blocked ? "Type an answer: typed into the prompt, then Enter" : "Follow-up prompt… (Ctrl+Enter sends)";
@@ -575,24 +615,164 @@
     }
   }
 
-  function buildCoord(t, p) {
-    const box = el("section", { id: "p-coord", class: "w" });
-    const input = el("input", { id: "coord-input", type: "text", placeholder: `Message the ${p.name || t.project} coordinator…` });
-    const send = el("button", { id: "coord-send", class: "tbtn", text: "Send" });
-    const go = async () => {
-      const text = input.value.trim();
-      if (!text || send.disabled) return;
-      send.disabled = true;
-      const r = await api(`/api/project/${encodeURIComponent(t.project)}/coordinator`, { text });
-      send.disabled = false;
-      box.querySelector(".msg")?.remove();
-      if (r.ok) input.value = "";
-      box.append(el("div", { class: "msg " + (r.ok ? "ok" : "err"), text: r.ok ? "Sent to the coordinator." : r.data.error || "HTTP " + r.status }));
-    };
+  // ---------------------------------------------------------------- coordinator panel
+  let coordDetail = null; // last /api/project/{slug} of the open coordinator panel
+
+  function buildCoordPanel(slug) {
+    const p = state.projects.find((x) => x.slug === slug);
+    const body = $("#panel-body");
+    if (!p) { body.replaceChildren(el("p", { text: "Project not found." })); return; }
+    const input = el("textarea", { id: "coord-input", class: "w", rows: "2", placeholder: `Message the ${p.name} coordinator… (Ctrl+Enter sends)` });
+    const send = el("button", { id: "coord-send", class: "tbtn primary w", text: "Send" });
+    const go = () => sendCoord(slug, input, send);
     send.addEventListener("click", go);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-    box.append(el("h3", { text: "Coordinator" }), el("div", { class: "chat-row" }, input, send));
-    return box;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
+    body.replaceChildren(
+      el("div", { class: "proj", text: `Project · ${slug}` }),
+      el("h2", { class: "title", text: p.name }),
+      el("div", { id: "p-head" }),
+      el("div", { id: "p-actions" }),
+      el("dl", { class: "meta", id: "p-meta" }),
+      el("section", { id: "p-chat" }, el("h3", { text: "Coordinator" }),
+        el("pre", { class: "screen" }),
+        el("div", { id: "coord-note" }),
+        el("div", { class: "chat-row" }, input, send),
+        el("div", { id: "chat-log" })),
+      el("h3", { text: "Open threads" }), el("ul", { id: "p-threads", class: "tlist" }),
+      el("h3", { text: "Thread reports" }), el("div", { id: "p-reports", text: "…" }),
+      el("h3", { text: "Tasks" }), el("div", { class: "md", id: "p-tasks", text: "…" }),
+      el("details", { id: "p-memory", class: "fold" }, el("summary", {}, el("span", { class: "fold-h", text: "Memory index" })), el("div", { class: "md", id: "p-memory-md" })),
+      el("h3", { text: "Jump to it" }), el("div", { id: "p-jump" }),
+    );
+    refreshCoordHeader();
+    coordNote(!!p.coordinator?.pane_id, p.coordinator?.state === "blocked");
+  }
+
+  // herdr-projects only offers `coordinator prompt`: no key presses, so no
+  // quick replies here, and a blocked coordinator is answered in its pane.
+  function coordNote(alive, blocked) {
+    const box = $("#coord-note");
+    if (!box) return;
+    const slug = selected.slice(4);
+    const sig = `${alive}/${blocked}`;
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    if (!alive) box.replaceChildren(el("p", { class: "msg warn no-pane", text: `No live pane: no coordinator pane could be identified for this project. “herdr-projects open ${slug}” starts one (Jump below).` }));
+    else if (blocked) box.replaceChildren(el("p", { class: "msg warn note", text: "The coordinator is waiting on a prompt in its pane. The dashboard can only send it prompts (herdr-projects has no key command for coordinators): answer it in its pane, see Jump below." }));
+    else box.replaceChildren(el("p", { class: "muted note", text: "Send only: herdr-projects can only send the coordinator a prompt. Menus in its pane are answered there." }));
+  }
+
+  async function sendCoord(slug, input, btn) {
+    const key = "hub:" + slug;
+    const text = input.value.trim();
+    if (!text || btn.disabled) return;
+    btn.disabled = true;
+    chatMsg("Sending…", "pending");
+    const r = await api(`/api/project/${encodeURIComponent(slug)}/coordinator`, { text });
+    btn.disabled = false;
+    $("#chat-log .pending")?.remove();
+    if (selected !== key) return;
+    if (r.ok) { input.value = ""; chatMsg("Sent: " + text, "ok"); }
+    else chatMsg(r.data.error || "HTTP " + r.status, "err"); // kept in the box for a retry
+  }
+
+  function refreshCoordHeader() {
+    const slug = selected.slice(4);
+    const p = state.projects.find((x) => x.slug === slug);
+    if (!p || !$("#p-head")) return;
+    const co = p.coordinator || { state: "none" };
+    const d = coordDetail;
+    const color = STATES[co.state]?.color || STATES.idle.color;
+    const head = $("#p-head");
+    head.replaceChildren(...[el("span", { class: "pill", style: `background:${co.state === "none" ? "#4e4e4e" : color}`, text: COORD[co.state] || co.state }),
+      co.activity && el("span", { text: "  " + co.activity })].filter(Boolean));
+    const pg = d && d.progress;
+    if (pg) {
+      head.append(el("div", { class: "muted", text: `Progress: ${pg.activity || "—"}${pg.percent ? ` · ${pg.percent}%` : ""}${pg.reported_at ? ` · reported ${ago(pg.reported_at)}` : ""}` }));
+      if (pg.percent && pg.percent < 100) head.append(el("div", { class: "bar" }, el("i", { style: `width:${pg.percent}%` })));
+    }
+    const acts = $("#p-actions");
+    const on = filters.project === slug;
+    acts.replaceChildren(el("button", { class: "tbtn" + (on ? " on" : ""), "data-act": "filter", text: on ? "Showing only this project" : "Show only this project", onclick: () => { toggleProjectFilter(slug); refreshCoordHeader(); } }));
+    const st = (d && d.settings) || {};
+    const rows = [
+      ["Project", slug],
+      ["Goal", p.goal || "(none set)"],
+      ["Status", p.status || "—"],
+      ["Coordinator", co.pane_id ? `${co.agent || "?"} · pane ${co.pane_id}` : "no live pane"],
+      ["Live", co.live_status || "—"],
+      ["Last activity", `${nyTime(co.last_activity)} (${ago(co.last_activity)})`],
+      ["Threads", p.summary || "no threads"],
+      ["Inbox", String(p.inbox ?? 0)],
+      ["Thread profile", st.thread_profile],
+      ["Coordinator profile", st.coordinator_profile],
+      ["Max parallel threads", st.max_parallel_threads],
+      ["Auto-resolve days", st.auto_resolve_days],
+      ["Repos", st.repos],
+      ["Safety", d && d.safety],
+    ].filter(([, v]) => v);
+    $("#p-meta").replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
+    if (p.error) $("#p-meta").append(el("dt", { text: "Error" }), el("dd", { class: "s-blocked", text: p.error }));
+    // Open threads: rebuilt only when they change, so clicks are not lost.
+    const open = state.threads.filter((t) => t.project === slug && t.state !== "resolved")
+      .sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || ageSec(a) - ageSec(b));
+    const ul = $("#p-threads");
+    const sig = JSON.stringify(open.map((t) => [t.key, t.state, t.title, t.activity]));
+    if (ul.dataset.sig !== sig) {
+      ul.dataset.sig = sig;
+      ul.replaceChildren(...(open.length ? open.map((t) => el("li", { "data-key": t.key },
+        el("button", { class: "trow", title: "Open " + t.key, onclick: () => select(t.key) },
+          el("span", { class: "dot", style: `background:${STATES[t.state].color}` }),
+          el("span", { class: "t", text: t.title }),
+          el("span", { class: "muted", text: `${t.id} · ${STATES[t.state].label}${t.activity ? " · " + t.activity : ""}` })))) : [el("li", { class: "muted", text: "No open threads." })]));
+    }
+  }
+
+  async function loadProject(slug) {
+    const key = "hub:" + slug;
+    let d;
+    try {
+      const r = await fetch(`/api/project/${encodeURIComponent(slug)}`);
+      if (!r.ok) throw new Error(r.status);
+      d = await r.json();
+    } catch (e) { return; }
+    if (selected !== key) return;
+    coordDetail = d;
+    refreshCoordHeader();
+    const setHTML = (box, html, empty) => {
+      if (box.dataset.html === html) return false;
+      box.dataset.html = html;
+      box.replaceChildren(...(html ? safeHTML(html) : [el("em", { text: empty })]));
+      return true;
+    };
+    if (setHTML($("#p-tasks"), d.tasks_html, "No TASKS.md.")) collapsible($("#p-tasks"));
+    setHTML($("#p-memory-md"), d.memory_html, "No MEMORY.md.");
+    const reps = $("#p-reports");
+    const rsig = JSON.stringify(d.reports.map((x) => [x.key, x.time, x.state, x.html.length]));
+    if (reps.dataset.sig !== rsig) {
+      reps.dataset.sig = rsig;
+      const was = new Set([...reps.querySelectorAll("details[open]")].map((x) => x.dataset.key));
+      reps.replaceChildren(...(d.reports.length ? d.reports.map((x) => el("details", { class: "fold report", "data-key": x.key, open: was.has(x.key) ? "" : null },
+        el("summary", {},
+          el("span", { class: "dot", style: `background:${STATES[x.state]?.color || STATES.idle.color}` }),
+          el("span", { class: "t", text: x.title }),
+          el("span", { class: "muted", text: `${x.id} · ${nyTime(x.time)}` })),
+        el("div", { class: "md" }, ...(x.html ? safeHTML(x.html) : [])),
+        el("button", { class: "tbtn open-thread", text: `Open ${x.id}`, onclick: () => select(x.key) }))) : [el("em", { class: "muted", text: "No thread reports yet." })]));
+    }
+    fillJump(d.jump);
+  }
+
+  function fillJump(jumps) {
+    const jump = $("#p-jump");
+    const sig = JSON.stringify(jumps);
+    if (jump.dataset.sig === sig) return;
+    jump.dataset.sig = sig;
+    jump.replaceChildren(...jumps.flatMap((j) => {
+      const b = el("button", { text: "Copy" });
+      b.addEventListener("click", () => copy(j.command, b));
+      return [el("div", { class: "jl", text: j.label }), el("div", { class: "jump" }, el("code", { text: j.command }), b)];
+    }));
   }
 
   function refreshPanelHeader() {
@@ -600,8 +780,8 @@
     if (!t || !$("#p-head")) return;
     const st = STATES[t.state];
     const head = $("#p-head");
-    head.replaceChildren(el("span", { class: "pill", style: `background:${st.color}`, text: st.label }),
-      t.activity ? el("span", { text: "  " + t.activity }) : null);
+    head.replaceChildren(...[el("span", { class: "pill", style: `background:${st.color}`, text: st.label }),
+      t.activity && el("span", { text: "  " + t.activity })].filter(Boolean));
     if (t.percent && t.state !== "resolved") head.append(el("div", { class: "bar" }, el("i", { style: `width:${t.percent}%` })));
     const rows = [
       ["Agent", `${t.agent || "?"}${t.pane_id ? " · pane " + t.pane_id : ""}${t.pane_alive ? "" : t.state === "resolved" ? "" : " (pane gone)"}`],
@@ -688,14 +868,8 @@
           else toast(`Next line ${i + 1} to ${key}: ${r.data.error || "HTTP " + r.status}`, "err");
         } }))))] : []));
     }
-    const jump = $("#p-jump");
-    if (!jump.childElementCount) {
-      jump.replaceChildren(...d.jump.flatMap((j) => {
-        const b = el("button", { text: "Copy" });
-        b.addEventListener("click", () => copy(j.command, b));
-        return [el("div", { class: "jl", text: j.label }), el("div", { class: "jump" }, el("code", { text: j.command }), b)];
-      }));
-    }
+    fillJump(d.jump);
+    $("#p-report-box .preview").textContent = d.report_summary || (d.report_html ? "(no summary)" : "No report yet.");
     const rep = $("#p-report");
     if (rep.dataset.html !== d.report_html) {
       rep.dataset.html = d.report_html;

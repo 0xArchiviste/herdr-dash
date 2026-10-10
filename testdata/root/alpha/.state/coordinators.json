@@ -1,0 +1,13 @@
+[
+  {
+    "pane_id": "w1Z:p1",
+    "tab_id": "w1Z:t1",
+    "workspace_id": "w1Z",
+    "name": "hpc-alpha",
+    "agent": "claude",
+    "agent_status": "done",
+    "state_change_seq": 12,
+    "pair_since": "2026-10-03T09:00:00Z",
+    "agent_session": "44444444-4444-4444-4444-444444444444"
+  }
+]

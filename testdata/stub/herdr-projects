@@ -7,7 +7,7 @@ echo "herdr-projects $*" >> "${STUB_LOG:-/dev/null}"
 [ "$1" = "--root" ] && shift 2
 logstdin() { local s; s="$(cat)"; printf 'stdin: %s\n' "${s//$'\n'/\\n}" >> "${STUB_LOG:-/dev/null}"; }
 case "$1 $2" in
-  "list "*|"list") printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tactive\tWorking: 1\n' ;;
+  "list "*|"list") printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tpaused\tWorking: 1\n' ;;
   "thread list")
     f="$D/thread-list-$3.json"
     [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }
@@ -25,6 +25,16 @@ case "$1 $2" in
     echo "$4: report acknowledged" ;;
   "thread next") echo "sent Next line to $4" ;;
   "thread resolve") echo "$4 resolved" ;;
-  "coordinator prompt") logstdin; echo "sent to the coordinator in pane w1Z:p1 (agent was idle)" ;;
+  "coordinator prompt")
+    logstdin
+    [ "$3" = "beta" ] && { echo "herdr-projects: no coordinator of \`beta\` can take a prompt right now; \`open beta\` starts one" >&2; exit 1; }
+    echo "sent to the coordinator in pane w1Z:p1 (agent was done)" ;;
+  "progress --pane")
+    f="$D/progress-${3//:/_}.json"
+    if [ -f "$f" ]; then cat "$f"; else echo null; fi ;;
+  "safety show")
+    f="$D/safety-$3.txt"
+    [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }
+    cat "$f" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

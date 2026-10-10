@@ -9,8 +9,15 @@ actions.
   landing (PR approved), tan = idle, gray = resolved. Bigger = more recent.
 - "Needs you" strip grouped by severity (blocked, waiting, review, landing)
   with counts; groups collapse. Filters (project, state, time window,
-  search), and a side panel with task, report (sanitized markdown), Next
-  list, PR/branch and copyable jump commands. Times are in the viewer's time zone.
+  search), and a side panel with task, Next list, PR/branch, copyable jump
+  commands and the latest report (sanitized markdown, folded to one line).
+  Times are in the viewer's time zone.
+- Clicking a project hub opens its coordinator panel: status, goal and
+  settings, safety summary, the coordinator's pane, live status and own
+  progress line, its live screen and a chat box, the open threads, the
+  threads' latest reports (newest first), TASKS.md, the MEMORY.md index and
+  the inbox count. Coordinators that are blocked, or that herdr-projects
+  marks "needs you", show in the Needs-you strip too.
 - Live over SSE; one shared collector, no file watchers.
 
 ## Actions
@@ -25,10 +32,12 @@ so its refusals (blocked agent, text in the input box, trust screens) apply.
 | Next list: Send | `thread next SLUG ID --line N` |
 | Ack, Ack selected, Ack all review (per project / age) | `thread ack SLUG ID` |
 | Resolve (after a confirm dialog) | `thread resolve SLUG ID` |
-| Coordinator box | `coordinator prompt SLUG --text-file -` |
+| Coordinator panel: chat | `coordinator prompt SLUG --text-file -` |
 
 - Chat shows the pane's screen, streamed over SSE (every 3s, every 0.7s for
-  15s after a send). `agent_blocked` and `prompt_unconfirmed` are shown, not
+  15s after a send), pinned to the newest line unless you scroll up. The
+  coordinator chat is send-only: herdr-projects has no key command for
+  coordinators, so a blocked one is answered in its pane. `agent_blocked` and `prompt_unconfirmed` are shown, not
   retried; an unconfirmed prompt gets a manual "Press Enter" button.
 - Snooze (1 day) is per browser (localStorage). The strip hides acked and
   snoozed threads by default; its filter shows all or only those.
@@ -47,7 +56,12 @@ so its refusals (blocked agent, text in the input box, trust screens) apply.
 | `PROJECT.md` front matter | project name, goal | with the list |
 | `herdr pane list` | live agent status, session id | 5s |
 | `~/.claude/projects/*/ID.jsonl`, `~/.codex/sessions/Y/M/D/*ID.jsonl` mtime | last activity | 5s (stat only, paths cached) |
-| `herdr pane read PANE --source visible` | screen snippet | while a panel is open: 3s, 0.7s after a send |
+| `herdr pane read PANE --source recent --lines 40` | screen (not `visible`: that is the pane's viewport, which misses the newest lines when the pane is scrolled up) | while a panel is open: 3s, 0.7s after a send |
+| `.state/coordinators.json`, `.state/coordinator.json` | coordinator pane: a listed pane still in `herdr pane list` with the same session, else the recorded pane if it still runs in the project folder; otherwise "no live pane" | with the list |
+| `herdr pane list` tokens (`hp_sub`) | coordinator "needs you" | 5s |
+| `herdr-projects --root R progress --pane PANE` | coordinator progress line | coordinator panel open: 10s |
+| `herdr-projects --root R safety show SLUG` | safety summary | coordinator panel open, cached 1m |
+| `TASKS.md`, `MEMORY.md`, `inbox/*.md`, `threads/t-NNNN.md` | coordinator panel | coordinator panel open: 10s |
 | `threads/t-NNNN.md`, `.task.md` | report, task | on panel open |
 | `gh pr list --repo R --state all` | PRs herdr-projects has not recorded yet | 10m, only repos with such threads |
 
