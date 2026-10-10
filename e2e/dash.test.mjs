@@ -150,7 +150,7 @@ function startServer(port, extra = []) {
     "--poll", "1s",
     ...extra,
   ], {
-    env: { ...process.env, STUB_LOG: stubLog, STUB_T0: String(Math.floor(Date.now() / 1000)), STUB_REDRAW: redrawFlag, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_MEMEX: join(stub, "memex") },
+    env: { ...process.env, STUB_LOG: stubLog, STUB_T0: String(Math.floor(Date.now() / 1000)), STUB_REDRAW: redrawFlag, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_MEMEX: join(stub, "memex"), HERDR_DASH_USAGE: "off" },
     stdio: ["ignore", "inherit", "inherit"],
   });
 }

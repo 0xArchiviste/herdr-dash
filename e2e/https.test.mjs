@@ -132,7 +132,7 @@ test("without --public-url nothing is redirected", async () => {
 test("a bad --public-url refuses to start", () => {
   // H5
   for (const bad of ["http://dash.example.test", "dash.example.test", "https://", "https://dash.example.test/sub?x=1"]) {
-    const r = spawnSync(join(repo, "bin/herdr-dash"), ["--public-url", bad, "--root", join(td, "root"), "--herdr", join(stub, "herdr"), "--addr", "127.0.0.1:1"], { encoding: "utf8", timeout: 5000 });
+    const r = spawnSync(join(repo, "bin/herdr-dash"), ["--public-url", bad, "--root", join(td, "root"), "--herdr", join(stub, "herdr"), "--addr", "127.0.0.1:1"], { encoding: "utf8", timeout: 5000, env: { ...process.env, HERDR_DASH_USAGE: "off" } });
     assert.notEqual(r.status, 0, bad);
     assert.match(r.stderr, /public-url/, bad);
   }

@@ -60,7 +60,10 @@ func main() {
 	flag.StringVar(&cfg.Memex, "memex", env("HERDR_DASH_MEMEX", "off"), "memex binary for transcript search, e.g. \"memex\" (on PATH), $HERDR_DASH_MEMEX; default off; disabled when not found")
 	flag.DurationVar(&cfg.MemexTimeout, "memex-timeout", 2*time.Second, "time limit of one memex search")
 	flag.IntVar(&cfg.MemexPerMin, "memex-per-min", 30, "memex searches allowed a minute")
+	usage := usageFlags(home)
 	flag.Parse()
+	cfg.Usage = *usage
+	cfg.Usage.CodexDir = cfg.CodexDir
 	cfg.Memex = resolveMemex(cfg.Memex)
 	if cfg.HerdrProjects == "" {
 		cfg.HerdrProjects = defaultHerdrProjects(home)
@@ -167,6 +170,7 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 	NewActions(cfg, col).register(mux)
 	NewSearcher(cfg, col).register(mux)
 	NewVoice(cfg.Voice).register(mux)
+	NewUsage(cfg.Usage).register(mux)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")
 		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {

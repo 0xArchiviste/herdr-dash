@@ -38,6 +38,7 @@ type Config struct {
 	MemexTimeout  time.Duration // per memex search
 	MemexPerMin   int           // memex searches a minute (cached queries are free)
 	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
+	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
 	PublicURL     string        // optional https://host[:port] that remote plain-http page loads go to
 }
 
