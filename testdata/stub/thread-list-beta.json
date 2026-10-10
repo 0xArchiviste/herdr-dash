@@ -28,7 +28,9 @@
     "state_line": "",
     "machine": "",
     "agent_name": "hp-beta-t-0001",
-    "resolved_reason": ""
+    "resolved_reason": "",
+    "repo": "/fixture/repos/beta",
+    "cwd": ""
   },
   {
     "id": "t-0002",
@@ -59,7 +61,9 @@
     "state_line": "",
     "machine": "",
     "agent_name": "hp-beta-t-0002",
-    "resolved_reason": ""
+    "resolved_reason": "",
+    "repo": "/fixture/repos/beta",
+    "cwd": "/fixture/wt/beta-t-0002"
   },
   {
     "id": "t-0003",
@@ -90,6 +94,8 @@
     "agent_name": "hp-beta-t-0003",
     "resolved_reason": "",
     "report_hash": "hb3",
-    "acked_report_hash": ""
+    "acked_report_hash": "",
+    "repo": "/fixture/repos/beta",
+    "cwd": ""
   }
 ]

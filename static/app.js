@@ -31,6 +31,11 @@
   };
 
   let state = { projects: [], threads: [], errors: [] };
+  // Shared with search.js (and voice navigation): content-search mode and
+  // the keys its results matched, highlighted in the graph.
+  const dash = (window.dash ||= {});
+  dash.contentMode ||= false;
+  dash.hits ||= new Set();
   let selected = null;
   let detailTimer = null;
   const filters = JSON.parse(localStorage.getItem("hd-filters") || "{}");
@@ -53,7 +58,7 @@
     if (filters.project && t.project !== filters.project) return false;
     if (filters.state === "needs" ? !t.needs_you : filters.state && t.state !== filters.state) return false;
     if (filters.window && ageSec(t) > +filters.window) return false;
-    if (filters.q) {
+    if (filters.q && !dash.contentMode) {
       const p = state.projects.find((p) => p.slug === t.project);
       const hay = [t.title, t.key, t.activity, t.branch, t.agent, p && p.name].join(" ").toLowerCase();
       if (!filters.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
@@ -276,6 +281,8 @@
     );
     nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
+    nodeSel.classed("hit", (d) => dash.hits.has(d.id));
+    svg.classed("searching", dash.hits.size > 0);
     nodeSel.select("circle.core").transition().duration(800).attr("r", (d) => d.r)
       .attr("fill", (d) => (d.hub ? "#262626" : d.color)).style("stroke", (d) => (d.hub ? d.color : null));
     nodeSel.filter((d) => d.hub).select("text.count").attr("fill", (d) => d.color);
@@ -1089,6 +1096,15 @@
     es.onerror = () => { $("#live").className = "live off"; };
   }
 
+  // Open a thread or hub panel, clearing filters that hide its node.
+  dash.open = (key) => {
+    const t = state.threads.find((x) => x.key === key);
+    if (t && !visible(t)) { Object.assign(filters, { project: "", state: "", window: "" }); syncFilterInputs(); saveFilters(); render(); }
+    select(key);
+  };
+  dash.render = () => render();
+  dash.state = () => state;
+  dash.STATES = STATES;
   // The page's hooks for static/voice.js (and other add-ons).
   window.hd = {
     state: () => state,

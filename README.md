@@ -41,6 +41,8 @@ always through `herdr-projects` and its safety checks.
   at once. No file watchers, no database.
 - **Filters** by project, state, time window and free-text search. Times
   show in the viewer's time zone.
+- **Content search** finds threads by what was said or done in them, not
+  just their titles (see [Content search](#content-search)).
 
 ### Unblock agents without switching terminals
 
@@ -141,6 +143,8 @@ The unit caps CPU at 25% and memory at 256M.
 | `--herdr`, `--gh` | | `herdr`, `gh` |
 | `--claude-dir`, `--codex-dir` | | `~/.claude/projects`, `~/.codex/sessions` |
 | `--poll`, `--threads-every`, `--quiet-every`, `--gh-every` | | `5s`, 3× poll, `5m`, `10m` |
+| `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
+| `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
 
 ## How it works
 
@@ -168,6 +172,8 @@ The unit caps CPU at 25% and memory at 256M.
 | `herdr-projects --root R safety show SLUG` | safety summary | coordinator panel open, cached 1m |
 | `TASKS.md`, `MEMORY.md`, `inbox/*.md`, `threads/t-NNNN.md`, `.task.md` | panels | panel open: 10s |
 | `gh pr list --repo R --state all` | PRs herdr-projects has not recorded yet | 10m, only repos with such threads |
+| `threads/t-NNNN{.task,,.next}.md`, `PROJECT.md`, `TASKS.md`, `MEMORY.md` | content search | on search only (stat, re-read when the mtime changed) |
+| `memex search --non-interactive --mode lexical …` (opt-in) | content search in transcripts | on search only |
 
 State colors follow herdr-projects' own grouping (`group_token`), split into
 blocked vs waiting by the live pane status.
@@ -230,6 +236,37 @@ Server side (env only, it holds a secret; both features are off without it):
 `CLOUDFLARE_API_TOKEN` (Workers AI permission), `CLOUDFLARE_ACCOUNT_ID`,
 `HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
 The token is only sent to Cloudflare, never to the page.
+
+## Content search
+
+The search box has two modes; the button next to it or **Alt+C** switches
+(remembered per browser), **/** focuses it.
+
+- **Title**: filters the graph by thread titles as you type, in the page.
+- **Content**: finds threads by what was said or done in them: their task,
+  report and Next files, and a project's `PROJECT.md`, `TASKS.md` and
+  `MEMORY.md`; with `memex` turned on, agent transcripts and memories too.
+  Results list the thread or project, the source, the time and a
+  highlighted snippet; matching nodes light up in the graph and a click
+  opens the panel.
+
+Content search runs only on Enter or after a 400 ms pause with 3+ characters.
+The file index lives in memory and is refreshed by mtime on search, never in
+the background, so an idle dashboard costs nothing more. memex runs lexical
+searches only, one process at a time (a newer search cancels the older one),
+with a 2 s limit, a per-query cache and a rate limit. Transcript hits are
+mapped to threads by the live pane's session, then by working directory (a
+thread's worktree or folder, a project folder); hits from a project's repo
+show under the project, others are dropped. Add-ons (voice) can call
+`hd.search(text, { mode: "content" | "title" })`.
+
+Transcript search is **opt-in** (`--memex memex`) because `memex search`
+first ingests the transcripts written since its last run. Warm, a search
+costs ~0.1 s and ~50 MB; after a backlog it was measured at 6.7 s, 8 s of CPU
+and 670 MB, which the service's `CPUQuota=25%` / `MemoryMax=256M` turn into
+timeouts or an OOM kill. With `auto_index_on_search = false` in
+`~/.memex/config.toml` (and memex's own indexing keeping the index fresh),
+searches stay read-only and fast.
 
 ## FAQ
 

@@ -550,7 +550,9 @@
         setControl("#f-state", arg, "change");
         return say("Showing " + ($(`#f-state option[value="${arg}"]`)?.textContent || arg).toLowerCase() + ".");
       case "search":
-        setControl("#f-search", c.q || "", "input");
+        // hd.search (search.js) runs a content search at once, in the box's mode.
+        if (window.hd?.search) window.hd.search(c.q || "");
+        else setControl("#f-search", c.q || "", "input");
         return say(c.q ? `Searching “${c.q}”.` : "Search cleared.");
       case "focus": {
         const b = chatBox();
