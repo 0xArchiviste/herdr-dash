@@ -38,6 +38,7 @@ type Config struct {
 	MemexTimeout  time.Duration // per memex search
 	MemexPerMin   int           // memex searches a minute (cached queries are free)
 	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
+	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
 }
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.
@@ -217,7 +218,7 @@ type Collector struct {
 	screens    map[string]screenHit
 	history    map[string]screenHit
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
-	burst      map[string]time.Time // pane -> read its screen fast until
+	burst      map[string]time.Time   // pane -> read its screen fast until
 	kick       chan struct{}
 }
 

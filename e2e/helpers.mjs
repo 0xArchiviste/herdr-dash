@@ -35,7 +35,8 @@ export function startServer(port, stubLog, extra = [], env = {}) {
     "--poll", "1s",
     ...extra,
   ], {
-    env: { ...base, STUB_LOG: stubLog, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), ...env },
+    // Usage reads real credentials under $HOME: off unless a test turns it on.
+    env: { ...base, STUB_LOG: stubLog, HERDR_DASH_ADDR: `127.0.0.1:${port}`, HERDR_DASH_HERDR_PROJECTS: join(stub, "herdr-projects"), HERDR_DASH_USAGE: "off", ...env },
     stdio: ["ignore", "inherit", "inherit"],
   });
 }
