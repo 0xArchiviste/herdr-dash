@@ -47,6 +47,38 @@ so its refusals (blocked agent, text in the input box, trust screens) apply.
   a time, a token bucket (`--write-burst` 10, `--write-per-min` 30), and every
   action logged. `--read-only` turns all of it off.
 
+## Voice
+
+Dictation into every chat box and voice navigation, both optional
+(`static/voice.js`). Press `?` for the keys and commands; the ⚙ button sets
+the keys (stored per browser).
+
+- Dictation: a mic next to each chat box, or `Alt+M` (toggle, or hold to
+  talk), writes into the box with the live interim transcript shown under it.
+  It never sends.
+- Voice navigation: `Alt+V` or the floating mic (bottom left, also on phones).
+  "open nebula api", "show thread 27 in kaiba cord", "show blocked / waiting /
+  review", "next / previous", "search widget", "close panel", "focus chat",
+  "dock bottom / left / right", "help", "stop listening". "ack this",
+  "resolve this" and "send" ask yes/no first (by voice or click).
+- Commands are resolved in the page by a small grammar with fuzzy matching
+  against project and thread names. Only phrases it cannot place go to the
+  server, which asks a Cloudflare Workers AI decision model
+  (`@cf/cloudflare/clef-flash`) to pick one of the page's candidate actions or
+  "none" (1.5s timeout, cached, rate limited).
+- Speech: the browser's Web Speech API where it exists (Chrome and Edge send
+  the audio to Google or Microsoft; Safari may recognize on the device).
+  Without it (Firefox), or when chosen in settings, the clip is recorded,
+  posted to the server and transcribed by Workers AI Whisper
+  (`@cf/openai/whisper-large-v3-turbo`).
+- The microphone needs HTTPS (or localhost). On a tailnet, e.g.
+  `tailscale serve --bg --https=8793 http://127.0.0.1:8791`.
+
+Server side (env only, it holds a secret; both features are off without it):
+`CLOUDFLARE_API_TOKEN` (Workers AI permission), `CLOUDFLARE_ACCOUNT_ID`,
+`HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
+The token is only sent to Cloudflare, never to the page.
+
 ## Data sources (reads)
 
 | Source | Used for | Cadence |
@@ -92,7 +124,8 @@ Environment defaults (a flag wins): `HERDR_DASH_ADDR`, `HERDR_DASH_ROOT`
     make install     # copies to ~/.local/bin, installs deploy/herdr-dash.service, enables + restarts
 
 Extra flags go in `~/.config/herdr-dash/env`, e.g.
-`HERDR_DASH_ARGS=--addr 0.0.0.0:8791`. Logs: `journalctl --user -u herdr-dash -f`. Needs lingering
+`HERDR_DASH_ARGS=--addr 0.0.0.0:8791`, and so do the voice settings
+(`CLOUDFLARE_API_TOKEN=...`; keep the file mode 600). Logs: `journalctl --user -u herdr-dash -f`. Needs lingering
 (`loginctl enable-linger $USER`) to start without a login session. The unit
 caps CPU at 25% and memory at 256M.
 
@@ -105,6 +138,9 @@ fixtures in `testdata/` with stubbed `herdr-projects`, `herdr` and `gh`. It
 asserts the API, sanitization, SSE, the page (graph, strip, panel, filters,
 phone layout), the exact `herdr-projects` command each action runs, that
 injection attempts, GET, non-JSON and cross-origin writes are refused, the
-rate limit, and that nothing outside the allow-list ran. Screenshots and the API
+rate limit, and that nothing outside the allow-list ran. `e2e/voice.test.mjs`
+drives voice with a mocked `SpeechRecognition`, Chromium's fake microphone
+and a fake Workers AI: dictation, the commands, the confirmations, the
+intent fallback and that the token never reaches the page. Screenshots and the API
 snapshot land in `e2e/artifacts/`. `node e2e/screenshot.mjs URL DIR`
 screenshots a running instance.

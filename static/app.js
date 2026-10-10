@@ -380,9 +380,10 @@
     reapply();
   }
 
-  async function resolveKey(key) {
+  // confirmed: the caller already asked (voice confirmation).
+  async function resolveKey(key, confirmed = false) {
     const t = state.threads.find((x) => x.key === key);
-    const ok = await confirmDlg(`Resolve ${key}${t ? ` (“${t.title}”)` : ""}? herdr-projects copies its files home, then removes its worktree, merged branch and tab. Reports and library are kept.`, [], "Resolve");
+    const ok = confirmed || await confirmDlg(`Resolve ${key}${t ? ` (“${t.title}”)` : ""}? herdr-projects copies its files home, then removes its worktree, merged branch and tab. Reports and library are kept.`, [], "Resolve");
     if (!ok) return;
     overlay.set(key, { resolved: true, at: Date.now() });
     if (selected === key) select(null);
@@ -995,6 +996,19 @@
     es.addEventListener("state", (e) => { $("#live").className = "live on"; apply(JSON.parse(e.data)); });
     es.onerror = () => { $("#live").className = "live off"; };
   }
+
+  // The page's hooks for static/voice.js (and other add-ons).
+  window.hd = {
+    state: () => state,
+    selected: () => selected,
+    select,
+    needs: needsList,
+    visible,
+    ack: (key) => ackKeys([key]),
+    resolve: (key) => resolveKey(key, true),
+    dock: (pos) => { if (DOCKS.includes(pos)) { dock.pos = pos; saveDock(); applyDock(); } },
+    toast,
+  };
 
   size();
   initFilters();
