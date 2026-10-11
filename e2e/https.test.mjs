@@ -266,7 +266,7 @@ test("phone: the voice button never covers a panel button", async () => {
     assert.ok(b.width >= 32 && b.y >= sheet.y && b.y + b.height <= sheet.y + 60, `in the header row: ${JSON.stringify(b)}`);
     assert.deepEqual(await fabClashes(page), [], `${key} at the top`);
     await page.screenshot({ path: join(artifacts, `https-phone-${key.replace(/\W/g, "-")}-top.png`) });
-    for (const sel of ["#p-chat .quick", "#p-chat textarea", "#panel-body > :last-child"]) {
+    for (const sel of ["#p-chat .quick:not([hidden])", "#p-chat textarea", "#panel-body > :last-child"]) {
       if (!(await page.locator(sel).count())) continue;
       await page.locator(sel).first().scrollIntoViewIfNeeded();
       await page.waitForTimeout(100);

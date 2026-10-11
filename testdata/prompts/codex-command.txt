@@ -1,0 +1,13 @@
+• I'll create out.txt with a shell command.
+
+  Would you like to run the following command?
+
+  Reason: create out.txt in the workspace
+
+  $ printf 'hi\n' > out.txt
+
+› 1. Yes, just this once (y)
+  2. Yes, and don't ask again for commands that start with `printf` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

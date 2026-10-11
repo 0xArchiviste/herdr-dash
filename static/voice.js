@@ -432,6 +432,14 @@
     if ((m = q.match(/^(dock|move|put)( the)?( panel| it)?( to)?( the)? (bottom|left|right)$/))) return { id: "dock:" + m[6] };
     if (/^(ack|acknowledge|ac|act|axe|ask)( (this|it|that|the thread|this thread|this one|the report|report))?$/.test(q) && /^(ack|acknowledge)|this|it|that/.test(q)) return { id: "ack" };
     if (/^resolve( (this|it|that|this thread|the thread|this one))?$/.test(q)) return { id: "resolve" };
+    // Answers to the open panel's prompt card.
+    if (/^(always allow|allow always|always|dont ask again|yes dont ask again|yes and dont ask again)$/.test(q)) return { id: "answer:always" };
+    if (/^(yes|allow|allow it|allow once|approve|approve it|accept|proceed|yes allow( it)?)$/.test(q)) return { id: "answer:yes" };
+    if (/^(no|deny|deny it|reject|reject it|decline|dont allow)$/.test(q)) return { id: "answer:no" };
+    if ((m = q.match(/^(option|choice|choose|pick|answer)( number)? (.+)$/))) {
+      const n = parseNum(m[3]);
+      if (n != null && n > 0) return { id: "answer:" + n };
+    }
     if (/^(send|send it|send this|send that|send the message|send message|submit)$/.test(q)) return { id: "send" };
     if (/^(clear|reset|cancel|remove) (the )?search$/.test(q)) return { id: "search", q: "" };
     if ((m = q.match(/^(search|search for|find|look for|filter by) (.+)$/))) return { id: "search", q: m[2] };
@@ -473,6 +481,8 @@
     ["filter:resolved", "Show only resolved threads"], ["filter:needs", "Show only threads that need the user"], ["search:clear", "Clear the search box"],
     ["dock:bottom", "Dock the panel at the bottom"], ["dock:left", "Dock the panel on the left"], ["dock:right", "Dock the panel on the right"],
     ["ack", "Acknowledge (ack) the open thread's report"], ["resolve", "Resolve the open thread"], ["send", "Send the text in the chat box"],
+    ["answer:yes", "Answer the open prompt: yes / allow"], ["answer:no", "Answer the open prompt: no / deny"],
+    ["answer:always", "Answer the open prompt: always allow / don't ask again (asks first)"],
   ];
   function candidates() {
     const st = hd.state();
@@ -596,6 +606,7 @@
         const msg = verb === "ack" ? `Ack ${t.key} (“${t.title}”)?` : `Resolve ${t.key} (“${t.title}”)? This removes its worktree, merged branch and tab.`;
         return confirmAction(msg, () => { verb === "ack" ? hd.ack(t.key) : hd.resolve(t.key); say((verb === "ack" ? "Acked " : "Resolving ") + t.key + "."); });
       }
+      case "answer": return answerPrompt(arg);
       case "send": {
         if (ro) return say("This dashboard is read-only.");
         const b = chatBox();
@@ -609,6 +620,35 @@
       }
     }
     say("Didn't understand.");
+  }
+
+  // answerPrompt picks an option of the prompt in the open panel: yes, no,
+  // always or a number. Lasting grants ask first.
+  function answerPrompt(arg) {
+    if (document.body.classList.contains("ro")) return say("This dashboard is read-only.");
+    const key = hd.selected();
+    const p = key && hd.promptFor?.(key);
+    if (!p) return say("No prompt to answer: open a blocked thread or coordinator first.");
+    const opts = p.options;
+    const find = (re, ok = () => true) => opts.findIndex((o) => !o.submit && re.test(o.label) && ok(o));
+    let i = -1;
+    if (arg === "yes") { i = find(/^(yes|allow|submit|confirm|proceed|trust)/i, (o) => !o.always); if (i < 0) i = find(/^(yes|allow|trust|confirm)/i); }
+    else if (arg === "no") i = find(/^(no|reject|deny|cancel|decline)/i);
+    else if (arg === "always") i = opts.findIndex((o) => o.always);
+    else {
+      i = opts.findIndex((o) => o.keys.length === 1 && o.keys[0] === arg);
+      if (i < 0 && +arg <= opts.length) i = +arg - 1;
+    }
+    const o = opts[i];
+    if (!o) return say("The prompt has no such option.");
+    if (o.text === "required") return say(`“${o.label}” needs typed text: use the card.`);
+    const go = async () => {
+      const r = await hd.answerPrompt(key, i);
+      say(r && r.ok ? `Answered “${o.label}”.` : `Not answered: ${(r && r.data && r.data.error) || "error"}`);
+    };
+    if (o.always) return confirmAction(`Answer “${o.label}” on ${key}? A lasting grant.`, go);
+    say(`Answering “${o.label}”…`);
+    go();
   }
 
   // ---------------------------------------------------------------- help + settings
@@ -700,6 +740,7 @@
       el("label", { class: "row" }, el("span", { text: "Language" }), lang),
       el("label", { class: "row" }, el("span", { text: "Ask the AI model for phrases the grammar misses" + (server.intent ? "" : " (not configured)") }), ai),
       note,
+      ...(window.HDPrompt ? [window.HDPrompt.settingsRow()] : []),
       el("div", { class: "row" }, el("button", { class: "tbtn", type: "button", text: "Reset to defaults", onclick: () => { Object.assign(cfg, DEFAULTS); saveCfg(); showSettings(); refreshAvailability(); } }),
         el("button", { class: "tbtn", type: "button", text: "Help (?)", onclick: () => { closeOverlays(); showHelp(); } })));
     help.hidden = true;

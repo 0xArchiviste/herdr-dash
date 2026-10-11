@@ -50,8 +50,8 @@
 //     its stream keeps polling after the panel closes.
 // 28. A coordinator prompt refusal is swallowed, the text reaches argv, or
 //     the screen does not refresh fast after a send.
-// 29. Offering key presses to a coordinator: herdr-projects has no command
-//     for that, so nothing but `coordinator prompt` may be sent.
+// 29. Offering key presses to a coordinator that is not blocked (a blocked
+//     one is answered with `herdr pane send-keys`, see prompts.test.mjs).
 // 30. An open thread in the coordinator panel does not open its own panel.
 // 31. The coordinator panel breaks on a phone-sized viewport.
 //
@@ -725,9 +725,10 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   assert.equal(await page.locator("#p-memory").evaluate((d) => d.tagName === "DETAILS" && !d.open), true, "memory collapsed");
   assert.match(await page.locator("#p-memory").innerText(), /memory index/i);
   assert.match(await page.locator("#p-jump").innerText(), /herdr agent focus w1Z:p1/);
-  // 29: send only, no key buttons.
-  assert.equal(await page.locator("#p-chat .quick").count(), 0);
-  assert.match(await page.locator("#p-chat .note").innerText(), /only send/i);
+  // 29: a coordinator that is not blocked gets no key buttons (keys for a
+  // blocked one: prompts.test.mjs).
+  assert.equal(await page.locator("#p-chat .quick").isVisible(), false);
+  assert.match(await page.locator("#p-chat .note").innerText(), /herdr-projects/i);
   // Open threads: 6 not resolved.
   assert.equal(await page.locator("#p-threads li").count(), 6);
   await page.screenshot({ path: join(artifacts, "coordinator.png") });
@@ -742,7 +743,7 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   assert.deepEqual(since(m), [`${hp} coordinator prompt alpha --text-file -`, `stdin: ${evil}`]);
   await page.waitForSelector("#chat-log .msg.ok");
   assert.equal(await page.locator("#coord-input").inputValue(), "");
-  const reads = () => logLines().filter((l) => l === "herdr pane read w1Z:p1 --source recent --lines 60").length;
+  const reads = () => logLines().filter((l) => l.startsWith("herdr pane read w1Z:p1 --source recent --lines 60")).length;
   const r0 = reads();
   await page.waitForTimeout(2500);
   assert.ok(reads() - r0 >= 2, `fast refresh after send: ${reads() - r0} reads in 2.5s`);
@@ -968,7 +969,7 @@ test("scrollback: live tails merge into a long buffer, earlier lines load on scr
 
 test("history API: capped, cached, one read per pane at a time, refuses unreadable panes", async () => {
   // 44
-  const reads = (pane) => logLines().filter((l) => l.startsWith(`herdr pane read ${pane} `) && !/--lines ([1-5]?\d|60)$/.test(l));
+  const reads = (pane) => logLines().filter((l) => l.startsWith(`herdr pane read ${pane} `) && !/--lines ([1-5]?\d|60)( --format ansi)?$/.test(l));
   const r0 = reads("w1Z:p1").length;
   const all = await Promise.all([1, 2, 3, 4, 5].map(() => getJSON("/api/project/alpha/history?lines=1000")));
   for (const d of all) {
@@ -1194,7 +1195,7 @@ test("only allow-listed commands were run", () => {
     /^herdr-projects --root \S+ list$/,
     /^herdr-projects --root \S+ thread list \S+ --json$/,
     /^herdr pane list$/,
-    /^herdr pane read \S+ --source recent --lines \d+$/,
+    /^herdr pane read \S+ --source recent --lines \d+( --format ansi)?$/,
     /^gh pr list --repo \S+ --state all --limit \d+ --json number,url,state,headRefName$/,
     // Writes, through herdr-projects only:
     /^herdr-projects --root \S+ thread prompt [a-z]+ t-\d{4} --text-file -$/,

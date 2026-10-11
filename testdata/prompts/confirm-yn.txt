@@ -1,0 +1,3 @@
+$ ./scripts/cleanup.sh
+This removes build/ and dist/.
+Continue? [y/N]
