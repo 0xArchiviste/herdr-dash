@@ -50,8 +50,17 @@ always through `herdr-projects` and its safety checks.
 
 - **The agent's screen, live**, streamed into the panel (every 3s, faster
   right after you send something).
+- **Prompt cards**: when the pane is blocked on a permission prompt ("run
+  this command?", "edit this file?", "fetch this URL?"), a question menu
+  (single or multi-select, with "Type something"), a trust dialog or a y/n
+  confirmation, a card above the screen shows the question, the command,
+  file and diff or URL, and one button per option, labelled with its text.
+  Lasting grants ("don't ask again", "always allow") are marked but stay
+  available. A click presses that option's keys; the card then says whether
+  the prompt cleared. Claude Code, Codex and opencode screens are read;
+  anything else falls back to the quick replies.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
-  is blocked on a menu or permission prompt. Or type an answer.
+  is blocked. Or type an answer.
 - **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
   own suggested next steps with one click.
 - Task, latest report (sanitized markdown), PR and branch links, and
@@ -75,7 +84,11 @@ the open threads, their latest reports (newest first), `TASKS.md`, the
 
 - **Needs-you strip** grouped by severity (blocked, waiting, review,
   landing), with counts and collapsible groups. Blocked or "needs you"
-  coordinators show here too.
+  coordinators show here too. A blocked item shows a short prompt summary
+  ("Permission: Bash make test", "Question: Which DB?") and an *Answer*
+  button that opens the prompt card in a popover, without the panel.
+- **Notifications** (opt-in, ⚙ → "Notify me of new prompts"): a browser
+  notification when a new prompt appears, with its summary.
 - **Select mode**: pick several threads, then *Ack selected* or *Snooze 1
   day*. *Ack all review…* clears a project's review pile by age.
 - Acked and snoozed threads hide by default; a filter brings them back.
@@ -157,6 +170,7 @@ The unit caps CPU at 25% and memory at 256M.
                                                                               │
  herdr-projects thread prompt|keys|ack|next|resolve ◀── allow-listed POST ────┘
  herdr-projects coordinator prompt
+ herdr pane send-keys|send-text (blocked coordinator, verified pane only)
 ```
 
 ### Reads
@@ -168,7 +182,7 @@ The unit caps CPU at 25% and memory at 256M.
 | `PROJECT.md` front matter | project name, goal, settings | with the list |
 | `herdr pane list` | live agent status, session id, coordinator "needs you" (`hp_sub`) | 5s |
 | `~/.claude/projects/*/ID.jsonl`, `~/.codex/sessions/Y/M/D/*ID.jsonl` mtime | last activity | 5s (stat only, paths cached) |
-| `herdr pane read PANE --source recent --lines 40` | the agent's screen | while a panel is open: 3s, 0.7s after a send |
+| `herdr pane read PANE --source recent --lines 60 --format ansi` | the agent's screen, and the prompt card of a blocked pane | while a panel is open: 3s, 0.7s after a send; blocked panes only: 5s |
 | `.state/coordinators.json`, `.state/coordinator.json` | coordinator pane (never guessed: same session, or the recorded pane still in the project folder) | with the list |
 | `herdr-projects --root R progress --pane PANE` | coordinator progress line | coordinator panel open: 10s |
 | `herdr-projects --root R safety show SLUG` | safety summary | coordinator panel open, cached 1m |
@@ -194,10 +208,12 @@ screens) still apply.
 | --- | --- |
 | Chat: send a follow-up | `thread prompt SLUG ID --text-file -` (text on stdin) |
 | Chat: quick replies / typed answer when the pane is blocked | `thread keys SLUG ID KEY... [--text=TEXT]` |
+| Prompt card: an option | `thread keys SLUG ID KEY...`, then for an option that takes text `thread keys SLUG ID enter --text=TEXT` |
 | Next list: Send | `thread next SLUG ID --line N` |
 | Ack, Ack selected, Ack all review | `thread ack SLUG ID` |
 | Resolve (after a confirm dialog) | `thread resolve SLUG ID` |
 | Coordinator panel: message | `coordinator prompt SLUG --text-file -` |
+| Coordinator panel: prompt card, keys (blocked only) | `herdr pane get PANE`, then `herdr pane send-keys PANE KEY...` (and `send-text` for typed answers) |
 
 - **Server side:** POST with a JSON body only, same-origin only; slug, id,
   keys and line validated (keys: `enter esc up down left right tab space
@@ -207,8 +223,15 @@ screens) still apply.
   every action logged. `--read-only` turns all of it off.
 - **Never resent:** `agent_blocked` and `prompt_unconfirmed` are shown, not
   retried; an unconfirmed prompt gets a manual "Press Enter" button.
-- The coordinator chat is send-only: herdr-projects has no key command for
-  coordinators, so a blocked coordinator is answered in its pane.
+- **Prompt answers:** the page sends only the prompt's signature and the
+  option's number. The server re-reads the pane, parses it again, refuses
+  if it shows another prompt (or none) now, and presses the keys from its
+  own parse.
+- **Coordinators:** herdr-projects has no key command for them, so a blocked
+  coordinator is answered with `herdr pane send-keys`, only on the pane the
+  panel identifies (never guessed), only after `herdr pane get` shows the
+  same agent session still blocked, with the same key allow-list, and
+  logged. Trust screens stay the user's to answer in the pane.
 - Snooze is per browser (localStorage) and changes nothing on disk.
 
 ## Voice
@@ -225,6 +248,9 @@ the keys (stored per browser).
   review", "next / previous", "search widget", "close panel", "focus chat",
   "dock bottom / left / right", "help", "stop listening". "ack this",
   "resolve this" and "send" ask yes/no first (by voice or click).
+- With a blocked thread or coordinator open: "yes / allow", "no / deny",
+  "option two" answer its prompt card; "always allow" / "don't ask again"
+  asks yes/no first.
 - Commands are resolved in the page by a small grammar with fuzzy matching
   against project and thread names. Only phrases it cannot place go to the
   server, which asks a Cloudflare Workers AI decision model
@@ -339,14 +365,17 @@ regenerates it).
 make check
 ```
 
-Runs `go vet`, `node --check`, and the Playwright E2E in `e2e/` against the
+Runs `go vet`, `node --check`, `go test`, and the Playwright E2E in `e2e/` against the
 fixtures in `testdata/` and the demo, with stubbed `herdr-projects`, `herdr`
 and `gh`. It asserts the API, sanitization, SSE, the page (graph, strip,
 panels, filters, phone layout), the exact `herdr-projects` command each
 action runs, that injection attempts, GET, non-JSON and cross-origin writes
 are refused, the rate limit, that nothing outside the allow-list ran, and
 that the demo names nothing real (no home paths, emails, IPs, real orgs or
-real project names). `e2e/voice.test.mjs` drives voice with a mocked
+real project names). `go test` runs the prompt parser on screens taken
+from real Claude Code, Codex and opencode panes (`testdata/prompts/`);
+`e2e/prompts.test.mjs` drives the cards, the strip popover, the exact keys,
+the prompt-cleared check and the coordinator path. `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
 token never reaches the page. `e2e/usage.test.mjs` runs the usage strip

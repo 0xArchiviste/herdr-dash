@@ -261,7 +261,7 @@ func threadDetail(ctx context.Context, col *Collector, cfg Config, slug string, 
 		d.Next = []string{}
 	}
 	if alive && t.Status != "resolved" && t.PaneID != "" {
-		d.Screen = col.Screen(ctx, t.PaneID, 5*time.Second)
+		d.Screen, _ = col.Screen(ctx, t.PaneID, 5*time.Second)
 	}
 	if t.PaneID != "" && t.Status != "resolved" {
 		d.Jump = append(d.Jump, Jump{"Focus the agent pane", "herdr agent focus " + t.PaneID})

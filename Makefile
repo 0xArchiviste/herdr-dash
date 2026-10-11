@@ -10,6 +10,10 @@ vet:
 	node --check static/scrollback.js
 	node --check static/usage.js
 	node --check static/voice.js
+	node --check static/prompts.js
+
+test:
+	go test ./...
 
 e2e/node_modules: e2e/package.json
 	cd e2e && npm install --no-audit --no-fund
@@ -18,8 +22,8 @@ e2e/node_modules: e2e/package.json
 e2e: build e2e/node_modules
 	cd e2e && npm test
 
-# Local gate (AGENTS.md): vet + E2E against fixtures with stubbed herdr/gh.
-check: vet e2e
+# Local gate (AGENTS.md): vet + parser tests + E2E against fixtures with stubbed herdr/gh.
+check: vet test e2e
 
 # Try it on fictional data: http://127.0.0.1:8792 (DEMO_ADDR to change).
 DEMO_ADDR ?= 127.0.0.1:8792

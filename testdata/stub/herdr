@@ -6,7 +6,15 @@
 D="$(cd "$(dirname "$0")" && pwd)"
 echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
 case "$1 $2" in
-  "pane list") cat "$D/panes.json" ;;
+  "pane list")
+    # STUB_SCREENS/<pane>.status overrides a pane's agent_status.
+    out="$(cat "$D/panes.json")"
+    for f in "${STUB_SCREENS:-/nonexistent}"/*.status; do
+      [ -f "$f" ] || continue
+      p="$(basename "$f" .status)"; p="${p/_/:}"
+      out="$(printf '%s\n' "$out" | sed "/\"pane_id\":\"$p\"/s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$f")\"/")"
+    done
+    printf '%s\n' "$out" ;;
   "pane read")
     pane="$3"; src=""; lines=""
     shift 3
@@ -15,6 +23,12 @@ case "$1 $2" in
       shift
     done
     screen() {
+      # STUB_SCREENS names a folder: a file named after the pane (":" as
+      # "_") is that pane's whole screen, so tests can show a prompt.
+      if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${pane/:/_}" ]; then
+        cat "$STUB_SCREENS/${pane/:/_}"
+        return
+      fi
       # STUB_REDRAW names a file: while it exists the pane shows a full-screen
       # TUI frame that shares no line with its history.
       if [ -n "${STUB_REDRAW:-}" ] && [ -e "$STUB_REDRAW" ]; then
@@ -33,5 +47,15 @@ case "$1 $2" in
     # A long read takes a while, so concurrent readers would overlap.
     if [ "${lines:-0}" -gt 60 ]; then sleep 0.3; fi
     if [ "$src" = "visible" ]; then screen | head -n -9; else screen; fi | tail -n "${lines:-+1}" ;;
+  "pane get")
+    # The pane's row from panes.json; STUB_SCREENS/<pane>.status overrides
+    # its agent_status.
+    row="$(grep -F "\"pane_id\":\"$3\"" "$D/panes.json" | sed 's/,$//')"
+    [ -n "$row" ] || { echo "error: no pane $3" >&2; exit 1; }
+    if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${3/:/_}.status" ]; then
+      row="$(printf '%s' "$row" | sed "s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$STUB_SCREENS/${3/:/_}.status")\"/")"
+    fi
+    printf '{"id":"cli:pane:get","result":{"pane":%s,"type":"pane_info"}}\n' "$row" ;;
+  "pane send-keys"|"pane send-text") echo "ok" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

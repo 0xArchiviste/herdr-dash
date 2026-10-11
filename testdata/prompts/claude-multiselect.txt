@@ -1,0 +1,17 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Database  ☒ Features  ✔ Submit  →
+
+Which features do you want to enable?
+
+❯ 1. [✔] Logging
+         Structured application logs.
+  2. [ ] Metrics
+         Counters, gauges and histograms.
+  3. [✔] Tracing
+         Distributed request tracing.
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

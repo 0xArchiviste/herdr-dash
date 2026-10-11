@@ -65,7 +65,7 @@ func projectDetail(ctx context.Context, col *Collector, cfg Config, safety *safe
 	d.Coordinator = co
 	hp := shellQuote(cfg.HerdrProjects)
 	if alive {
-		d.Screen = col.Screen(ctx, co.PaneID, 5*time.Second)
+		d.Screen, _ = col.Screen(ctx, co.PaneID, 5*time.Second)
 		d.Progress = readProgress(ctx, cfg, co.PaneID)
 		d.Jump = append(d.Jump, Jump{"Focus the coordinator pane", "herdr agent focus " + co.PaneID})
 		if co.TabID != "" {

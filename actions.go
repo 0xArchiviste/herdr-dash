@@ -111,9 +111,11 @@ func (a *Actions) register(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guard(a.threadAction))
 	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guard(a.coordinator))
+	mux.HandleFunc("POST /api/project/{slug}/answer", a.guard(a.coordAnswer))
+	mux.HandleFunc("POST /api/project/{slug}/keys", a.guard(a.coordKeys))
 	mux.HandleFunc("POST /api/ack", a.guard(a.bulkAck))
 	// Anything but POST on a write path is refused, not served as a file.
-	for _, p := range []string{"GET /api/thread/{slug}/{id}/{action}", "GET /api/project/{slug}/coordinator", "GET /api/ack"} {
+	for _, p := range []string{"GET /api/thread/{slug}/{id}/{action}", "GET /api/project/{slug}/coordinator", "GET /api/project/{slug}/answer", "GET /api/project/{slug}/keys", "GET /api/ack"} {
 		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -307,6 +309,43 @@ func (a *Actions) threadAction(r *http.Request, body []byte) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+	case "answer":
+		var req answerReq
+		if err := decode(body, &req); err != nil {
+			return nil, err
+		}
+		if t.PaneID == "" {
+			return nil, fail(http.StatusConflict, "%s has no pane", id)
+		}
+		steps, _, err := a.answerSteps(t.PaneID, req)
+		if err != nil {
+			return nil, err
+		}
+		if !a.bucket.take() {
+			return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
+		}
+		a.mu.Lock()
+		var outs []string
+		for i, st := range steps {
+			if i > 0 {
+				time.Sleep(400 * time.Millisecond) // let the menu open its text field
+			}
+			args := append([]string{"thread", "keys", slug, id}, st.keys...)
+			if st.text != "" {
+				args = append(args, "--text="+st.text)
+			}
+			o, err := a.hpLocked(30*time.Second, "", args...)
+			if err != nil {
+				a.mu.Unlock()
+				a.col.Burst(t.PaneID)
+				return nil, err
+			}
+			outs = append(outs, o)
+		}
+		a.mu.Unlock()
+		a.col.Burst(t.PaneID)
+		a.kickSoon()
+		out = strings.Join(outs, "\n")
 	case "next":
 		var req struct{ Line int }
 		if err := decode(body, &req); err != nil {
@@ -417,9 +456,10 @@ func (a *Actions) bulkAck(r *http.Request, body []byte) (any, error) {
 }
 
 type screenEvent struct {
-	Screen     string `json:"screen"`
-	LiveStatus string `json:"live_status"`
-	PaneAlive  bool   `json:"pane_alive"`
+	Screen     string  `json:"screen"`
+	LiveStatus string  `json:"live_status"`
+	PaneAlive  bool    `json:"pane_alive"`
+	Prompt     *Prompt `json:"prompt,omitempty"`
 }
 
 // screenTarget says which pane a screen stream reads right now: its id,
@@ -552,8 +592,12 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 		lastRead = time.Now()
 		ev := screenEvent{PaneAlive: alive}
 		if readable {
-			ev.Screen = a.col.Screen(r.Context(), pane, every-100*time.Millisecond)
+			var raw string
+			ev.Screen, raw = a.col.Screen(r.Context(), pane, every-100*time.Millisecond)
 			ev.LiveStatus = a.col.liveStatus(pane)
+			if ev.LiveStatus == "blocked" {
+				ev.Prompt = ParsePrompt(raw, a.col.paneAgent(pane))
+			}
 		}
 		b, _ := json.Marshal(ev)
 		if string(b) == string(last) {
@@ -566,4 +610,207 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 		fl.Flush()
 		lastWrite = time.Now()
 	}
+}
+
+// ---------------------------------------------------------------- prompt answers
+
+type answerReq struct {
+	Sig    string `json:"sig"`
+	Option int    `json:"option"`
+	Text   string `json:"text"`
+}
+
+type keyStep struct {
+	keys []string
+	text string
+}
+
+// answerSteps re-reads pane right now, checks it still shows the prompt the
+// page answered (same sig), and returns the key presses for the chosen
+// option: its keys, then for an option that takes text, the text and Enter.
+// The keys come from the server's own parse, never from the page.
+func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, error) {
+	if req.Sig == "" || len(req.Sig) > 64 {
+		return nil, nil, fail(http.StatusBadRequest, "sig missing")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	p := a.col.FreshPrompt(ctx, pane, a.col.paneAgent(pane))
+	if p == nil {
+		return nil, nil, httpErr{http.StatusConflict, "prompt_gone: no prompt shows in the pane now"}
+	}
+	if p.Sig != req.Sig {
+		return nil, nil, httpErr{http.StatusConflict, "prompt_changed: the pane shows another prompt now; check it and answer again"}
+	}
+	if req.Option < 0 || req.Option >= len(p.Options) {
+		return nil, nil, fail(http.StatusBadRequest, "no option %d", req.Option)
+	}
+	o := p.Options[req.Option]
+	log.Printf("answer pane %s: %s %q", pane, p.Kind, o.Label)
+	if len(o.Keys) == 0 {
+		return nil, nil, fail(http.StatusConflict, "%q cannot be picked with keys from here (the highlight is not visible); use the keys below the screen", o.Label)
+	}
+	for _, k := range o.Keys {
+		if !allowedKeys[k] {
+			return nil, nil, fail(http.StatusBadRequest, "key %q is not allowed", k)
+		}
+	}
+	steps := []keyStep{{keys: o.Keys}}
+	switch {
+	case o.Text == "" && req.Text != "":
+		return nil, nil, fail(http.StatusBadRequest, "%q takes no text", o.Label)
+	case o.Text == "required" && strings.TrimSpace(req.Text) == "":
+		return nil, nil, fail(http.StatusBadRequest, "%q needs text", o.Label)
+	case o.Text != "" && req.Text != "":
+		text, err := cleanText(req.Text, maxKeysText, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		steps = append(steps, keyStep{keys: []string{"enter"}, text: text})
+	}
+	return steps, p, nil
+}
+
+// kickSoon refreshes the snapshot now and once more shortly after, when the
+// agent has redrawn: the strip learns the prompt cleared.
+func (a *Actions) kickSoon() {
+	a.col.Kick()
+	time.AfterFunc(1500*time.Millisecond, a.col.Kick)
+}
+
+// coordVerified finds the project's coordinator pane the strict way the
+// panel does, then asks herdr about that pane right now: it must still run
+// the same agent session and be blocked on a prompt. Anything else refuses.
+func (a *Actions) coordVerified(r *http.Request) (string, Coordinator, error) {
+	slug := r.PathValue("slug")
+	if !slugRe.MatchString(slug) {
+		return "", Coordinator{}, fail(http.StatusBadRequest, "bad project")
+	}
+	if !a.col.hasProject(slug) {
+		return "", Coordinator{}, fail(http.StatusNotFound, "no project %s", slug)
+	}
+	co, ok := a.col.coordPane(slug)
+	if !ok {
+		return "", Coordinator{}, fail(http.StatusConflict, "no live coordinator pane is identified for %s", slug)
+	}
+	out, err := run(context.Background(), 5*time.Second, a.cfg.Herdr, "pane", "get", co.PaneID)
+	var doc struct {
+		Result struct {
+			Pane Pane `json:"pane"`
+		} `json:"result"`
+	}
+	if err == nil {
+		err = json.Unmarshal(out, &doc)
+	}
+	if err != nil {
+		return "", Coordinator{}, fail(http.StatusConflict, "cannot check the coordinator pane: %v", err)
+	}
+	got := doc.Result.Pane
+	if got.PaneID != co.PaneID || got.Agent != co.Agent || got.session() != a.col.paneSession(co.PaneID) {
+		return "", Coordinator{}, fail(http.StatusConflict, "the coordinator pane changed; reload and try again")
+	}
+	if got.AgentStatus != "blocked" {
+		return "", Coordinator{}, httpErr{http.StatusConflict, "agent_not_blocked: the coordinator is not waiting on a prompt (it is " + got.AgentStatus + "); send it a message instead"}
+	}
+	return slug, co, nil
+}
+
+// herdrKeys presses keys (after typing text) in a verified coordinator pane
+// with herdr itself: herdr-projects has no key command for coordinators.
+func (a *Actions) herdrKeys(slug, pane string, st keyStep) (string, error) {
+	if st.text != "" {
+		if _, err := runIn(context.Background(), 10*time.Second, "", a.cfg.Herdr, "pane", "send-text", pane, st.text); err != nil {
+			return "", err
+		}
+	}
+	if len(st.keys) > 0 {
+		if _, err := runIn(context.Background(), 10*time.Second, "", a.cfg.Herdr, append([]string{"pane", "send-keys", pane}, st.keys...)...); err != nil {
+			return "", err
+		}
+	}
+	log.Printf("coordinator %s keys: pane %s pressed %s (typed %d chars)", slug, pane, strings.Join(st.keys, " "), len([]rune(st.text)))
+	return "pressed " + strings.Join(st.keys, " "), nil
+}
+
+func (a *Actions) coordAnswer(r *http.Request, body []byte) (any, error) {
+	var req answerReq
+	if err := decode(body, &req); err != nil {
+		return nil, err
+	}
+	slug, co, err := a.coordVerified(r)
+	if err != nil {
+		return nil, err
+	}
+	steps, p, err := a.answerSteps(co.PaneID, req)
+	if err != nil {
+		return nil, err
+	}
+	if p.Kind == "trust" {
+		return nil, fail(http.StatusForbidden, "trust screens are answered in the coordinator's own pane")
+	}
+	if !a.bucket.take() {
+		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var outs []string
+	for i, st := range steps {
+		if i > 0 {
+			time.Sleep(400 * time.Millisecond)
+		}
+		o, err := a.herdrKeys(slug, co.PaneID, st)
+		if err != nil {
+			a.col.Burst(co.PaneID)
+			return nil, err
+		}
+		outs = append(outs, o)
+	}
+	a.col.Burst(co.PaneID)
+	a.kickSoon()
+	return actionResult{OK: true, Output: strings.Join(outs, "\n")}, nil
+}
+
+func (a *Actions) coordKeys(r *http.Request, body []byte) (any, error) {
+	var req struct {
+		Keys []string
+		Text string
+	}
+	if err := decode(body, &req); err != nil {
+		return nil, err
+	}
+	if len(req.Keys) == 0 || len(req.Keys) > maxKeys {
+		return nil, fail(http.StatusBadRequest, "give 1 to %d keys", maxKeys)
+	}
+	for _, k := range req.Keys {
+		if !allowedKeys[k] {
+			return nil, fail(http.StatusBadRequest, "key %q is not allowed", k)
+		}
+	}
+	st := keyStep{keys: req.Keys}
+	if req.Text != "" {
+		text, err := cleanText(req.Text, maxKeysText, false)
+		if err != nil {
+			return nil, err
+		}
+		st.text = text
+	}
+	slug, co, err := a.coordVerified(r)
+	if err != nil {
+		return nil, err
+	}
+	if p := a.col.promptOf(co.PaneID); p != nil && p.Kind == "trust" {
+		return nil, fail(http.StatusForbidden, "trust screens are answered in the coordinator's own pane")
+	}
+	if !a.bucket.take() {
+		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out, err := a.herdrKeys(slug, co.PaneID, st)
+	a.col.Burst(co.PaneID)
+	if err != nil {
+		return nil, err
+	}
+	a.kickSoon()
+	return actionResult{OK: true, Output: out}, nil
 }

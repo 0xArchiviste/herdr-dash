@@ -1,0 +1,59 @@
+/* Prompt cards (static/prompts.js): the panel's card above the screen, the
+   strip's answer popover, the strip chip's prompt summary. */
+.pcard { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: #2a1f0a; border: 1px solid #6b4a10;
+  box-shadow: 0 0 0 1px rgba(251,184,41,.12), 0 4px 18px rgba(0,0,0,.35); min-width: 0; }
+.pcard[hidden] { display: none; }
+.pcard.compact { margin: 0; box-shadow: none; }
+.pc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.pc-kind { font-weight: 800; text-transform: uppercase; letter-spacing: .8px; padding: 1px 7px; border-radius: 4px; background: var(--yellow); color: var(--hard-black); }
+.pc-kind.trust { background: var(--borange); }
+.pc-kind.question { background: var(--bblue); }
+.pc-title { font-weight: 700; color: var(--bwhite); }
+.pc-harness { margin-left: auto; color: var(--bblack); }
+.pc-q { margin: 7px 0 4px; font-size: 15px; font-weight: 600; color: var(--bwhite); overflow-wrap: anywhere; }
+.pc-desc { color: var(--white); font-size: 12px; margin: 3px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pcard pre { margin: 6px 0; padding: 6px 8px; background: var(--hard-black); border: 1px solid var(--g3); border-radius: 6px;
+  font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+.pc-subject { color: var(--byellow); }
+.pc-detail .add { color: var(--bgreen); }
+.pc-detail .del { color: var(--bred); }
+.pc-opts { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.pc-opt { all: unset; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 9px; border-radius: 6px;
+  background: var(--g2); border: 1px solid var(--g3); font-size: 13px; overflow-wrap: anywhere; }
+.pc-opt:hover:not(:disabled), .pc-opt:focus-visible { background: var(--g4); border-color: var(--bwhite); }
+.pc-opt:disabled { opacity: .5; cursor: default; }
+.pc-opt.current { border-color: var(--bblue); }
+.pc-opt .k, .pc-text .k { flex: none; min-width: 18px; text-align: center; font-family: ui-monospace, monospace; font-weight: 700;
+  color: var(--hard-black); background: var(--white); border-radius: 4px; padding: 0 4px; }
+.pc-opt .lbl { flex: 1 1 60%; min-width: 0; }
+.pc-opt .desc { flex-basis: 100%; padding-left: 30px; color: var(--bblack); font-size: 12px; }
+/* Lasting grants stay available, just marked. */
+.pc-opt.always { border-color: #6b4a10; background: #2e2410; }
+.pc-opt.always .warn { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--borange); border: 1px solid #6b4a10; border-radius: 4px; padding: 0 4px; }
+.pc-opt[aria-pressed="true"] { border-color: var(--bgreen); }
+.pc-opt.submit { background: var(--blue); border-color: var(--blue); }
+.pc-opt.submit:hover:not(:disabled) { background: var(--bblue); color: var(--hard-black); }
+.pc-text { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; padding: 5px 9px; border-radius: 6px; background: var(--g2); border: 1px solid var(--g3); font-size: 13px; }
+.pc-text.current { border-color: var(--bblue); }
+.pc-text input { flex: 1 1 160px; min-width: 0; background: var(--hard-black); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 13px; }
+.pc-text input:focus { outline: none; border-color: var(--bblue); }
+.pc-status { font-size: 12px; margin-top: 6px; min-height: 0; }
+.pc-status:empty { display: none; }
+.pc-status.pending { color: var(--bblack); }
+.pc-status.ok { color: var(--bgreen); }
+.pc-status.warn { color: var(--byellow); }
+.pc-status.err { color: var(--bred); }
+.pc-note { margin: 6px 0 0; }
+
+/* The strip: a prompt summary on the chip, an Answer button beside it. */
+.chipwrap { display: inline-flex; align-items: stretch; flex: none; }
+.chipwrap .chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.chip .psum { color: var(--byellow); font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+.chip-answer { all: unset; cursor: pointer; font-size: 12px; font-weight: 700; padding: 0 9px; border-radius: 0 8px 8px 0; background: var(--yellow); color: var(--hard-black); display: inline-flex; align-items: center; }
+.chip-answer:hover, .chip-answer:focus-visible { background: var(--byellow); }
+#prompt-pop { position: fixed; z-index: 45; max-height: min(70vh, 560px); overflow: auto; background: var(--black); border: 1px solid var(--g4);
+  border-radius: 10px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+#prompt-pop[hidden] { display: none; }
+#prompt-pop .pp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+#prompt-pop .pp-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--white); }
+#prompt-pop .close { all: unset; cursor: pointer; font-size: 18px; color: var(--bblack); padding: 0 4px; }

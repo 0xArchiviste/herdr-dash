@@ -328,11 +328,13 @@
       if (d.p.goal) tip.append(el("div", { text: d.p.goal }));
       const co = d.p.coordinator;
       if (co) tip.append(el("div", { class: "s-" + co.state, text: "Coordinator: " + (COORD[co.state] || co.state) + (co.activity ? " · " + co.activity : "") }));
+      if (co?.prompt) tip.append(el("div", { class: "s-blocked", text: co.prompt.summary }));
     } else {
       const t = d.t;
       tip.append(el("div", { class: "tt", text: t.title }),
         el("div", { class: "s-" + t.state, text: STATES[t.state]?.label + (t.activity ? " · " + t.activity : "") }),
         el("div", { class: "sub", text: `${t.key} · ${t.agent || "?"} · ${ago(t.last_activity)}` }));
+      if (t.prompt) tip.append(el("div", { class: "s-blocked", text: t.prompt.summary }));
     }
     tip.hidden = false;
     moveTip(e);
@@ -394,7 +396,7 @@
   function coordItems() {
     return state.projects.filter((p) => p.coordinator?.needs_you).map((p) => ({
       key: "hub:" + p.slug, project: p.slug, coord: true, needs_you: true, state: p.coordinator.state,
-      title: "Coordinator" + (p.coordinator.activity ? " · " + p.coordinator.activity : ""), last_activity: p.coordinator.last_activity,
+      title: "Coordinator" + (p.coordinator.activity ? " · " + p.coordinator.activity : ""), last_activity: p.coordinator.last_activity, prompt: p.coordinator.prompt,
     }));
   }
 
@@ -412,7 +414,7 @@
         onclick: () => { closed ? collapsed.delete(s) : collapsed.add(s); localStorage.setItem("hd-collapsed", JSON.stringify([...collapsed])); renderNeeds(); } },
         el("span", { class: "dot", style: `background:${STATES[s].color}` }), el("span", { class: "lbl", text: STATES[s].label }), el("span", { class: "n", text: ts.length }), el("span", { class: "caret", text: closed ? "▸" : "▾" }));
       return el("div", { class: "group " + s + (closed ? " collapsed" : ""), "data-state": s }, head,
-        ...(closed ? [] : ts.map((t) => el("button", {
+        ...(closed ? [] : ts.map((t) => chipWith(t, el("button", {
           class: "chip " + t.state + (t.coord ? " coord" : "") + (picked.has(t.key) ? " picked" : "") + (!t.coord && parked(t) ? " parked" : ""), "data-key": t.key,
           title: `${STATES[t.state].label}: ${t.title}${t.acked ? " (acked)" : ""}${isSnoozed(t) ? " (snoozed)" : ""}`,
           onclick: () => {
@@ -425,12 +427,21 @@
             if (!visible(t)) { Object.assign(filters, { project: "", state: "", window: "", q: "" }); syncFilterInputs(); saveFilters(); render(); }
             select(t.key);
           },
-        }, el("span", { class: "dot", style: `background:${STATES[t.state].color}` }), el("span", { class: "proj", text: names[t.project] || t.project }), el("span", { class: "t", text: t.title })))));
+        }, el("span", { class: "dot", style: `background:${STATES[t.state].color}` }), el("span", { class: "proj", text: names[t.project] || t.project }), el("span", { class: "t", text: t.title }),
+          t.prompt ? el("span", { class: "psum", text: t.prompt.summary }) : null)))));
     }));
     $("#bulk-ack").hidden = $("#bulk-snooze").hidden = !selecting;
     $("#bulk-ack").textContent = `Ack selected (${picked.size})`;
     $("#bulk-snooze").textContent = `Snooze 1 day (${picked.size})`;
     $("#bulk-ack").disabled = $("#bulk-snooze").disabled = !picked.size;
+  }
+
+  // A chip with a prompt gets an Answer button beside it: a popover with
+  // the prompt card, without opening the panel.
+  function chipWith(t, chip) {
+    if (!t.prompt || selecting || readOnly) return chip;
+    return el("span", { class: "chipwrap" }, chip, el("button", { class: "chip-answer", "data-key": t.key, title: "Answer: " + t.prompt.summary, text: "Answer",
+      onclick: (e) => window.HDPrompt?.pop(t.key, e.currentTarget) }));
   }
 
   // POST JSON to a write endpoint. Never throws: { ok, status, data }.
@@ -559,6 +570,7 @@
     renderErrors();
     renderGraph(threads);
     if (selected) isHub(selected) ? refreshCoordHeader() : refreshPanelHeader();
+    window.HDPrompt?.onState(state);
   }
 
   // ---------------------------------------------------------------- dock
@@ -651,6 +663,7 @@
     screenES = null;
     live = "";
     coordDetail = null;
+    promptCtl = null;
     if (!key) {
       panel.classList.remove("open");
       panel.setAttribute("aria-hidden", "true");
@@ -727,12 +740,22 @@
     send.addEventListener("click", go);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
     box.append(
+      promptBox(key),
       screenBox(tpath(key, "history"), key),
-      el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Answer the prompt:" }),
+      el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
         ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => pressKeys(key, [k]) }))),
       el("div", { class: "chat-row" }, input, send),
       el("div", { id: "chat-log" }),
     );
+    return box;
+  }
+
+  // The open panel's prompt card (static/prompts.js), above its screen: fed
+  // by the screen stream, which carries the parsed prompt of a blocked pane.
+  let promptCtl = null;
+  function promptBox(key) {
+    const box = el("div", { id: "p-prompt" });
+    promptCtl = window.HDPrompt ? window.HDPrompt.mount(box, key, { id: "prompt-card" }) : null;
     return box;
   }
 
@@ -752,7 +775,13 @@
     screen.live(d.screen);
     live = d.live_status || "";
     const blocked = live === "blocked";
-    if (isHub(selected || "")) { coordNote(d.pane_alive, blocked); return; }
+    promptCtl?.update(blocked ? d.prompt : null);
+    if (isHub(selected || "")) {
+      coordNote(d.pane_alive, blocked);
+      const q = box.querySelector(".quick");
+      if (q) q.hidden = !blocked;
+      return;
+    }
     box.querySelector(".quick").hidden = !blocked;
     const input = $("#chat-input");
     if (input) input.placeholder = blocked ? "Type an answer: typed into the prompt, then Enter" : "Follow-up prompt… (Ctrl+Enter sends)";
@@ -824,7 +853,10 @@
       el("div", { id: "p-actions" }),
       el("dl", { class: "meta", id: "p-meta" }),
       el("section", { id: "p-chat" }, el("h3", { text: "Coordinator" }),
+        promptBox("hub:" + slug),
         screenBox(`/api/project/${encodeURIComponent(slug)}/history`, "hub:" + slug),
+        el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
+          ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => coordKeys(slug, [k]) }))),
         el("div", { id: "coord-note" }),
         el("div", { class: "chat-row" }, input, send),
         el("div", { id: "chat-log" })),
@@ -838,8 +870,17 @@
     coordNote(!!p.coordinator?.pane_id, p.coordinator?.state === "blocked");
   }
 
-  // herdr-projects only offers `coordinator prompt`: no key presses, so no
-  // quick replies here, and a blocked coordinator is answered in its pane.
+  // Messages go through `coordinator prompt`. herdr-projects has no key
+  // command for coordinators: a blocked one is answered with `herdr pane
+  // send-keys` on its verified pane (server-side checks, actions.go).
+  async function coordKeys(slug, keys) {
+    const r = await api(`/api/project/${encodeURIComponent(slug)}/keys`, { keys });
+    if (selected !== "hub:" + slug) return r;
+    if (r.ok) chatMsg(`Pressed ${keys.join(" ")}`, "ok");
+    else chatMsg(r.data.error || "HTTP " + r.status, "err");
+    return r;
+  }
+
   function coordNote(alive, blocked) {
     const box = $("#coord-note");
     if (!box) return;
@@ -848,8 +889,8 @@
     if (box.dataset.sig === sig) return;
     box.dataset.sig = sig;
     if (!alive) box.replaceChildren(el("p", { class: "msg warn no-pane", text: `No live pane: no coordinator pane could be identified for this project. “herdr-projects open ${slug}” starts one (Jump below).` }));
-    else if (blocked) box.replaceChildren(el("p", { class: "msg warn note", text: "The coordinator is waiting on a prompt in its pane. The dashboard can only send it prompts (herdr-projects has no key command for coordinators): answer it in its pane, see Jump below." }));
-    else box.replaceChildren(el("p", { class: "muted note", text: "Send only: herdr-projects can only send the coordinator a prompt. Menus in its pane are answered there." }));
+    else if (blocked) box.replaceChildren(el("p", { class: "msg warn note", text: "The coordinator is waiting on a prompt in its pane: answer it with the card or the keys above (pressed with herdr in its verified pane; trust screens stay in the pane)." }));
+    else box.replaceChildren(el("p", { class: "muted note", text: "Messages go through herdr-projects. When the coordinator waits on a prompt, it can be answered here." }));
   }
 
   async function sendCoord(slug, input, btn) {
@@ -1137,6 +1178,8 @@
     resolve: (key) => resolveKey(key, true),
     dock: (pos) => { if (DOCKS.includes(pos)) { dock.pos = pos; saveDock(); applyDock(); } },
     toast,
+    promptFor: (key) => window.HDPrompt?.promptFor(key) || null,
+    answerPrompt: (key, i, text) => window.HDPrompt?.answerPrompt(key, i, text),
   };
 
   size();

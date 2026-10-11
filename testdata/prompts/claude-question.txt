@@ -1,0 +1,18 @@
+❯ Use the AskUserQuestion tool to ask me two questions at once: (1) which database to use: Postgres, SQLite or MySQL,
+  single select; (2) which features to enable: Logging, Metrics, Tracing, multi select. Do nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Database  ☐ Features  ✔ Submit  →
+
+Which database should we use?
+
+❯ 1. Postgres
+     Full-featured relational database server.
+  2. SQLite
+     Embedded, file-based database.
+  3. MySQL
+     Widely used relational database server.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

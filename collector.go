@@ -135,6 +135,7 @@ type Coordinator struct {
 	Activity     string `json:"activity"`
 	LastActivity string `json:"last_activity"`
 	NeedsYou     bool   `json:"needs_you"`
+	Prompt       *Prompt `json:"prompt,omitempty"`
 }
 
 type ghPR struct {
@@ -183,6 +184,7 @@ type Thread struct {
 	Note         string   `json:"note"`
 	Error        string   `json:"error,omitempty"`
 	Next         []string `json:"next"`
+	Prompt       *Prompt  `json:"prompt,omitempty"`
 }
 
 type Snapshot struct {
@@ -222,6 +224,7 @@ type Collector struct {
 	history    map[string]screenHit
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
 	burst      map[string]time.Time   // pane -> read its screen fast until
+	prompts    map[string]*Prompt     // blocked pane -> the prompt it shows
 	kick       chan struct{}
 }
 
@@ -232,6 +235,7 @@ type transcriptHit struct {
 
 type screenHit struct {
 	text  string
+	raw   string // with escapes (live reads), for the prompt parser
 	lines int // lines asked for (history reads)
 	at    time.Time
 }
@@ -248,6 +252,7 @@ func NewCollector(cfg Config) *Collector {
 		history:    map[string]screenHit{},
 		paneLocks:  map[string]*sync.Mutex{},
 		burst:      map[string]time.Time{},
+		prompts:    map[string]*Prompt{},
 		kick:       make(chan struct{}, 1),
 		snap:       Snapshot{Projects: []Project{}, Threads: []Thread{}, Errors: []string{}},
 	}
@@ -300,6 +305,7 @@ func (e *cmdError) Message() string {
 func (c *Collector) Run(ctx context.Context) {
 	c.refreshThreads(ctx, true)
 	c.refreshPanes(ctx)
+	c.refreshPrompts(ctx)
 	c.rebuild()
 	c.refreshPRs(ctx)
 	c.rebuild()
@@ -316,6 +322,7 @@ func (c *Collector) Run(ctx context.Context) {
 			return
 		case <-paneT.C:
 			c.refreshPanes(ctx)
+			c.refreshPrompts(ctx)
 		case <-threadT.C:
 			c.refreshThreads(ctx, false)
 		case <-ghT.C:
@@ -323,6 +330,7 @@ func (c *Collector) Run(ctx context.Context) {
 		case <-c.kick: // a write just landed: show its effect now
 			c.refreshPanes(ctx)
 			c.refreshThreads(ctx, false)
+			c.refreshPrompts(ctx)
 		}
 		c.rebuild()
 	}
@@ -481,6 +489,9 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 		co.State = "idle"
 	}
 	co.NeedsYou = co.State == "blocked" || co.State == "waiting"
+	if co.State == "blocked" {
+		co.Prompt = c.prompts[pane.PaneID]
+	}
 	last := parseTime(since)
 	if v := c.lastTranscript(pane); v.After(last) {
 		last = v
@@ -722,6 +733,14 @@ func (c *Collector) rebuild() {
 					th.PR, th.PRState = g.URL, g.State
 				}
 			}
+			if live == "blocked" {
+				th.Prompt = c.prompts[t.PaneID]
+			}
+			// A prompt on screen needs the user, whatever group herdr-projects
+			// has the thread in yet.
+			if th.Prompt != nil && th.State != "resolved" {
+				th.State = "blocked"
+			}
 			switch th.State {
 			case "waiting", "blocked", "review", "landing":
 				th.NeedsYou = true
@@ -901,19 +920,101 @@ func (c *Collector) readPane(ctx context.Context, pane string, lines int) string
 	return stripANSI(string(out))
 }
 
+// readPaneANSI is readPane keeping the escapes: the prompt parser needs
+// colours to see a highlight drawn only as a background (opencode).
+func (c *Collector) readPaneANSI(ctx context.Context, pane string, lines int) string {
+	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", strconv.Itoa(lines), "--format", "ansi")
+	if err != nil {
+		return ""
+	}
+	return strings.ReplaceAll(string(out), "\r", "")
+}
+
 // Screen reads the newest lines of a pane, reusing a read younger than
-// maxAge so several viewers cost one read.
-func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duration) string {
-	if text, ok := c.cached(c.screens, pane, maxAge, 0); ok {
-		return text
+// maxAge so several viewers cost one read. It returns the plain text and
+// the raw text with escapes.
+func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duration) (string, string) {
+	if h, ok := c.cachedHit(c.screens, pane, maxAge); ok {
+		return h.text, h.raw
 	}
 	defer c.lockPane(pane)()
-	if text, ok := c.cached(c.screens, pane, maxAge, 0); ok {
-		return text
+	if h, ok := c.cachedHit(c.screens, pane, maxAge); ok {
+		return h.text, h.raw
 	}
-	text := c.readPane(ctx, pane, liveLines)
-	c.store(c.screens, pane, screenHit{text: text, at: time.Now()})
-	return text
+	raw := c.readPaneANSI(ctx, pane, liveLines)
+	text := stripANSI(raw)
+	c.store(c.screens, pane, screenHit{text: text, raw: raw, at: time.Now()})
+	return text, raw
+}
+
+func (c *Collector) cachedHit(m map[string]screenHit, pane string, maxAge time.Duration) (screenHit, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h, ok := m[pane]
+	return h, ok && time.Since(h.at) < maxAge
+}
+
+// promptPanes are the panes worth parsing: blocked thread panes and
+// blocked coordinator panes. Nothing else is read for prompts.
+func (c *Collector) promptPanes() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	want := map[string]string{}
+	for _, p := range c.projects {
+		for _, t := range p.threads {
+			if pn, ok := c.panes[t.PaneID]; ok && t.Status != "resolved" && pn.AgentStatus == "blocked" {
+				want[t.PaneID] = pn.Agent
+			}
+		}
+		if co := c.coordinator(p); co.State == "blocked" {
+			want[co.PaneID] = co.Agent
+		}
+	}
+	return want
+}
+
+// refreshPrompts parses the screen of each blocked pane (one small read,
+// shared with open screen streams) and forgets panes no longer blocked.
+func (c *Collector) refreshPrompts(ctx context.Context) {
+	want := c.promptPanes()
+	got := map[string]*Prompt{}
+	for pane, agent := range want {
+		_, raw := c.Screen(ctx, pane, max(time.Second, c.cfg.Poll/2))
+		if p := ParsePrompt(raw, agent); p != nil {
+			got[pane] = p
+		}
+	}
+	c.mu.Lock()
+	c.prompts = got
+	c.mu.Unlock()
+}
+
+// FreshPrompt reads pane now (no cache) and parses its prompt: what an
+// answer is checked against right before keys are sent.
+func (c *Collector) FreshPrompt(ctx context.Context, pane, agent string) *Prompt {
+	defer c.lockPane(pane)()
+	raw := c.readPaneANSI(ctx, pane, liveLines)
+	c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
+	return ParsePrompt(raw, agent)
+}
+
+func (c *Collector) paneSession(pane string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.panes[pane].session()
+}
+
+// promptOf is the prompt last parsed from pane's screen.
+func (c *Collector) promptOf(pane string) *Prompt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.prompts[pane]
+}
+
+func (c *Collector) paneAgent(pane string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.panes[pane].Agent
 }
 
 // History reads the last n lines of a pane (n capped at maxHistory) for a
@@ -942,6 +1043,6 @@ func lastLines(s string, n int) string {
 	return strings.Join(ls[max(0, len(ls)-n):], "\n")
 }
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r`)
 
 func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
