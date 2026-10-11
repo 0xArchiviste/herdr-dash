@@ -640,6 +640,15 @@
     saveDock();
   });
   splitter.addEventListener("dblclick", () => { delete dock[dock.pos]; saveDock(); applyDock(); });
+  // D cycles right, left, bottom: a way back that nothing on screen can cover.
+  document.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() !== "d" || e.ctrlKey || e.altKey || e.metaKey || $("#dlg").open) return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+    e.preventDefault();
+    dock.pos = DOCKS[(DOCKS.indexOf(dock.pos) + 1) % DOCKS.length];
+    saveDock();
+    applyDock();
+  });
   window.addEventListener("resize", applyDock);
   applyDock();
 
@@ -678,7 +687,7 @@
     panel.classList.add("open");
     panel.setAttribute("aria-hidden", "false");
     splitter.hidden = false;
-    panel.scrollTop = 0;
+    panel.scrollTop = $("#panel-body").scrollTop = 0;
     if (isHub(key)) {
       const slug = key.slice(4);
       buildCoordPanel(slug);

@@ -93,6 +93,15 @@
 //     output" button to jump back to the newest line.
 // 46. The box stays short instead of using the panel's height in side and
 //     bottom docks.
+//
+// Dock control always reachable, written before the fix:
+// 47. In the bottom dock something (the sticky chat column, a prompt card)
+//     covers the dock buttons, so a real click cannot dock back right or
+//     left: the panel is stuck at the bottom.
+// 48. Scrolling the panel carries the dock buttons or the close button out
+//     of view.
+// 49. There is no keyboard way to change the dock (D cycles right, left,
+//     bottom), it fires while typing, or the ? overlay does not list it.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -1150,6 +1159,86 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   b = await dockBoxes(page);
   assert.ok(near(b.panel.w, rightW, 3), `right persisted ${b.panel.w} vs ${rightW}`);
   assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// The element a real click at the centre of sel would land on is sel itself.
+async function clickable(page, sel) {
+  return page.evaluate((sel) => {
+    const e = document.querySelector(sel), r = e.getBoundingClientRect();
+    if (!r.width || r.top < 0 || r.bottom > innerHeight || r.left < 0 || r.right > innerWidth) return false;
+    const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return !!t && (t === e || e.contains(t));
+  }, sel);
+}
+const pressed = (page) => page.evaluate(() => ["left", "bottom", "right"].find((p) => document.querySelector("#dock-" + p).getAttribute("aria-pressed") === "true"));
+
+test("desktop: dock buttons stay reachable from the bottom dock; D cycles docks", async () => {
+  // 47-49
+  for (const [w, h] of [[1280, 700], [1440, 900], [1920, 1080]]) {
+    for (const key of ["alpha/t-0002", "hub:alpha"]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      await page.addInitScript(() => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); localStorage.setItem("hd-dock", JSON.stringify({ pos: "bottom" })); } });
+      await page.goto(base + "/");
+      await page.waitForSelector("svg g.node.thread");
+      await page.locator(`#needs .chip[data-key="${key}"]`).click();
+      await page.waitForSelector("#panel.open #p-chat");
+      await page.waitForTimeout(800);
+      // Every order: bottom -> right -> bottom -> left -> bottom -> right,
+      // each by a real mouse click at the button's centre.
+      for (const to of ["right", "bottom", "left", "bottom", "right", "left", "right"]) {
+        for (const p of ["left", "bottom", "right", "close"].map((p) => (p === "close" ? "#close" : "#dock-" + p)))
+          assert.ok(await clickable(page, p), `${w}x${h} ${key} ${p} not clickable in ${await pressed(page)} dock`);
+        const r = await page.locator("#dock-" + to).boundingBox();
+        await page.mouse.click(r.x + r.width / 2, r.y + r.height / 2);
+        assert.equal(await pressed(page), to, `${w}x${h} ${key}: clicked ${to}`);
+        await page.waitForTimeout(350);
+      }
+      // 48: scrolled to the end of a short bottom panel, the controls stay.
+      await page.locator("#dock-bottom").click();
+      await page.waitForTimeout(350);
+      await page.evaluate(() => { for (const e of document.querySelectorAll("#panel, #panel-body")) e.scrollTop = e.scrollHeight; });
+      await page.waitForTimeout(100);
+      for (const p of ["#dock-right", "#dock-left", "#close"]) assert.ok(await clickable(page, p), `${w}x${h} ${key} ${p} scrolled away`);
+      if (w === 1280) await page.screenshot({ path: join(artifacts, `dock-bottom-reachable-${key.replace(/[:/]/g, "-")}.png`) });
+      // Survives a reload in the bottom dock.
+      await page.reload();
+      await page.waitForSelector("svg g.node.thread");
+      await page.locator(`#needs .chip[data-key="${key}"]`).click();
+      await page.waitForSelector("#panel.open #p-chat");
+      await page.waitForTimeout(800);
+      assert.equal(await pressed(page), "bottom");
+      const r = await page.locator("#dock-right").boundingBox();
+      await page.mouse.click(r.x + r.width / 2, r.y + r.height / 2);
+      assert.equal(await pressed(page), "right", `${w}x${h} ${key}: back to right after reload`);
+      await page.close();
+    }
+  }
+
+  // 49: D cycles right -> left -> bottom -> right, not while typing; listed in ?.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.addInitScript(() => localStorage.setItem("hd-dock", JSON.stringify({ pos: "right" })));
+  await page.goto(base + "/");
+  await page.waitForSelector("svg g.node.thread");
+  await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+  await page.waitForSelector("#panel.open #p-chat");
+  await page.evaluate(() => document.activeElement?.blur());
+  for (const to of ["left", "bottom", "right", "left"]) {
+    await page.keyboard.press("d");
+    assert.equal(await pressed(page), to, `D -> ${to}`);
+  }
+  await page.keyboard.press("Shift+D");
+  assert.equal(await pressed(page), "bottom", "Shift+D works too");
+  await page.locator("#chat-input").focus();
+  await page.keyboard.press("d");
+  assert.equal(await pressed(page), "bottom", "typing d in the chat box does not move the panel");
+  assert.equal(await page.locator("#chat-input").inputValue(), "d");
+  await page.locator("#chat-input").fill("");
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("?");
+  await page.waitForSelector("#voice-help:not([hidden])");
+  const keys = await page.locator("#voice-help tr").allInnerTexts();
+  assert.ok(keys.some((t) => /^D\s/.test(t) && /dock/i.test(t)), `? overlay lists D for the dock: ${keys.join(" | ")}`);
   await page.close();
 });
 
