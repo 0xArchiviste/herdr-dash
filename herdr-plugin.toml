@@ -1,0 +1,41 @@
+# herdr dash as a herdr plugin. `herdr plugin install 0xArchiviste/herdr-dash`
+# builds the single Go binary (needs Go 1.26 on PATH); the actions below start,
+# stop and open the dashboard. Flags and env (HERDR_DASH_ADDR etc.) can go in
+# $HERDR_PLUGIN_CONFIG_DIR/env; touch $HERDR_PLUGIN_CONFIG_DIR/autostart to start
+# it with herdr.
+id = "0xarchiviste.herdr-dash"
+name = "herdr dash"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Live, animated web dashboard of herdr projects and agent threads; answer agents from your browser."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["go", "build", "-o", "bin/herdr-dash", "."]
+
+[[startup]]
+command = ["sh", "scripts/plugin.sh", "startup"]
+
+[[actions]]
+id = "start"
+title = "herdr dash: start"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/plugin.sh", "start"]
+
+[[actions]]
+id = "stop"
+title = "herdr dash: stop"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/plugin.sh", "stop"]
+
+[[actions]]
+id = "status"
+title = "herdr dash: status"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/plugin.sh", "status"]
+
+[[actions]]
+id = "open"
+title = "herdr dash: open in browser"
+contexts = ["global", "workspace"]
+command = ["sh", "scripts/plugin.sh", "open"]
