@@ -368,7 +368,7 @@ herdr plugin install 0xArchiviste/herdr-dash
 
 The install builds the binary with `go build` (Go 1.26 on PATH). Then run the
 actions *herdr dash: start*, *open*, *status* or *stop* (e.g.
-`herdr plugin action invoke 0xarchiviste.herdr-dash open`). Put flags such as
+`herdr plugin action invoke open --plugin 0xarchiviste.herdr-dash`). Put flags such as
 `HERDR_DASH_ADDR=0.0.0.0:8791` or `HERDR_DASH_ARGS=--read-only` in
 `$(herdr plugin config-dir 0xarchiviste.herdr-dash)/env`, and touch `autostart`
 in that directory to start the dashboard with herdr. If you already run it as
