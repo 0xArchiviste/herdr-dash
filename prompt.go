@@ -81,8 +81,9 @@ func plainLine(s string) string {
 
 func barless(s string) string {
 	t := strings.TrimLeft(s, " ")
-	if strings.HasPrefix(t, "┃") || strings.HasPrefix(t, "╹") {
-		t = strings.TrimPrefix(strings.TrimPrefix(t, "┃"), "╹")
+	// opencode's box bar, and the bar Claude draws beside a long question.
+	if strings.HasPrefix(t, "┃") || strings.HasPrefix(t, "╹") || strings.HasPrefix(t, "│ ") {
+		t = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(t, "┃"), "╹"), "│")
 		return strings.TrimPrefix(t, " ")
 	}
 	return s
@@ -440,8 +441,17 @@ func header(p *Prompt, ls []pline, start int) {
 		p.Kind = "question"
 		return
 	}
-	p.Question = strings.TrimSpace(body[qi])
-	above, after := body[:qi], body[qi+1:]
+	// A long question wraps: take the lines of its paragraph above it.
+	q0 := qi
+	for q0 > 0 {
+		prev := strings.TrimSpace(body[q0-1])
+		if prev == "" || dashRe.MatchString(body[q0-1]) || tabsRe.MatchString(prev) || strings.ContainsAny(prev[len(prev)-1:], ".?!:)") {
+			break
+		}
+		q0--
+	}
+	p.Question = strings.Join(strings.Fields(strings.Join(body[q0:qi+1], " ")), " ")
+	above, after := body[:q0], body[qi+1:]
 	if permQRe.MatchString(p.Question) {
 		p.Kind = "permission"
 	} else {
@@ -486,7 +496,13 @@ func header(p *Prompt, ls []pline, start int) {
 		p.Desc = strings.Join(texts, "\n")
 	default:
 		if p.Kind == "question" {
-			p.Detail = strings.TrimSpace(strings.Join(above, "\n"))
+			var keep []string
+			for _, b := range above {
+				if !tabsRe.MatchString(b) {
+					keep = append(keep, b)
+				}
+			}
+			p.Detail = strings.TrimSpace(strings.Join(keep, "\n"))
 		} else {
 			p.Desc = strings.Join(texts, "\n")
 		}

@@ -736,6 +736,11 @@ func (c *Collector) rebuild() {
 			if live == "blocked" {
 				th.Prompt = c.prompts[t.PaneID]
 			}
+			// A prompt on screen needs the user, whatever group herdr-projects
+			// has the thread in yet.
+			if th.Prompt != nil && th.State != "resolved" {
+				th.State = "blocked"
+			}
 			switch th.State {
 			case "waiting", "blocked", "review", "landing":
 				th.NeedsYou = true

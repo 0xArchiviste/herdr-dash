@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Self-test
+
+│ Self-test of herdr-dash prompt cards: this question will be answered
+│ automatically from the dashboard in ~10s (no need to answer). Which
+│ option?
+
+❯ 1. Self-test A
+     Picked automatically by the dashboard card
+  2. Self-test B
+     Not used
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

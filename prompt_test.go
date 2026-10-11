@@ -69,6 +69,9 @@ func TestParsePrompt(t *testing.T) {
 		{file: "claude-question.txt", agent: "claude", kind: "question", harness: "claude",
 			q: "Which database should we use?", summary: "Question: Which database should we use?",
 			opts: []wantOpt{{label: "Postgres", keys: "1", cur: true}, {label: "SQLite", keys: "2"}, {label: "MySQL", keys: "3"}, {label: "Type something.", keys: "4", text: "required"}}},
+		{file: "claude-question-wrapped.txt", agent: "claude", kind: "question", harness: "claude",
+			q: "Self-test of herdr-dash prompt cards: this question will be answered automatically from the dashboard in ~10s (no need to answer). Which option?",
+			opts: []wantOpt{{label: "Self-test A", keys: "1", cur: true}, {label: "Self-test B", keys: "2"}, {label: "Type something.", keys: "3", text: "required"}}},
 		{file: "claude-other.txt", agent: "claude", kind: "question", harness: "claude", q: "Which color?",
 			opts: []wantOpt{{label: "Red", keys: "1"}, {label: "Blue", keys: "2"}, {label: "Type something.", keys: "3", text: "required", cur: true}}},
 		{file: "claude-multiselect.txt", agent: "claude", kind: "question", harness: "claude", multi: true,
@@ -133,6 +136,9 @@ func TestParsePrompt(t *testing.T) {
 			}
 			if c.summary != "" {
 				eq("summary", p.Summary, c.summary)
+			}
+			if c.kind == "question" && strings.ContainsAny(p.Detail, "☐☒") {
+				t.Errorf("question tabs in detail %q", p.Detail)
 			}
 			if c.detail != "" && !strings.Contains(p.Detail, c.detail) {
 				t.Errorf("detail %q lacks %q", p.Detail, c.detail)

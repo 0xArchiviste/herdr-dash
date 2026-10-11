@@ -105,6 +105,19 @@ test("state: blocked panes carry their parsed prompt, others none; only blocked 
   assert.deepEqual([...read].sort(), ["w1B:p1", "w2Z:p1"]);
 });
 
+test("a working thread whose pane blocks on a prompt is blocked and needs you", async () => {
+  // P1, P8: herdr-projects may still group it as working.
+  show("w1A:p1", "claude-question-wrapped.txt");
+  writeFileSync(join(screens, "w1A_p1.status"), "blocked");
+  const t = await waitFor(async () => { const x = (await state()).threads.find((t) => t.key === "alpha/t-0001"); return x.prompt && x; }, 8000);
+  assert.equal(t.state, "blocked");
+  assert.equal(t.needs_you, true);
+  assert.match(t.prompt.summary, /^Question: Self-test of herdr-dash prompt cards/);
+  rmSync(join(screens, "w1A_p1.status"));
+  rmSync(join(screens, "w1A_p1"));
+  await waitFor(async () => { const x = (await state()).threads.find((t) => t.key === "alpha/t-0001"); return !x.prompt && x.state === "working"; }, 8000);
+});
+
 test("answer API: server-side keys, sig check, text rules, refusals", async () => {
   // P3, P4, P6
   const p = await promptOf("alpha/t-0002");
