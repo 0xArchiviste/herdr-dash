@@ -2,6 +2,10 @@
   "name": "herdr-dash-e2e",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test --test-concurrency=1 dash.test.mjs voice.test.mjs https.test.mjs demo.test.mjs search.test.mjs usage.test.mjs update.test.mjs prompts.test.mjs" },
-  "devDependencies": { "playwright": "1.63.0" }
+  "scripts": {
+    "test": "node --test --test-concurrency=1 dash.test.mjs voice.test.mjs https.test.mjs demo.test.mjs search.test.mjs usage.test.mjs update.test.mjs prompts.test.mjs voice-local.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
 }

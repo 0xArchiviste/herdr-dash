@@ -274,6 +274,39 @@ Server side (env only, it holds a secret; both features are off without it):
 `HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
 The token is only sent to Cloudflare, never to the page.
 
+### Local engine
+
+Dictation and voice navigation can run on a local model instead of the cloud,
+with no fallback to the cloud: pick **Local model on this machine** in the ⚙
+voice settings. Audio leaves the page only to this server, over its
+`/api/voice/stream` WebSocket, which proxies it to a sherpa-onnx
+`sherpa-onnx-online-websocket-server` sidecar running NVIDIA Nemotron Speech
+Streaming EN 0.6B (560 ms chunk, int8). The engine streams partial and final
+transcripts and never sends audio anywhere else; commands and dictation work
+the same as with the browser's Web Speech.
+
+Setup, one time:
+
+- `make stt-install` installs the sherpa-onnx server binary to `~/.local/bin`
+  and its ONNX Runtime library to `~/.local/lib`.
+- Run `herdr-dash` once with the engine on; it fetches the model into
+  `~/.local/share/herdr-dash/stt/` on the first session (weights stay out of
+  the repository and the process prints their licences: NVIDIA Open Model
+  License for the weights, Apache-2.0 for sherpa-onnx).
+
+Settings (env, with the engine on):
+
+| `HERDR_DASH_STT` | `local` enables the engine (default off) |
+| `HERDR_DASH_STT_IDLE` | stop the sidecar after this idle time (default `2m`) |
+| `HERDR_DASH_STT_THREADS` | decoder CPU threads (default 2) |
+| `HERDR_DASH_STT_DIR` | where the model is stored |
+
+The sidecar runs under `systemd-run --user --scope` with `MemoryMax=2G` and
+`CPUQuota=200%` when the user systemd is available (benchmarked: ~1.75 CPU
+seconds per second of audio, peak RSS under 1 GB). When user systemd is not
+available the process runs plain. A Silero VAD toggle in the settings runs
+voice navigation without touching the microphone unless you speak.
+
 ## Usage
 
 A strip in the header shows what is left on your agent plans: Claude Code's

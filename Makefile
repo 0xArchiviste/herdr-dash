@@ -1,4 +1,4 @@
-.PHONY: build vet test e2e check install demo screenshots clean
+.PHONY: build vet test e2e check install demo screenshots clean stt-install
 
 build:
 	go build -o bin/herdr-dash .
@@ -42,6 +42,17 @@ install: build
 	systemctl --user daemon-reload
 	systemctl --user enable herdr-dash.service
 	systemctl --user restart herdr-dash.service
+
+# Local voice engine: the sherpa-onnx streaming server (Apache-2.0) on PATH.
+# Model weights are fetched on first use into ~/.local/share/herdr-dash/stt/
+# (NVIDIA Open Model License; the fetch prints the notice). CPU only.
+stt-install:
+	set -e; \
+	url=$$(curl -s https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest | grep -o 'https://[^"]*sherpa-onnx-v[^"]*linux-x64-shared.tar.bz2' | head -1); \
+	curl -sL "$$url" | tar xj -C /tmp; \
+	install -m 755 /tmp/sherpa-onnx-*-linux-x64-shared/bin/sherpa-onnx-online-websocket-server $(HOME)/.local/bin/; \
+	install -m 644 /tmp/sherpa-onnx-*-linux-x64-shared/lib/libonnxruntime.so* $(HOME)/.local/lib/ 2>/dev/null || true; \
+	echo 'sherpa-onnx installed. Enable with HERDR_DASH_STT=local; the model downloads on first use.'
 
 clean:
 	rm -rf bin e2e/artifacts

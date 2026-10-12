@@ -38,6 +38,7 @@ type Config struct {
 	MemexTimeout  time.Duration // per memex search
 	MemexPerMin   int           // memex searches a minute (cached queries are free)
 	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
+	STT           STTConfig     // optional local speech-to-text sidecar, env only
 	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
 	PublicURL     string        // optional https://host[:port] that remote plain-http page loads go to
 	Build         string        // id of the embedded frontend; open pages reload when it changes
@@ -127,14 +128,14 @@ type coordRecord struct {
 // blocked, waiting (herdr-projects says it needs you), working, idle, or
 // none when no live pane can be identified.
 type Coordinator struct {
-	PaneID       string `json:"pane_id"`
-	TabID        string `json:"tab_id"`
-	Agent        string `json:"agent"`
-	LiveStatus   string `json:"live_status"`
-	State        string `json:"state"`
-	Activity     string `json:"activity"`
-	LastActivity string `json:"last_activity"`
-	NeedsYou     bool   `json:"needs_you"`
+	PaneID       string  `json:"pane_id"`
+	TabID        string  `json:"tab_id"`
+	Agent        string  `json:"agent"`
+	LiveStatus   string  `json:"live_status"`
+	State        string  `json:"state"`
+	Activity     string  `json:"activity"`
+	LastActivity string  `json:"last_activity"`
+	NeedsYou     bool    `json:"needs_you"`
 	Prompt       *Prompt `json:"prompt,omitempty"`
 }
 
@@ -236,7 +237,7 @@ type transcriptHit struct {
 type screenHit struct {
 	text  string
 	raw   string // with escapes (live reads), for the prompt parser
-	lines int // lines asked for (history reads)
+	lines int    // lines asked for (history reads)
 	at    time.Time
 }
 
