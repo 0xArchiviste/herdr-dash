@@ -912,6 +912,7 @@
     const p = state.projects.find((x) => x.slug === slug);
     if (!p || !$("#p-head")) return;
     const co = p.coordinator || { state: "none" };
+    coordNote(!!co.pane_id, co.state === "blocked");
     const d = coordDetail;
     const color = STATES[co.state]?.color || STATES.idle.color;
     const head = $("#p-head");

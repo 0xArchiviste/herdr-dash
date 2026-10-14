@@ -397,7 +397,7 @@ test("strip: colours, local reset times, details, phone layout (U9, U11)", async
   await pop.waitFor({ state: "visible" });
   const t = pop.locator('.usec[data-id="claude"] time.reset').first();
   const want = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo", weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(RESET_5H));
-  assert.equal(await t.getAttribute("datetime"), new Date(RESET_5H).toISOString());
+  assert.equal(new Date(await t.getAttribute("datetime")).toISOString(), new Date(RESET_5H).toISOString());
   assert.match(await t.innerText(), new RegExp(want.replace(/\s/g, "\\s")));
   const text = await pop.innerText();
   assert.match(text, /15% left/);
