@@ -8,7 +8,7 @@ echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
 case "$1 $2" in
   "pane list")
     # STUB_SCREENS/<pane>.status overrides a pane's agent_status.
-    out="$(cat "$D/panes.json")"
+    out="$(cat "${STUB_PANES:-$D/panes.json}")"
     for f in "${STUB_SCREENS:-/nonexistent}"/*.status; do
       [ -f "$f" ] || continue
       p="$(basename "$f" .status)"; p="${p/_/:}"

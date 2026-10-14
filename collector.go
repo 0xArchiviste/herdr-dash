@@ -82,12 +82,14 @@ type RawThread struct {
 }
 
 type Pane struct {
-	PaneID       string `json:"pane_id"`
-	TabID        string `json:"tab_id"`
-	Agent        string `json:"agent"`
-	AgentStatus  string `json:"agent_status"`
-	Cwd          string `json:"cwd"`
-	AgentSession *struct {
+	PaneID        string `json:"pane_id"`
+	TabID         string `json:"tab_id"`
+	WorkspaceID   string `json:"workspace_id"`
+	Agent         string `json:"agent"`
+	AgentStatus   string `json:"agent_status"`
+	Cwd           string `json:"cwd"`
+	ForegroundCwd string `json:"foreground_cwd"`
+	AgentSession  *struct {
 		Agent string `json:"agent"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
@@ -117,6 +119,7 @@ type liveCoord struct {
 type coordRecord struct {
 	PaneID       string `json:"pane_id"`
 	TabID        string `json:"tab_id"`
+	WorkspaceID  string `json:"workspace_id"`
 	Cwd          string `json:"cwd"`
 	Agent        string `json:"agent"`
 	AgentSession string `json:"agent_session"`
@@ -127,14 +130,14 @@ type coordRecord struct {
 // blocked, waiting (herdr-projects says it needs you), working, idle, or
 // none when no live pane can be identified.
 type Coordinator struct {
-	PaneID       string `json:"pane_id"`
-	TabID        string `json:"tab_id"`
-	Agent        string `json:"agent"`
-	LiveStatus   string `json:"live_status"`
-	State        string `json:"state"`
-	Activity     string `json:"activity"`
-	LastActivity string `json:"last_activity"`
-	NeedsYou     bool   `json:"needs_you"`
+	PaneID       string  `json:"pane_id"`
+	TabID        string  `json:"tab_id"`
+	Agent        string  `json:"agent"`
+	LiveStatus   string  `json:"live_status"`
+	State        string  `json:"state"`
+	Activity     string  `json:"activity"`
+	LastActivity string  `json:"last_activity"`
+	NeedsYou     bool    `json:"needs_you"`
 	Prompt       *Prompt `json:"prompt,omitempty"`
 }
 
@@ -236,7 +239,7 @@ type transcriptHit struct {
 type screenHit struct {
 	text  string
 	raw   string // with escapes (live reads), for the prompt parser
-	lines int // lines asked for (history reads)
+	lines int    // lines asked for (history reads)
 	at    time.Time
 }
 
@@ -357,6 +360,14 @@ func (c *Collector) refreshPanes(ctx context.Context) {
 	for _, p := range doc.Result.Panes {
 		c.panes[p.PaneID] = p
 	}
+	// A switch updates coordinator.json before the ticker updates its live
+	// list. Read both records with each pane poll so availability follows the
+	// new pane without waiting for the slower thread poll.
+	for _, slug := range c.order {
+		if p := c.projects[slug]; p != nil {
+			p.coords, p.record, p.Inbox = readCoordState(filepath.Join(c.cfg.Root, slug))
+		}
+	}
 }
 
 var countRe = regexp.MustCompile(`([A-Za-z ]+): (\d+)`)
@@ -455,22 +466,36 @@ func readCoordState(dir string) (coords []liveCoord, rec coordRecord, inbox int)
 func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	var pane Pane
 	var since, tab string
+	// The record is updated synchronously by `open` when a coordinator is
+	// switched. Prefer its verified pane while the ticker's list catches up.
+	if pn, ok := c.panes[p.record.PaneID]; ok && p.record.PaneID != "" && p.record.Cwd != "" &&
+		(pn.Cwd == p.record.Cwd || pn.ForegroundCwd == p.record.Cwd) &&
+		(p.record.TabID == "" || pn.TabID == p.record.TabID) &&
+		(p.record.WorkspaceID == "" || pn.WorkspaceID == p.record.WorkspaceID) {
+		pane, since, tab = pn, p.record.Updated, p.record.TabID
+	}
+	recordSelected := pane.PaneID != ""
 	var best *liveCoord
 	for i := range p.coords {
 		lc := &p.coords[i]
 		pn, ok := c.panes[lc.PaneID]
-		if !ok || lc.PaneID == "" || (lc.AgentSession != "" && pn.session() != "" && lc.AgentSession != pn.session()) {
+		if !ok || lc.PaneID == "" || (lc.AgentSession != "" && pn.session() != "" && lc.AgentSession != pn.session()) ||
+			(p.record.Cwd != "" && pn.Cwd != p.record.Cwd && pn.ForegroundCwd != p.record.Cwd) {
+			continue
+		}
+		if recordSelected {
+			if lc.PaneID == pane.PaneID {
+				since = lc.PairSince
+			}
 			continue
 		}
 		if best == nil || lc.StateChangeSeq > best.StateChangeSeq {
 			best, pane = lc, pn
 		}
 	}
-	if best != nil {
+	if !recordSelected && best != nil {
 		since, tab = best.PairSince, best.TabID
-	} else if pn, ok := c.panes[p.record.PaneID]; ok && p.record.PaneID != "" && p.record.Cwd != "" && pn.Cwd == p.record.Cwd {
-		pane, since, tab = pn, p.record.Updated, p.record.TabID
-	} else {
+	} else if pane.PaneID == "" {
 		return Coordinator{State: "none"}
 	}
 	if tab == "" {
