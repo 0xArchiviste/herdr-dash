@@ -756,6 +756,7 @@
       [fmtKey(cfg.nav), "Voice navigation on/off (also the floating mic)"],
       [fmtKey(cfg.dict), `Dictate into the chat box (${cfg.dictMode === "hold" ? "hold to talk" : "press to start/stop"})`],
       ["?", "This help (not while typing)"],
+      ["D", "Dock the panel right, left or bottom, in turn (not while typing)"],
       ["Esc", "Close help, settings, a voice question, or the panel"],
       ["Ctrl+Enter", "Send the chat box"],
     ];
