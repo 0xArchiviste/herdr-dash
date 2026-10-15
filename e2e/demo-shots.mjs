@@ -29,6 +29,7 @@ await page.locator(`${blockedChip}[data-key="payments-svc/t-0001"]`).click();
 await page.waitForSelector("#panel.open .quick:not([hidden])");
 await page.waitForTimeout(1500);
 await page.fill("#chat-input", "Yes, staging only. Run it with CONCURRENTLY.");
+await page.locator("#panel").evaluate(e => { e.scrollTop = 0; });
 await shot(page, "thread-blocked");
 
 // The coordinator panel of the same project.
@@ -40,7 +41,7 @@ await shot(page, "coordinator");
 await page.close();
 
 // Triage: blocked and waiting folded, select mode, a few reviews picked.
-// Wide, cropped to the header and strip, so the picked chips fit.
+// Capture the queue itself so all selected reviews are readable.
 page = await browser.newPage({ ...desktop, viewport: { width: 1920, height: 900 } });
 await page.goto(url);
 await settle(page);
@@ -49,7 +50,7 @@ await page.locator("#select-mode").click();
 for (const k of ["nebula-api/t-0003", "docs-site/t-0001", "payments-svc/t-0003"]) await page.locator(`#needs .chip[data-key="${k}"]`).click();
 await page.evaluate(() => document.querySelector('#needs .group[data-state="review"]').scrollIntoView({ inline: "start", block: "nearest" }));
 await page.waitForTimeout(500);
-await shot(page, "triage", { clip: { x: 0, y: 0, width: 1920, height: 136 } });
+await page.locator("#needs-wrap").screenshot({ path: join(out, "triage.png") });
 await page.close();
 
 // Phone.
