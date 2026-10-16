@@ -20,6 +20,9 @@ import (
 // Config names the data sources and the write settings. Every external
 // command the collector runs is read-only; writes live in actions.go.
 type Config struct {
+	SessionProfiles string
+	OpencodeDB      string
+
 	Auth          string
 	ReadOnly      bool
 	WriteBurst    int
@@ -130,6 +133,8 @@ type coordRecord struct {
 // blocked, waiting (herdr-projects says it needs you), working, idle, or
 // none when no live pane can be identified.
 type Coordinator struct {
+	Session SessionDetails `json:"session"`
+
 	PaneID       string  `json:"pane_id"`
 	TabID        string  `json:"tab_id"`
 	Agent        string  `json:"agent"`
@@ -162,6 +167,8 @@ type Project struct {
 }
 
 type Thread struct {
+	Session SessionDetails `json:"session"`
+
 	Key          string   `json:"key"`
 	Project      string   `json:"project"`
 	ID           string   `json:"id"`
@@ -210,6 +217,8 @@ type projectRaw struct {
 }
 
 type Collector struct {
+	sessionCache map[string]sessionCacheEntry
+
 	cfg Config
 
 	mu         sync.Mutex
@@ -245,19 +254,20 @@ type screenHit struct {
 
 func NewCollector(cfg Config) *Collector {
 	return &Collector{
-		cfg:        cfg,
-		projects:   map[string]*projectRaw{},
-		panes:      map[string]Pane{},
-		prs:        map[string]ghPR{},
-		transcript: map[string]transcriptHit{},
-		subs:       map[chan []byte]struct{}{},
-		screens:    map[string]screenHit{},
-		history:    map[string]screenHit{},
-		paneLocks:  map[string]*sync.Mutex{},
-		burst:      map[string]time.Time{},
-		prompts:    map[string]*Prompt{},
-		kick:       make(chan struct{}, 1),
-		snap:       Snapshot{Projects: []Project{}, Threads: []Thread{}, Errors: []string{}},
+		cfg:          cfg,
+		sessionCache: map[string]sessionCacheEntry{},
+		projects:     map[string]*projectRaw{},
+		panes:        map[string]Pane{},
+		prs:          map[string]ghPR{},
+		transcript:   map[string]transcriptHit{},
+		subs:         map[chan []byte]struct{}{},
+		screens:      map[string]screenHit{},
+		history:      map[string]screenHit{},
+		paneLocks:    map[string]*sync.Mutex{},
+		burst:        map[string]time.Time{},
+		prompts:      map[string]*Prompt{},
+		kick:         make(chan struct{}, 1),
+		snap:         Snapshot{Projects: []Project{}, Threads: []Thread{}, Errors: []string{}},
 	}
 }
 
@@ -496,13 +506,14 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	if !recordSelected && best != nil {
 		since, tab = best.PairSince, best.TabID
 	} else if pane.PaneID == "" {
-		return Coordinator{State: "none"}
+		return Coordinator{State: "none", Session: c.sessionDetails(Pane{}, "", c.projectProfile(p.Slug, "coordinator"))}
 	}
 	if tab == "" {
 		tab = pane.TabID
 	}
 	sub, _ := pane.Tokens["hp_sub"].(string)
 	co := Coordinator{PaneID: pane.PaneID, TabID: tab, Agent: pane.Agent, LiveStatus: pane.AgentStatus, Activity: sub}
+	co.Session = c.sessionDetails(pane, pane.Agent, c.projectProfile(p.Slug, "coordinator"))
 	switch {
 	case pane.AgentStatus == "blocked":
 		co.State = "blocked"
@@ -747,6 +758,15 @@ func (c *Collector) rebuild() {
 				Note: t.Note, Error: t.Error, Next: t.Next,
 				Acked: t.ReportHash != "" && t.ReportHash == t.AckedReportHash,
 			}
+			profile := t.Profile
+			if profile == "" {
+				profile = c.projectProfile(slug, "thread")
+			}
+			sessionPane := pane
+			if t.Status == "resolved" {
+				sessionPane = Pane{}
+			}
+			th.Session = c.sessionDetails(sessionPane, t.Agent, profile)
 			if th.Next == nil {
 				th.Next = []string{}
 			}

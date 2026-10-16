@@ -286,3 +286,11 @@ details.fold > .md { margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) {
   .node .ring, .node .core, .live.on, .chip .dot { animation: none !important; }
 }
+
+.session-details { margin: 14px 0; padding: 12px; border: 1px solid var(--g4); border-radius: 8px; min-width: 0; }
+.session-details h3 { margin: 0 0 6px; }
+.session-profile { font-size: 12px; overflow-wrap: anywhere; }
+.session-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; font-size: 13px; margin: 10px 0 0; }
+.session-grid dt { color: var(--bblack); }
+.session-grid dd { margin: 0; overflow-wrap: anywhere; }
+.session-grid small { display: block; color: var(--bblack); font-size: 11px; margin-top: 2px; }
