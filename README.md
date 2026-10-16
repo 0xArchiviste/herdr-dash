@@ -78,12 +78,16 @@ summary, the coordinator's progress line and live screen, a message box,
 the open threads, their latest reports (newest first), `TASKS.md`, the
 `MEMORY.md` index and the inbox count.
 
+Use **Clear filters** to return to all threads after searching or filtering.
+Use **Fit graph** to bring the visible projects back into view after panning or zooming.
+
 ### Triage what needs you
 
-<img src="docs/screenshots/triage.png" alt="Needs-you strip in select mode with three review threads picked, Ack selected and Snooze buttons">
+<img src="docs/screenshots/triage.png" alt="Needs-you queue in select mode with three review threads picked, Ack selected and Snooze buttons">
 
-- **Needs-you strip** grouped by severity (blocked, waiting, review,
-  landing), with counts and collapsible groups. Blocked or "needs you"
+- **Needs-you queue** grouped by severity (blocked, waiting, review,
+  landing), with counts and collapsible groups. The queue scrolls vertically beside
+  the map on desktop and above it on smaller screens. Blocked or "needs you"
   coordinators show here too. A blocked item shows a short prompt summary
   ("Permission: Bash make test", "Question: Which DB?") and an *Answer*
   button that opens the prompt card in a popover, without the panel.
@@ -101,8 +105,8 @@ the open threads, their latest reports (newest first), `TASKS.md`, the
   <img src="docs/screenshots/phone-panel.png" alt="Phone: a blocked thread's panel with quick replies" width="300">
 </p>
 
-Same page, laid out for a narrow screen: the graph goes tall and the panel
-slides up from the bottom. Answer a stuck agent from the couch.
+Same page, laid out for a narrow screen: status names stay visible, the queue
+scrolls above the graph, and the detail panel slides up from the bottom. Answer a stuck agent from the couch.
 
 ## Try it in 30 seconds
 
@@ -287,7 +291,17 @@ left out when its files are absent:
   while it is fresh, else the endpoint Claude Code calls, with the OAuth
   token from `~/.claude/.credentials.json`. The token is only read: never
   refreshed or written, and not used once expired. When the call fails the
-  last cached answer is shown, marked stale.
+  last cached answer is shown as historical data. The header says `stale`
+  without capacity gauges when the observation is older than the network
+  interval or any observed reset has passed. Details preserve the last
+  observed usage and explain failures (including expired credentials).
+  Passed resets never imply an unused new window. The browser also ages
+  observations if polling fails. No usable answer means `n/a`.
+  These are account plan observations from Claude Code's local cache or
+  `https://api.anthropic.com/api/oauth/usage`, not a per-thread token budget
+  or a guarantee that the next request will be accepted. The endpoint is
+  the one used by Claude Code and its schema may change. If credentials
+  expire, run Claude Code to renew them; Dash does not renew them itself.
 - **Codex**: the last `rate_limits` event in the newest session file under
   `~/.codex/sessions`. No network.
 - **opencode**: the configured model's provider. OpenRouter's `/credits`

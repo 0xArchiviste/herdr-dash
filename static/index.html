@@ -13,25 +13,10 @@
 </head>
 <body>
 <header id="top">
-  <div class="brand"><span id="live" class="live" title="live updates"></span>herdr<b>dash</b></div>
+  <h1 class="brand"><span id="live" class="live" title="live updates"></span>herdr<b>dash</b></h1>
   <div id="legend" class="legend"></div>
   <div class="updated" id="updated"></div>
 </header>
-<section id="needs-wrap">
-  <div class="needs-bar">
-    <span class="needs-label">Needs you <span id="needs-n"></span></span>
-    <select id="needs-filter" aria-label="Acked and snoozed">
-      <option value="active">Hide acked/snoozed</option>
-      <option value="all">Show all</option>
-      <option value="parked">Only acked/snoozed</option>
-    </select>
-    <button id="select-mode" class="tbtn w" aria-pressed="false">Select</button>
-    <button id="bulk-ack" class="tbtn w" hidden>Ack selected</button>
-    <button id="bulk-snooze" class="tbtn" hidden>Snooze 1 day</button>
-    <button id="ack-all" class="tbtn w">Ack all review…</button>
-  </div>
-  <div id="needs"></div>
-</section>
 <section id="filters">
   <select id="f-project" aria-label="Project"><option value="">All projects</option></select>
   <select id="f-state" aria-label="State">
@@ -57,10 +42,29 @@
     <button id="search-mode" class="tbtn" type="button" aria-pressed="false" title="Search thread titles (Alt+C toggles)">Title</button>
     <div id="search-results" role="listbox" aria-label="Content search results" hidden></div>
   </div>
+  <button id="reset-filters" class="tbtn" hidden>Clear filters</button>
   <span id="shown" class="shown"></span>
+</section>
+<div id="workspace">
+<section id="needs-wrap" aria-label="Needs your attention">
+  <div class="needs-bar">
+    <h2 class="needs-label">Needs you <span id="needs-n"></span></h2>
+    <select id="needs-filter" aria-label="Acked and snoozed">
+      <option value="active">Hide acked/snoozed</option>
+      <option value="all">Show all</option>
+      <option value="parked">Only acked/snoozed</option>
+    </select>
+    <button id="select-mode" class="tbtn w" aria-pressed="false">Select</button>
+    <button id="bulk-ack" class="tbtn w" hidden>Ack selected</button>
+    <button id="bulk-snooze" class="tbtn" hidden>Snooze 1 day</button>
+    <button id="ack-all" class="tbtn w">Ack all review…</button>
+  </div>
+  <div id="needs"></div>
 </section>
 <div id="work">
 <main id="stage">
+  <div class="map-tools"><h2>Project map</h2><button id="fit-graph" class="tbtn" title="Fit all visible projects and threads">Fit graph</button></div>
+  <div id="graph-empty" hidden role="status">No matching threads. Clear filters to see all work.</div>
   <svg id="graph" role="img" aria-label="Projects and threads"></svg>
   <div id="tip" class="tip" hidden></div>
   <div id="errors" class="errors" hidden></div>
@@ -75,6 +79,7 @@
   <button id="close" class="close" aria-label="Close">×</button>
   <div id="panel-body"></div>
 </aside>
+</div>
 </div>
 <dialog id="dlg">
   <form method="dialog">

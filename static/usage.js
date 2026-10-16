@@ -51,6 +51,8 @@
   }
   const visible = () => (data?.sources || []).filter((s) => s.status !== "disabled");
 
+  const stale = (s) => s.stale || (s.valid_until && Date.parse(s.valid_until) <= Date.now());
+
   function gauge(w, i) {
     const l = left(w), lv = level(l);
     return el("span", { class: "ug", "data-win": String(i), "data-level": lv, title: `${w.label}: ${pct(l)} left` },
@@ -67,22 +69,24 @@
       const lv = [];
       if (s.status !== "ok") {
         kids.push(el("span", { class: "una", text: "n/a" }));
+      } else if (stale(s)) {
+        kids.push(el("span", { class: "una", text: "stale" }));
       } else {
         s.windows.slice(0, 2).forEach((w, i) => { kids.push(gauge(w, i)); lv.push(level(left(w))); });
         const minLeft = s.windows.length ? Math.min(...s.windows.slice(0, 2).map(left)) : null;
         if (minLeft != null) kids.push(el("span", { class: "upct", text: pct(minLeft) }));
         if (s.balance && !s.windows.length) { kids.push(el("span", { class: "ubal", text: short(s.balance.remaining, s.balance.unit) })); lv.push(balLevel(s.balance)); }
       }
-      const title = s.status === "ok"
-        ? [s.name, ...s.windows.map((w) => `${w.label} ${pct(left(w))} left`), s.balance ? `${money(s.balance.remaining, s.balance.unit)} left` : null, s.stale ? "(stale)" : null].filter(Boolean).join(" · ")
+      const title = s.status === "ok" && stale(s) ? `${s.name}: stale; current limits unknown` : s.status === "ok"
+        ? [s.name, ...s.windows.map((w) => `${w.label} ${pct(left(w))} left`), s.balance ? `${money(s.balance.remaining, s.balance.unit)} left` : null].filter(Boolean).join(" · ")
         : `${s.name}: unavailable (${s.reason || "unknown"})`;
       strip.append(el("button", {
-        class: "usrc" + (s.status === "ok" ? "" : " na") + (s.stale ? " stale" : ""), type: "button", "data-id": s.id,
-        "data-level": s.status === "ok" ? worst(lv) : "na", title, "aria-expanded": String(openID === s.id),
+        class: "usrc" + (s.status === "ok" ? "" : " na") + (stale(s) ? " stale" : ""), type: "button", "data-id": s.id,
+        "data-level": s.status === "ok" && !stale(s) ? worst(lv) : "na", title, "aria-expanded": String(openID === s.id),
         onclick: (e) => { e.stopPropagation(); openID === s.id && !pop.hidden ? close() : open(s.id); },
       }, ...kids));
     }
-    if (data) strip.append(el("time", { class: "ustamp", datetime: data.generated_at, title: `Usage updated ${clock(data.generated_at)}`, text: clock(data.generated_at) }));
+    if (data) strip.append(el("time", { class: "ustamp", datetime: data.generated_at, title: `Usage checked ${clock(data.generated_at)}`, text: clock(data.generated_at) }));
   }
 
   function section(s) {
@@ -90,8 +94,14 @@
       s.status === "ok" ? null : el("span", { class: "ubad", text: "unavailable" }));
     const body = [head];
     if (s.status !== "ok") body.push(el("div", { class: "ureason", text: s.reason || "No data." }));
+    if (stale(s)) body.push(el("div", { class: "ureason", text: "Stale — current limits unknown. Last observed:" }));
     for (const w of s.windows) {
       const l = left(w);
+      if (stale(s)) {
+        body.push(el("div", { class: "ureason" }, `${w.label}: ${pct(w.used_percent)} used`,
+          w.resets_at ? ` · observed reset ${new Date(w.resets_at).toLocaleString()}` : ""));
+        continue;
+      }
       const reset = w.reset_passed
         ? el("span", { class: "ureset", text: "reset since last seen" })
         : w.resets_at ? el("span", { class: "ureset" }, "resets ", el("time", { class: "reset", datetime: w.resets_at, text: when(w.resets_at) }), ` (${rel(w.resets_at)})`) : null;
@@ -107,9 +117,9 @@
       body.push(el("div", { class: "ubalance", "data-level": balLevel(b) }, el("span", { class: "ul", text: "Balance" }),
         el("span", { text: b.total ? `${money(b.remaining, b.unit)} of ${money(b.total, b.unit)} left` : `${money(b.remaining, b.unit)} left` })));
     }
-    if (s.status === "ok" && s.reason) body.push(el("div", { class: "ureason", text: `Live check failed: ${s.reason}` }));
+    if (s.status === "ok" && s.reason) body.push(el("div", { class: "ureason", text: s.reason }));
     const stamp = [];
-    if (s.as_of) { const r = rel(s.as_of); stamp.push(`${r === "now" ? "data just now" : `data from ${r}`}${s.stale ? " (stale)" : ""}`); }
+    if (s.as_of) { const r = rel(s.as_of); stamp.push(`${r === "now" ? "data just now" : `data from ${r}`}${stale(s) ? " (stale)" : ""}`); }
     stamp.push(`checked ${clock(s.checked_at)}`);
     body.push(el("div", { class: "umeta", text: stamp.join(" · ") }));
     return el("section", { class: "usec" + (s.id === openID ? " focus" : ""), "data-id": s.id }, ...body);
@@ -122,7 +132,7 @@
       el("div", { class: "utop" }, el("b", { text: "Usage left" }),
         el("button", { class: "close", type: "button", "aria-label": "Close usage", text: "×", onclick: close })),
       ...srcs.map(section),
-      el("div", { class: "umeta" }, "Updated ", el("time", { datetime: data.generated_at, text: clock(data.generated_at) }),
+      el("div", { class: "umeta" }, "Checked ", el("time", { datetime: data.generated_at, text: clock(data.generated_at) }),
         ` · refreshes every ${Math.round(every / 60000)} min while open`));
     const r = $("#top").getBoundingClientRect();
     pop.style.top = `${Math.round(r.bottom + 4)}px`;
@@ -157,10 +167,19 @@
         renderStrip();
         renderPop();
       }
-    } catch {} finally { loading = false; }
+    } catch {} finally {
+      loading = false;
+      renderStrip();
+      renderPop();
+    }
   }
   // Poll only while the page is visible; the server caches each source.
-  setInterval(() => { if (document.visibilityState === "visible" && Date.now() - lastFetch >= every - 1000) load(); }, 30_000);
+  setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    renderStrip();
+    renderPop();
+    if (Date.now() - lastFetch >= every - 1000) load();
+  }, 30_000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - lastFetch >= every) load(); });
   load();
 })();

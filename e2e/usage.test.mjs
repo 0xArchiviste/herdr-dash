@@ -32,6 +32,10 @@
 //      updated stamp, or clicking does not open details.
 // U10. --usage off still reads files or calls providers.
 // U11. On a phone the strip overflows the header.
+// U12. Old Claude cache with an expired token/reset is presented as current
+//      remaining capacity; a passed reset is guessed to mean 100% left.
+// U13. Fresh responses with expired resets or invalid percentages look current.
+// U14. A page keeps showing current gauges after its data expires or polling fails.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -82,6 +86,11 @@ const prov = http.createServer((req, res) => {
     if (!/^Bearer sk-ant-oat01-/.test(call.auth)) return send({ error: "unauthorized" }, 401);
     return send(claudeAnswer);
   }
+  if (req.url === "/soon/api/oauth/usage") return send({ five_hour: { utilization: 91, resets_at: iso(Date.now() + 2000) } });
+  if (req.url === "/reset/api/oauth/usage") return send({ five_hour: { utilization: 91, resets_at: iso(now - 60_000) } });
+  if (req.url === "/invalid/api/oauth/usage") return send({ five_hour: { utilization: -12, resets_at: RESET_5H } });
+  if (req.url === "/rejected/api/oauth/usage") return send({}, 401);
+  if (req.url === "/limited/api/oauth/usage") return send({}, 429);
   if (req.url === "/slow/api/oauth/usage") {
     setTimeout(() => send(claudeAnswer), 8000).unref();
     return;
@@ -136,7 +145,7 @@ function opencode(dir, cfg, data) {
   if (data) writeFileSync(join(dir, "data/auth.json"), JSON.stringify(data));
 }
 
-const H = Object.fromEntries(["full", "passive", "expired", "slow", "empty", "off"].map((k) => [k, join(tmp, k)]));
+const H = Object.fromEntries(["full", "passive", "expired", "slow", "empty", "off", "old", "reset", "invalid", "rejected", "limited", "soon"].map((k) => [k, join(tmp, k)]));
 const sessionRel = (d, name) => `2026/10/${d}/rollout-${name}.jsonl`;
 const PRIMARY_RESET = Math.floor((now + 2 * 3600_000) / 1000);
 const WEEK_RESET = Math.floor((now + 4 * 86400_000) / 1000);
@@ -184,6 +193,16 @@ function writeFixtures(provURL) {
   // slow: the Claude endpoint hangs; Claude's own (old) cache is the fallback.
   credFiles.slow = claudeHome(join(H.slow, "claude"), SECRETS.slow, now + 3600_000);
   claudeState(join(H.slow, "claude.json"), now - 3 * 3600_000);
+
+  // Real failure shape: expired credentials plus a cache from before both resets.
+  credFiles.old = claudeHome(join(H.old, "claude"), "sk-ant-oat01-old-fixture", now - 3600_000);
+  writeFileSync(join(H.old, "claude.json"), JSON.stringify({ cachedUsageUtilization: {
+    fetchedAtMs: now - 10 * 86400_000,
+    utilization: { five_hour: { utilization: 2, resets_at: iso(now - 9 * 86400_000) }, seven_day: { utilization: 76, resets_at: iso(now - 7 * 86400_000) } },
+  } }));
+  for (const name of ["reset", "invalid", "rejected", "limited", "soon"]) {
+    credFiles[name] = claudeHome(join(H[name], "claude"), `sk-ant-oat01-${name}-fixture`, now + 3600_000);
+  }
 
   // off: everything present, but --usage off.
   credFiles.off = claudeHome(join(H.off, "claude"), SECRETS.off, now + 3600_000);
@@ -242,6 +261,9 @@ before(async () => {
   start("slow", ports[3], `${provURL}/slow/api/oauth/usage`);
   start("empty", ports[4], `${provURL}/ok/api/oauth/usage`);
   start("off", ports[5], `${provURL}/ok/api/oauth/usage`, ["--usage", "off"]);
+  for (const [i, name] of ["old", "reset", "invalid", "rejected", "limited", "soon"].entries()) {
+    start(name, ports[6 + i], `${provURL}/${name}/api/oauth/usage`);
+  }
   for (const s of Object.values(servers)) await waitFor(async () => (await (await fetch(s.url + "/api/state")).json()).threads.length > 0);
   browser = await chromium.launch();
 });
@@ -309,6 +331,67 @@ test("Claude: a hanging endpoint times out and falls back to stale cache (U5)", 
   await usage(servers.slow);
   assert.ok(Date.now() - t1 < 1000, "failure cached");
   assert.equal(callsWith(SECRETS.slow).length, 1);
+});
+
+test("Claude: stale cache and passed resets never imply current capacity (U12, U13)", async () => {
+  const c = src(await usage(servers.old), "claude");
+  assert.equal(c.stale, true);
+  assert.match(c.reason, /expired/);
+  assert.deepEqual(c.windows.map(w => w.used_percent), [2, 76], "historical readings preserved, never reset to zero");
+  assert.ok(Date.parse(c.valid_until) < now);
+  writeFileSync(join(artifacts, "usage-claude-old.json"), JSON.stringify(c, null, 2));
+  const reset = src(await usage(servers.reset), "claude");
+  assert.equal(reset.stale, true, "even a newly fetched answer cannot extend a passed reset");
+  assert.equal(reset.windows[0].used_percent, 91);
+  for (const [name, reason] of [["invalid", /no limits/], ["rejected", /401/], ["limited", /429/]]) {
+    const u = src(await usage(servers[name]), "claude");
+    assert.equal(u.status, "unavailable");
+    assert.match(u.reason, reason);
+    assert.deepEqual(u.windows, []);
+  }
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(servers.old.url);
+  const strip = page.locator('#usage .usrc[data-id="claude"]');
+  await strip.waitFor();
+  assert.match(await strip.innerText(), /stale/i);
+  assert.equal(await strip.getAttribute("data-level"), "na");
+  assert.equal(await strip.locator(".ug, .upct").count(), 0, "no current-capacity gauges");
+  await strip.click();
+  const detail = page.locator('#usage-pop .usec[data-id="claude"]');
+  assert.match(await detail.innerText(), /last observed/i);
+  assert.match(await detail.innerText(), /2% used/);
+  assert.match(await detail.innerText(), /token expired/i);
+  assert.doesNotMatch(await detail.innerText(), /% left|resets .*ago/);
+  await page.screenshot({ path: join(artifacts, "usage-claude-stale.png"), clip: { x: 0, y: 0, width: 1440, height: 300 } });
+  await page.close();
+});
+
+test("Claude: server ages readings across a reset inside its local cache interval (U13)", async () => {
+  const before = src(await usage(servers.soon), "claude");
+  assert.equal(before.stale, false);
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(before.valid_until) - Date.now()) + 100));
+  const after = src(await usage(servers.soon), "claude");
+  assert.equal(after.stale, true);
+  assert.equal(after.as_of, before.as_of, "polling does not invent a newer observation");
+  assert.equal(after.windows[0].used_percent, 91, "reset never fabricates zero usage");
+  assert.match(after.reason, /expired/);
+  assert.equal(calls.filter(c => c.url === "/soon/api/oauth/usage").length, 1, "no extra provider request");
+});
+
+test("Claude: a page ages readings honestly when refresh fails (U14)", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.clock.install();
+  await page.goto(servers.full.url);
+  const strip = page.locator('#usage .usrc[data-id="claude"]');
+  await strip.waitFor();
+  assert.ok(await strip.locator(".ug").count());
+  await page.route("**/api/usage", route => route.abort());
+  await page.clock.fastForward(6 * 60_000);
+  await page.waitForTimeout(50);
+  assert.match(await strip.innerText(), /stale/i);
+  assert.equal(await strip.locator(".ug").count(), 0);
+  await page.screenshot({ path: join(artifacts, "usage-claude-refresh-failed.png"), clip: { x: 0, y: 0, width: 1440, height: 120 } });
+  await page.close();
 });
 
 test("Codex: newest session, last rate_limits, labels, reset windows, credits (U7)", async () => {
