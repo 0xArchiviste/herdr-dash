@@ -732,6 +732,7 @@
       el("div", { class: "proj" }, el("button", { id: "open-coord", class: "projlink", title: "Open the project's coordinator panel", text: p.name, onclick: () => select("hub:" + t.project) }), ` · ${t.id}`),
       el("h2", { class: "title", text: t.title }),
       el("div", { id: "p-head" }),
+      el("section", { class: "session-details", "aria-label": "Session details" }),
       el("div", { id: "p-actions", class: "w" }),
       el("dl", { class: "meta", id: "p-meta" }),
       buildChat(t),
@@ -872,6 +873,7 @@
       el("div", { class: "proj", text: `Project · ${slug}` }),
       el("h2", { class: "title", text: p.name }),
       el("div", { id: "p-head" }),
+      el("section", { class: "session-details", "aria-label": "Session details" }),
       el("div", { id: "p-actions" }),
       el("dl", { class: "meta", id: "p-meta" }),
       el("section", { id: "p-chat" }, el("h3", { text: "Coordinator" }),
@@ -935,6 +937,7 @@
     if (!p || !$("#p-head")) return;
     const co = p.coordinator || { state: "none" };
     coordNote(!!co.pane_id, co.state === "blocked");
+    renderSession(co.session);
     const d = coordDetail;
     const color = STATES[co.state]?.color || STATES.idle.color;
     const head = $("#p-head");
@@ -1029,9 +1032,26 @@
     }));
   }
 
+  function renderSession(d = {}) {
+    const box = document.querySelector(".session-details");
+    if (!box) return;
+    const sig = JSON.stringify(d);
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    const fields = [["Provider", d.provider], ["Model", d.model], ["Effort", d.effort], ["Context window", d.context_window]];
+    box.replaceChildren(el("h3", { text: "Session details" }),
+      el("div", { class: "muted session-profile", text: d.profile ? "Configured profile: " + d.profile : "Configured profile: unknown" }),
+      el("dl", { class: "session-grid" }, ...fields.flatMap(([label, f = {}]) => {
+        const value = f.tokens > 0 ? f.tokens.toLocaleString() + " tokens" : f.value || "Unknown";
+        const source = f.source === "session_variant" ? "OpenCode session variant" : f.source === "session" ? "Observed in session" : f.source === "profile" ? "Configured profile" : f.source === "config" ? "Harness config fallback" : "Unavailable";
+        return [el("dt", { text: label }), el("dd", { title: f.reason || source }, el("span", { text: value }), el("small", { text: source }))];
+      })));
+  }
+
   function refreshPanelHeader() {
     const t = state.threads.find((x) => x.key === selected);
     if (!t || !$("#p-head")) return;
+    renderSession(t.session);
     const st = STATES[t.state];
     const head = $("#p-head");
     head.replaceChildren(...[el("span", { class: "pill", style: `background:${st.color}`, text: st.label }),
