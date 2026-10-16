@@ -42,6 +42,7 @@ outside that tail may be unknown. A Codex model switch clears earlier capacity
 until a new capacity event arrives. Only allow-listed metadata reaches the API;
 message contents, credentials, and transcript paths are excluded.
 
-Run `make check` to reproduce parser, API and browser verification. The session
+Run `make check` to reproduce parser, API and browser verification (the session
+E2E requires `sqlite3` on PATH). The session
 E2E produces `e2e/artifacts/session-*.png` at desktop, narrow, and phone widths,
 and `session-state.json` with the resulting fixture API state.

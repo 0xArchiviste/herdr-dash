@@ -302,9 +302,10 @@ func (c *Collector) projectProfile(slug, kind string) string {
 	if p := readSettings(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))[kind+"_profile"]; p != "" {
 		return p
 	}
-	var cfg struct{ Defaults map[string]string }
+	var cfg struct{ Defaults map[string]any }
 	if b, err := os.ReadFile(c.cfg.SessionProfiles); err == nil && toml.Unmarshal(b, &cfg) == nil {
-		return cfg.Defaults[kind+"_profile"]
+		profile, _ := cfg.Defaults[kind+"_profile"].(string)
+		return profile
 	}
 	return ""
 }

@@ -45,7 +45,7 @@ func TestSessionEvents(t *testing.T) {
 func TestConfiguredSessionFallbacks(t *testing.T) {
 	dir := t.TempDir()
 	profiles := filepath.Join(dir, "profiles.toml")
-	os.WriteFile(profiles, []byte("[profiles.pinned]\nagent='codex'\nmodel='pinned'\n[defaults]\nthread_profile='pinned'\n"), 0600)
+	os.WriteFile(profiles, []byte("[profiles.pinned]\nagent='codex'\nmodel='pinned'\n[defaults]\nthread_profile='pinned'\nmax_parallel_threads=4\n"), 0600)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("model='default-model'\nmodel_provider='local'\nmodel_reasoning_effort='high'\nmodel_context_window=100000\n"), 0600)
 	c := NewCollector(Config{SessionProfiles: profiles, CodexDir: filepath.Join(dir, "sessions")})
 	d := c.sessionDetails(Pane{}, "codex", "pinned")
