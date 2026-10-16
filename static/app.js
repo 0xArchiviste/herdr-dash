@@ -16,6 +16,7 @@
   const HUB_COLORS = ["#ff8700", "#ff5c8f", "#2be4d0", "#fed06e", "#68a8e4", "#98bc37", "#e02c6d", "#0aaeb3", "#f75341", "#fce8c3"];
   // Viewer's local time zone, labelled (e.g. "Oct 10, 5:00 PM EDT").
   const TIME_FMT = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const motionMs = (ms) => matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
   const $ = (s) => document.querySelector(s);
   const el = (tag, attrs = {}, ...kids) => {
     const e = document.createElement(tag);
@@ -67,6 +68,15 @@
   }
 
   function initFilters() {
+    $("#reset-filters").addEventListener("click", () => {
+      Object.assign(filters, { project: "", state: "", window: "", q: "" });
+      syncFilterInputs();
+      saveFilters();
+      // Notify content search as well, cancelling pending requests and highlights.
+      $("#f-search").dispatchEvent(new Event("input"));
+      render();
+    });
+    $("#fit-graph").addEventListener("click", () => { userZoomed = false; fit(true); });
     const bind = (id, key, ev = "change") => {
       const e = $(id);
       if (filters[key]) e.value = filters[key];
@@ -125,7 +135,7 @@
     const r = svg.node().getBoundingClientRect();
     const k = Math.min(2.2, r.width / (x1 - x0), r.height / (y1 - y0));
     const t = d3.zoomIdentity.scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
-    (animate ? svg.transition().duration(700) : svg).call(zoom.transform, t);
+    (animate ? svg.transition().duration(motionMs(700)) : svg).call(zoom.transform, t);
   }
 
   function size() {
@@ -142,7 +152,7 @@
   function refit() {
     if (!userZoomed) return fit(true);
     const n = selected && nodes.get(selected);
-    if (n) svg.transition().duration(500).call(zoom.translateTo, n.x, n.y);
+    if (n) svg.transition().duration(motionMs(500)).call(zoom.translateTo, n.x, n.y);
   }
   new ResizeObserver(() => {
     size();
@@ -273,17 +283,17 @@
           .on("mouseenter", (e, d) => { hovered = d.id; placeLabels(); showTip(e, d); }).on("mousemove", moveTip)
           .on("mouseleave", () => { hovered = null; placeLabels(); hideTip(); })
           .call(d3.drag().on("start", dragStart).on("drag", dragged).on("end", dragEnd));
-        g.transition().duration(600).style("opacity", 1);
+        g.transition().duration(motionMs(600)).style("opacity", 1);
         return g;
       },
       (update) => update,
-      (exit) => exit.attr("class", "node leaving").transition().duration(400).style("opacity", 0).remove(),
+      (exit) => exit.attr("class", "node leaving").transition().duration(motionMs(400)).style("opacity", 0).remove(),
     );
     nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
     nodeSel.classed("hit", (d) => dash.hits.has(d.id));
     svg.classed("searching", dash.hits.size > 0);
-    nodeSel.select("circle.core").transition().duration(800).attr("r", (d) => d.r)
+    nodeSel.select("circle.core").transition().duration(motionMs(800)).attr("r", (d) => d.r)
       .attr("fill", (d) => (d.hub ? "#262626" : d.color)).style("stroke", (d) => (d.hub ? d.color : null));
     nodeSel.filter((d) => d.hub).select("text.count").attr("fill", (d) => d.color);
     nodeSel.select("circle.ring").attr("r", (d) => d.r);
@@ -353,7 +363,7 @@
     const counts = d3.rollup(state.threads, (v) => v.length, (t) => t.state);
     const box = $("#legend");
     box.replaceChildren(...ORDER.filter((s) => counts.get(s)).map((s) =>
-      el("button", { class: filters.state === s ? "active" : "", title: "Filter: " + STATES[s].label, onclick: () => {
+      el("button", { class: filters.state === s ? "active" : "", "aria-pressed": String(filters.state === s), "aria-label": `${STATES[s].label}: ${counts.get(s)} threads`, title: "Filter: " + STATES[s].label, onclick: () => {
         filters.state = filters.state === s ? "" : s; $("#f-state").value = filters.state; saveFilters(); render();
       } }, el("span", { class: "dot", style: `background:${STATES[s].color}` }), el("span", { class: "lbl", text: STATES[s].label }), el("span", { class: "n", text: counts.get(s) }))));
     $("#shown").textContent = `${threads.length} of ${state.threads.length} threads`;
@@ -410,12 +420,13 @@
     $("#needs").replaceChildren(...STRIP.filter((s) => by.get(s)).map((s) => {
       const ts = by.get(s);
       const closed = collapsed.has(s);
-      const head = el("button", { class: "group-head", "aria-expanded": String(!closed), title: (closed ? "Show " : "Hide ") + STATES[s].label,
+      const head = el("button", { class: "group-head", "aria-expanded": String(!closed), "aria-label": `${STATES[s].label}: ${ts.length} items. ${closed ? "Show" : "Hide"} group`, title: (closed ? "Show " : "Hide ") + STATES[s].label,
         onclick: () => { closed ? collapsed.delete(s) : collapsed.add(s); localStorage.setItem("hd-collapsed", JSON.stringify([...collapsed])); renderNeeds(); } },
         el("span", { class: "dot", style: `background:${STATES[s].color}` }), el("span", { class: "lbl", text: STATES[s].label }), el("span", { class: "n", text: ts.length }), el("span", { class: "caret", text: closed ? "▸" : "▾" }));
       return el("div", { class: "group " + s + (closed ? " collapsed" : ""), "data-state": s }, head,
         ...(closed ? [] : ts.map((t) => chipWith(t, el("button", {
           class: "chip " + t.state + (t.coord ? " coord" : "") + (picked.has(t.key) ? " picked" : "") + (!t.coord && parked(t) ? " parked" : ""), "data-key": t.key,
+          "aria-pressed": selecting && !t.coord ? String(picked.has(t.key)) : null,
           title: `${STATES[t.state].label}: ${t.title}${t.acked ? " (acked)" : ""}${isSnoozed(t) ? " (snoozed)" : ""}`,
           onclick: () => {
             if (selecting) {
@@ -564,6 +575,8 @@
 
   function render() {
     const threads = state.threads.filter(visible);
+    $("#reset-filters").hidden = !Object.values(filters).some(Boolean);
+    $("#graph-empty").hidden = threads.length > 0;
     renderProjectsSelect();
     renderLegend(threads);
     renderNeeds();
@@ -682,8 +695,8 @@
     const n = nodes.get(key);
     // Phones: the sheet covers the lower part, so lift the node above it.
     // Desktop: the graph re-fits beside the panel; only a zoomed-in view pans.
-    if (n && innerWidth <= 700) svg.transition().duration(600).call(zoom.translateTo, n.x, n.y + 150);
-    else if (n && userZoomed) svg.transition().duration(600).call(zoom.translateTo, n.x, n.y);
+    if (n && innerWidth <= 700) svg.transition().duration(motionMs(600)).call(zoom.translateTo, n.x, n.y + 150);
+    else if (n && userZoomed) svg.transition().duration(motionMs(600)).call(zoom.translateTo, n.x, n.y);
     panel.classList.add("open");
     panel.setAttribute("aria-hidden", "false");
     splitter.hidden = false;

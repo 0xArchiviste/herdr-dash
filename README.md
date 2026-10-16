@@ -78,12 +78,16 @@ summary, the coordinator's progress line and live screen, a message box,
 the open threads, their latest reports (newest first), `TASKS.md`, the
 `MEMORY.md` index and the inbox count.
 
+Use **Clear filters** to return to all threads after searching or filtering.
+Use **Fit graph** to bring the visible projects back into view after panning or zooming.
+
 ### Triage what needs you
 
-<img src="docs/screenshots/triage.png" alt="Needs-you strip in select mode with three review threads picked, Ack selected and Snooze buttons">
+<img src="docs/screenshots/triage.png" alt="Needs-you queue in select mode with three review threads picked, Ack selected and Snooze buttons">
 
-- **Needs-you strip** grouped by severity (blocked, waiting, review,
-  landing), with counts and collapsible groups. Blocked or "needs you"
+- **Needs-you queue** grouped by severity (blocked, waiting, review,
+  landing), with counts and collapsible groups. The queue scrolls vertically beside
+  the map on desktop and above it on smaller screens. Blocked or "needs you"
   coordinators show here too. A blocked item shows a short prompt summary
   ("Permission: Bash make test", "Question: Which DB?") and an *Answer*
   button that opens the prompt card in a popover, without the panel.
@@ -101,8 +105,8 @@ the open threads, their latest reports (newest first), `TASKS.md`, the
   <img src="docs/screenshots/phone-panel.png" alt="Phone: a blocked thread's panel with quick replies" width="300">
 </p>
 
-Same page, laid out for a narrow screen: the graph goes tall and the panel
-slides up from the bottom. Answer a stuck agent from the couch.
+Same page, laid out for a narrow screen: status names stay visible, the queue
+scrolls above the graph, and the detail panel slides up from the bottom. Answer a stuck agent from the couch.
 
 ## Try it in 30 seconds
 

@@ -1033,7 +1033,7 @@ async function dockBoxes(page) {
   await page.waitForTimeout(450);
   return page.evaluate(() => {
     const b = (s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom }; };
-    return { stage: b("#stage"), panel: b("#panel"), needs: b("#needs-wrap"), filters: b("#filters") };
+    return { work: b("#work"), stage: b("#stage"), panel: b("#panel"), needs: b("#needs-wrap"), filters: b("#filters") };
   });
 }
 // Every node, and every project name, lies inside the stage once the graph
@@ -1055,8 +1055,8 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   await page.goto(base + "/");
   await page.waitForSelector("svg g.node.thread");
   await page.waitForTimeout(1500);
-  const full = (await dockBoxes(page)).stage;
-  assert.ok(near(full.w, 1440), "closed panel takes no room");
+  const full = (await dockBoxes(page)).work;
+  assert.ok(near((await dockBoxes(page)).stage.w, full.w), "closed panel takes no room");
   assert.equal(await page.locator("#splitter").isVisible(), false);
 
   // Right is the default.
@@ -1065,7 +1065,7 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   assert.equal(await page.locator("#dock-right").getAttribute("aria-pressed"), "true");
   let b = await dockBoxes(page);
   assert.ok(near(b.panel.r, 1440) && near(b.panel.w, 480, 6), `right panel ${JSON.stringify(b.panel)}`);
-  assert.ok(near(b.stage.w, 1440 - b.panel.w, 8) && b.stage.r <= b.panel.x + 1, "graph shrinks beside the panel");
+  assert.ok(near(b.stage.w, full.w - b.panel.w, 8) && b.stage.r <= b.panel.x + 1, "graph shrinks beside the panel");
   assert.ok(b.panel.y >= b.filters.b - 1, "needs strip and filters stay uncovered");
   await nodesInStage(page);
   await page.screenshot({ path: join(artifacts, "dock-right.png") });
@@ -1075,17 +1075,17 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   assert.equal(await page.locator("#dock-left").getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#dock-right").getAttribute("aria-pressed"), "false");
   b = await dockBoxes(page);
-  assert.ok(near(b.panel.x, 0) && near(b.panel.w, 480, 6), `left panel ${JSON.stringify(b.panel)}`);
-  assert.ok(b.stage.x >= b.panel.r - 1 && near(b.stage.r, 1440), "graph to the right of the panel");
+  assert.ok(near(b.panel.x, full.x) && near(b.panel.w, 480, 6), `left panel ${JSON.stringify(b.panel)}`);
+  assert.ok(b.stage.x >= b.panel.r - 1 && near(b.stage.r, full.r), "graph to the right of the panel");
   await nodesInStage(page);
   await page.screenshot({ path: join(artifacts, "dock-left.png") });
 
   // Bottom: full width, ~40% high, chat beside the details.
   await page.locator("#dock-bottom").click();
   b = await dockBoxes(page);
-  assert.ok(near(b.panel.x, 0) && near(b.panel.w, 1440) && near(b.panel.b, 900), `bottom panel ${JSON.stringify(b.panel)}`);
+  assert.ok(near(b.panel.x, full.x) && near(b.panel.w, full.w) && near(b.panel.b, 900), `bottom panel ${JSON.stringify(b.panel)}`);
   assert.ok(near(b.panel.h, 360, 8), `default height ~40% of the viewport: ${b.panel.h}`);
-  assert.ok(near(b.stage.w, 1440) && b.stage.b <= b.panel.y + 1 && b.stage.y >= b.filters.b - 1, "graph above the panel");
+  assert.ok(near(b.stage.w, full.w) && b.stage.b <= b.panel.y + 1 && b.stage.y >= b.filters.b - 1, "graph above the panel");
   await nodesInStage(page);
   const chat = await page.locator("#p-chat").boundingBox();
   const meta = await page.locator("#p-meta").boundingBox();
@@ -1128,7 +1128,7 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   await drag(-120, 0);
   b = await dockBoxes(page);
   assert.ok(near(b.panel.w, 600, 8), `dragged width ${b.panel.w}`);
-  assert.ok(near(b.stage.w, 1440 - b.panel.w, 8));
+  assert.ok(near(b.stage.w, full.w - b.panel.w, 8));
   await drag(2000, 0);
   b = await dockBoxes(page);
   assert.ok(b.panel.w >= 300, `min width ${b.panel.w}`);
@@ -1142,7 +1142,7 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   await page.keyboard.press("Escape");
   b = await dockBoxes(page);
   assert.equal(await page.locator("#panel.open").count(), 0);
-  assert.ok(near(b.stage.w, 1440) && near(b.stage.b, 900), "graph regains the space");
+  assert.ok(near(b.stage.w, full.w) && near(b.stage.b, 900), "graph regains the space");
   assert.equal(await page.locator("#splitter").isVisible(), false);
   await nodesInStage(page);
 
@@ -1154,7 +1154,7 @@ test("desktop: panel docks right, left and bottom; graph area follows; sizes per
   await page.waitForSelector("#panel.open");
   assert.equal(await page.locator("#dock-bottom").getAttribute("aria-pressed"), "true");
   b = await dockBoxes(page);
-  assert.ok(near(b.panel.h, bottomH, 3) && near(b.panel.w, 1440), `bottom persisted ${b.panel.h} vs ${bottomH}`);
+  assert.ok(near(b.panel.h, bottomH, 3) && near(b.panel.w, full.w), `bottom persisted ${b.panel.h} vs ${bottomH}`);
   await page.locator("#dock-right").click();
   b = await dockBoxes(page);
   assert.ok(near(b.panel.w, rightW, 3), `right persisted ${b.panel.w} vs ${rightW}`);
