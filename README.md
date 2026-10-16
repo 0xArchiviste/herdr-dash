@@ -291,7 +291,17 @@ left out when its files are absent:
   while it is fresh, else the endpoint Claude Code calls, with the OAuth
   token from `~/.claude/.credentials.json`. The token is only read: never
   refreshed or written, and not used once expired. When the call fails the
-  last cached answer is shown, marked stale.
+  last cached answer is shown as historical data. The header says `stale`
+  without capacity gauges when the observation is older than the network
+  interval or any observed reset has passed. Details preserve the last
+  observed usage and explain failures (including expired credentials).
+  Passed resets never imply an unused new window. The browser also ages
+  observations if polling fails. No usable answer means `n/a`.
+  These are account plan observations from Claude Code's local cache or
+  `https://api.anthropic.com/api/oauth/usage`, not a per-thread token budget
+  or a guarantee that the next request will be accepted. The endpoint is
+  the one used by Claude Code and its schema may change. If credentials
+  expire, run Claude Code to renew them; Dash does not renew them itself.
 - **Codex**: the last `rate_limits` event in the newest session file under
   `~/.codex/sessions`. No network.
 - **opencode**: the configured model's provider. OpenRouter's `/credits`

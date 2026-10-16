@@ -111,16 +111,17 @@ type UsageBalance struct {
 }
 
 type UsageSource struct {
-	ID        string        `json:"id"`
-	Name      string        `json:"name"`
-	Status    string        `json:"status"` // ok, unavailable, disabled
-	Reason    string        `json:"reason,omitempty"`
-	Plan      string        `json:"plan,omitempty"`
-	AsOf      *time.Time    `json:"as_of,omitempty"` // when the numbers were true
-	CheckedAt time.Time     `json:"checked_at"`
-	Stale     bool          `json:"stale"`
-	Windows   []UsageWindow `json:"windows"`
-	Balance   *UsageBalance `json:"balance"`
+	ID         string        `json:"id"`
+	Name       string        `json:"name"`
+	Status     string        `json:"status"` // ok, unavailable, disabled
+	Reason     string        `json:"reason,omitempty"`
+	Plan       string        `json:"plan,omitempty"`
+	AsOf       *time.Time    `json:"as_of,omitempty"`       // when the numbers were true
+	ValidUntil *time.Time    `json:"valid_until,omitempty"` // Claude freshness/reset deadline
+	CheckedAt  time.Time     `json:"checked_at"`
+	Stale      bool          `json:"stale"`
+	Windows    []UsageWindow `json:"windows"`
+	Balance    *UsageBalance `json:"balance"`
 }
 
 type Usage struct {
@@ -191,14 +192,14 @@ func (u *Usage) get(s *usageSource) UsageSource {
 	s.mu.Lock()
 	if !s.at.IsZero() && time.Since(s.at) < s.every {
 		defer s.mu.Unlock()
-		return s.last
+		return s.last.current()
 	}
 	if ch := s.running; ch != nil {
 		s.mu.Unlock()
 		<-ch
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.last
+		return s.last.current()
 	}
 	ch := make(chan struct{})
 	s.running = ch
@@ -217,7 +218,18 @@ func (u *Usage) get(s *usageSource) UsageSource {
 	s.last, s.at, s.running = res, time.Now(), nil
 	s.mu.Unlock()
 	close(ch)
-	return res
+	return res.current()
+}
+
+// current ages a cached observation without changing its values or timestamp.
+func (s UsageSource) current() UsageSource {
+	if s.ValidUntil != nil && !time.Now().Before(*s.ValidUntil) {
+		s.Stale = true
+		if s.Reason == "" {
+			s.Reason = "usage observation expired; current limits unknown"
+		}
+	}
+	return s
 }
 
 // fetchJSON GETs url with a bearer token and decodes a 200 answer into v.
@@ -317,7 +329,7 @@ func usageTime(s string) *time.Time {
 func (l claudeLimits) windows() []UsageWindow {
 	var out []UsageWindow
 	for _, x := range l.Limits {
-		if x.Percent == nil {
+		if !validClaudePercent(x.Percent) || (x.ResetsAt != "" && usageTime(x.ResetsAt) == nil) {
 			continue
 		}
 		label := map[string]string{"session": "5h", "weekly_all": "Week", "weekly_scoped": "Week"}[x.Kind]
@@ -340,11 +352,28 @@ func (l claudeLimits) windows() []UsageWindow {
 		label string
 		w     *claudeWindow
 	}{{"5h", l.FiveHour}, {"Week", l.SevenDay}, {"Week · Opus", l.SevenOpus}, {"Week · Sonnet", l.SevenSonet}} {
-		if w.w != nil && w.w.Utilization != nil {
+		if w.w != nil && validClaudePercent(w.w.Utilization) && (w.w.ResetsAt == "" || usageTime(w.w.ResetsAt) != nil) {
 			out = append(out, UsageWindow{Label: w.label, UsedPercent: *w.w.Utilization, ResetsAt: usageTime(w.w.ResetsAt)})
 		}
 	}
 	return out
+}
+
+// Invalid percentages must not turn into plausible capacity through UI clamping.
+func validClaudePercent(p *float64) bool {
+	return p != nil && !math.IsNaN(*p) && !math.IsInf(*p, 0) && *p >= 0 && *p <= 100
+}
+
+// A reset ends the observed window; it does not prove the next window is unused.
+func (c *claudeUsage) observation(wins []UsageWindow, at time.Time, plan, reason string) UsageSource {
+	until := at.Add(c.u.cfg.NetEvery)
+	for _, w := range wins {
+		if w.ResetsAt != nil && w.ResetsAt.Before(until) {
+			until = *w.ResetsAt
+		}
+	}
+	return (UsageSource{Status: "ok", Plan: plan, Windows: wins, AsOf: ptrTime(at),
+		ValidUntil: ptrTime(until), Reason: reason}).current()
 }
 
 type claudeCreds struct {
@@ -368,7 +397,7 @@ func (c *claudeUsage) cache() (wins []UsageWindow, at time.Time, ok bool) {
 			Util        claudeLimits `json:"utilization"`
 		} `json:"cachedUsageUtilization"`
 	}
-	if json.Unmarshal(b, &st) != nil || st.Cached == nil || st.Cached.FetchedAtMs == 0 {
+	if json.Unmarshal(b, &st) != nil || st.Cached == nil || st.Cached.FetchedAtMs <= 0 || time.UnixMilli(st.Cached.FetchedAtMs).After(time.Now().Add(time.Minute)) {
 		return nil, at, false
 	}
 	wins = st.Cached.Util.windows()
@@ -388,11 +417,10 @@ func (c *claudeUsage) read(ctx context.Context) UsageSource {
 		plan = creds.OAuth.SubscriptionType
 	}
 	fromCache := func(reason string) UsageSource {
-		stale := time.Since(cachedAt) > c.u.cfg.NetEvery
-		return UsageSource{Status: "ok", Plan: plan, Windows: cached, AsOf: ptrTime(cachedAt), Stale: stale, Reason: reason}
+		return c.observation(cached, cachedAt, plan, reason)
 	}
 	// Passive first: Claude Code's own answer while it is fresh.
-	if haveCache && time.Since(cachedAt) < c.u.cfg.NetEvery {
+	if haveCache && !fromCache("").Stale {
 		return fromCache("")
 	}
 	fail := func(reason string) UsageSource {
@@ -426,7 +454,7 @@ func (c *claudeUsage) read(ctx context.Context) UsageSource {
 	if c.netErr != nil {
 		return fail(c.netErr.Error())
 	}
-	return UsageSource{Status: "ok", Plan: plan, Windows: c.netWin, AsOf: ptrTime(c.netAt)}
+	return c.observation(c.netWin, c.netAt, plan, "")
 }
 
 // ---------------------------------------------------------------- Codex
