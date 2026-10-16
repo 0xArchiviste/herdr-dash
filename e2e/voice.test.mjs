@@ -152,7 +152,7 @@ const hud = (page) => page.locator("#voice-hud").innerText();
 test("voice API is disabled cleanly without Cloudflare settings", async () => {
   // V1, V2
   const c = await (await fetch(plainURL + "/api/config")).json();
-  assert.deepEqual(c.voice, { intent: false, transcribe: false });
+  assert.deepEqual(c.voice, { intent: false, local: false, transcribe: false });
   const r = await post(plainURL, "/api/voice/intent", { utterance: "open beta", candidates: [{ id: "a", label: "A" }, { id: "b", label: "B" }] });
   assert.equal(r.status, 503);
   const t = await post(plainURL, "/api/voice/transcribe", { audio: "AAAA", mime: "audio/webm" });
@@ -164,7 +164,7 @@ test("voice API is disabled cleanly without Cloudflare settings", async () => {
 test("intent API: Workers AI shape, cache, validation, timeout; token stays server-side", async () => {
   // V1, V3, V4
   const c = await (await fetch(aiURL + "/api/config")).json();
-  assert.deepEqual(c.voice, { intent: true, transcribe: true });
+  assert.deepEqual(c.voice, { intent: true, local: false, transcribe: true });
   assert.doesNotMatch(JSON.stringify(c), new RegExp(TOKEN));
   for (const f of ["/", "/voice.js", "/app.js"]) assert.doesNotMatch(await (await fetch(aiURL + f)).text(), new RegExp(TOKEN + "|" + ACCOUNT));
 

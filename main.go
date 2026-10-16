@@ -41,7 +41,7 @@ var (
 func main() {
 	home, _ := os.UserHomeDir()
 	// HERDR_DASH_BUILD_ID stands in for a new build in tests.
-	cfg := Config{Voice: voiceConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
+	cfg := Config{Voice: voiceConfigFromEnv(), STT: sttConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
 	// Flags win over env; env wins over built-in defaults.
 	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
@@ -90,13 +90,16 @@ func main() {
 	go col.Run(ctx)
 
 	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg)), ReadHeaderTimeout: 10 * time.Second}
+	stt := NewSTT(cfg.STT)
+	defer stt.stopSidecar("shutdown")
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		srv.Shutdown(sctx)
+		stt.stopSidecar("shutdown")
 	}()
-	log.Printf("herdr-dash listening on %s (public %q, herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v)", *addr, cfg.PublicURL, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT())
+	log.Printf("herdr-dash listening on %s (public %q, herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v, stt local %v)", *addr, cfg.PublicURL, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT(), cfg.STT.Local())
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -189,6 +192,8 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 	NewActions(cfg, col).register(mux)
 	NewSearcher(cfg, col).register(mux)
 	NewVoice(cfg.Voice).register(mux)
+	stt := NewSTT(cfg.STT)
+	stt.register(mux)
 	NewUsage(cfg.Usage).register(mux)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")

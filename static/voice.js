@@ -30,7 +30,7 @@
   const SEND = { "chat-input": "chat-send", "coord-input": "coord-send" };
 
   // ---------------------------------------------------------------- settings
-  const DEFAULTS = { nav: "Alt+KeyV", dict: "Alt+KeyM", dictMode: "toggle", engine: "auto", ai: true, lang: "" };
+  const DEFAULTS = { nav: "Alt+KeyV", dict: "Alt+KeyM", dictMode: "toggle", engine: "auto", ai: true, lang: "", vad: false };
   const cfg = { ...DEFAULTS, ...JSON.parse(localStorage.getItem("hd-voice") || "{}") };
   const saveCfg = () => localStorage.setItem("hd-voice", JSON.stringify(cfg));
   let server = { intent: false, transcribe: false };
@@ -41,12 +41,15 @@
   function engine() {
     if (!window.isSecureContext || !(navigator.mediaDevices || SR)) return null;
     const b = SR && !browserFailed, s = server.transcribe && window.MediaRecorder && navigator.mediaDevices;
+    if (cfg.engine === "local") return server.local ? "local" : null;
     if (cfg.engine === "browser") return b ? "browser" : null;
     if (cfg.engine === "server") return s ? "server" : null;
+    if (server.local) return "local";
     return b ? "browser" : s ? "server" : null;
   }
   function unavailable() {
     if (!window.isSecureContext) return "Voice not available: the microphone needs HTTPS" + (publicURL ? "." : " (see the README: tailscale serve).");
+    if (cfg.engine === "local" || (cfg.engine === "auto" && server.local)) return "Voice not available: the local engine is configured but could not start: check the server log (HERDR_DASH_STT=local).";
     return "Voice not available: this browser has no speech recognition and server transcription is not configured.";
   }
 
@@ -62,7 +65,7 @@
   function listen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
     const kind = engine();
     if (!kind) { explain(); return null; }
-    return kind === "browser" ? browserListen() : serverListen();
+    return kind === "browser" ? browserListen() : kind === "local" ? localListen({ continuous, onInterim, onFinal, onStatus, onEnd }) : serverListen();
 
     function browserListen() {
       let want = true, rec = null, restarts = [];
@@ -145,6 +148,55 @@
       }, (err) => { hd.toast("Microphone: " + err.message, "err"); want = false; finish(); });
       return { stop() { want = false; userStop = true; if (rec?.state === "recording") rec.stop(); else if (!rec) { /* getUserMedia pending: finish() runs there */ } } };
     }
+  }
+
+  // localListen streams the microphone to /api/voice/stream and gets partial
+  // and final transcripts back. There is no fallback: an error is shown.
+  function localListen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
+    let want = true, ws = null, ac = null, node = null, stream = null, heard = false, done = false;
+    const close = () => { try { node?.disconnect(); } catch {} try { stream?.getTracks().forEach((t) => t.stop()); } catch {} try { ac?.close(); } catch {} };
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      close();
+      onInterim("");
+      onEnd();
+      if (err) hd.toast("Local voice engine: " + err, "err");
+    };
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(async (s) => {
+      if (!want) { finish(); return; }
+      stream = s;
+      onStatus("Listening… (local)");
+      onInterim("");
+      try {
+        ac = new AudioContext({ sampleRate: 16000 });
+        await ac.audioWorklet.addModule("/voice-stream.js");
+        node = new AudioWorkletNode(ac, "pcm-stream");
+      } catch (e) { return finish("this browser cannot stream audio (" + e.message + ")"); }
+      ws = new WebSocket(((location.protocol === "https:" ? "wss://" : "ws://") + location.host) + "/api/voice/stream");
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => node.port.onmessage = (e) => { if (ws?.readyState === 1 && e.data.length) { heard = true; ws.send(e.data); } };
+      ws.onmessage = (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.error) return finish(m.error);
+        if (m.interim && m.text) { heard = true; onInterim(m.text); }
+        else if (m.text || m.final) { heard = false; onInterim(""); onFinal((m.text || "").trim()); if (m.eof || !continuous) { want = false; ws?.close(); finish(); } }
+        else if (m.eof) { want = false; finish(); }
+      };
+      ws.onclose = () => { if (want) { want = false; finish("connection lost"); } else finish(); };
+      ws.onerror = () => {};
+      ac.createMediaStreamSource(s).connect(node);
+    }, (err) => { hd.toast("Microphone: " + err.message, "err"); want = false; finish(); });
+    return {
+      stop() {
+        want = false;
+        // Finalising: the sidecar needs the end-of-input marker to flush the
+        // last words; wait briefly for its final transcript.
+        if (ws?.readyState === 1 && heard) { ws.send("Done"); onStatus("Transcribing… (local)"); }
+        else if (ws) { ws.close(); finish(); }
+      },
+    };
   }
 
   async function transcribe(blob) {
@@ -255,6 +307,7 @@
   }
   function runNav() {
     if (navSession || !navOn) return;
+    if (cfg.vad && engine() === "local") { runNavVAD(); return; }
     const s = listen({
       continuous: true,
       onInterim: (t) => t && setHud({ heard: t + "…" }),
@@ -265,6 +318,48 @@
     navSession = s;
     if (!s) { navOn = false; navOff(); }
   }
+  // Voice navigation gated by Silero VAD running in this page: the
+  // microphone is processed locally, and audio leaves only while someone is
+  // speaking. Each detected utterance is finalised as one local-engine
+  // session. Push-to-talk and dictation never touch the VAD.
+  let navVAD = null;
+  async function runNavVAD() {
+    try {
+      const vad = await import("https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/+esm");
+      if (!navOn || navSession) return;
+      const mv = await vad.MicVAD.create({
+        onSpeechStart: () => setHud({ st: "Voice nav: listening…" }),
+        onSpeechEnd: (audio) => { navVAD = null; finishUtterance(audio); },
+      });
+      if (!navOn || navSession) { await mv.destroy?.(); return; }
+      navSession = { stop: () => { mv.destroy(); navVAD = null; } };
+      navVAD = mv;
+      setHud({ st: "Voice nav: listening (VAD)…" });
+    } catch (e) {
+      hd.toast("Silero VAD could not load: " + e.message, "err");
+      if (navOn) runNav();
+    }
+  }
+  // finishUtterance streams one detected utterance through the local engine.
+  function finishUtterance(audio) {
+    if (!navOn) return;
+    setHud({ heard: "…" });
+    let ws;
+    try { ws = new WebSocket(((location.protocol === "https:" ? "wss://" : "ws://") + location.host) + "/api/voice/stream"); } catch { return; }
+    let done = false;
+    const finish = () => { if (done) return; done = true; try { ws.close(); } catch {} if (navOn && !navPaused) runNavVAD(); };
+    ws.onopen = () => { ws.send(new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength)); ws.send("Done"); };
+    ws.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.error) { hd.toast("Local voice engine: " + m.error, "err"); navOn = false; navOff(); return finish(); }
+      if (m.text && m.final) { onNavText((m.text || "").trim()); return finish(); }
+      if (m.eof) return finish();
+    };
+    ws.onclose = () => finish();
+    ws.onerror = () => finish();
+  }
+  function onNavText(t) { if (t) command(t); }
   function stopNav() {
     navOn = false;
     navPaused = false;
@@ -693,6 +788,7 @@
 
   function privacy() {
     const e = engine();
+    if (e === "local") return "Speech: streamed to this machine's own model (no cloud, no browser service).";
     if (e === "browser") return "Speech: the browser's recognizer (Chrome and Edge send the audio to Google or Microsoft; Safari may process on the device).";
     if (e === "server") return "Speech: recorded here and sent through this dashboard's server to Cloudflare Workers AI (Whisper).";
     return unavailable();
@@ -723,6 +819,7 @@
     mode.addEventListener("change", () => { cfg.dictMode = mode.value; saveCfg(); });
     const eng = el("select", { id: "vs-engine" },
       el("option", { value: "auto", text: "Automatic" }),
+      el("option", { value: "local", text: "Local model on this machine" + (server.local ? "" : " — not enabled on the server"), disabled: server.local ? null : "" }),
       el("option", { value: "browser", text: "Browser (Web Speech)" + (SR ? "" : " — not in this browser"), disabled: SR ? null : "" }),
       el("option", { value: "server", text: "Server (Cloudflare Whisper)" + (server.transcribe ? "" : " — not configured"), disabled: server.transcribe ? null : "" }));
     eng.value = cfg.engine;
@@ -732,6 +829,8 @@
     ai.addEventListener("change", () => { cfg.ai = ai.checked; saveCfg(); });
     const lang = el("input", { id: "vs-lang", value: cfg.lang, placeholder: navigator.language || "en-US", size: "8" });
     lang.addEventListener("change", () => { cfg.lang = lang.value.trim(); saveCfg(); });
+    const vad = el("input", { id: "vs-vad", type: "checkbox", checked: cfg.vad ? "" : null, disabled: engine() !== "local" ? "" : null });
+    vad.addEventListener("change", () => { cfg.vad = vad.checked; saveCfg(); });
     settings.replaceChildren(
       el("div", { class: "row head" }, el("b", { text: "Voice" }), el("button", { id: "voice-settings-close", class: "close", type: "button", "aria-label": "Close", text: "×", onclick: closeOverlays })),
       el("label", { class: "row" }, el("span", { text: "Voice navigation key" }), keyField("vs-nav-key", "nav")),
@@ -739,6 +838,7 @@
       el("label", { class: "row" }, el("span", { text: "Dictation key mode" }), mode),
       el("label", { class: "row" }, el("span", { text: "Speech engine" }), eng),
       el("label", { class: "row" }, el("span", { text: "Language" }), lang),
+      el("label", { class: "row" }, el("span", { text: "Detect speech with Silero VAD in voice navigation" }), vad),
       el("label", { class: "row" }, el("span", { text: "Ask the AI model for phrases the grammar misses" + (server.intent ? "" : " (not configured)") }), ai),
       note,
       ...(window.HDPrompt ? [window.HDPrompt.settingsRow()] : []),
