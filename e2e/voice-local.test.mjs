@@ -228,7 +228,7 @@ test("browser speech detection is toggleable and loads no external scripts", asy
   await toggle.check();
   await page.click("#voice-settings-close");
   await page.click("#voice-fab");
-  await waitFor(async () => (await page.locator("#voice-hud").innerText()).includes("speech detection"));
+  await waitFor(async () => /speech detection/i.test(await page.locator("#voice-hud").innerText()));
   await page.click("#voice-fab");
   await page.click("#voice-settings-btn");
   await toggle.uncheck();
