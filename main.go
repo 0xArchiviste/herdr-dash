@@ -53,6 +53,8 @@ func main() {
 	flag.IntVar(&cfg.WritePerMin, "write-per-min", 30, "write actions refilled per minute")
 	flag.StringVar(&cfg.Herdr, "herdr", "herdr", "herdr binary")
 	flag.StringVar(&cfg.GH, "gh", "gh", "gh binary")
+	flag.StringVar(&cfg.SessionProfiles, "session-profiles", filepath.Join(home, ".config/herdr-projects/config.toml"), "herdr-projects profile config for session fallbacks")
+	flag.StringVar(&cfg.OpencodeDB, "opencode-db", filepath.Join(home, ".local/share/opencode/opencode.db"), "OpenCode session database (optional sqlite3 CLI)")
 	flag.StringVar(&cfg.ClaudeDir, "claude-dir", filepath.Join(home, ".claude/projects"), "Claude Code transcripts")
 	flag.StringVar(&cfg.CodexDir, "codex-dir", filepath.Join(home, ".codex/sessions"), "Codex sessions")
 	flag.DurationVar(&cfg.Poll, "poll", 5*time.Second, "herdr pane list interval")

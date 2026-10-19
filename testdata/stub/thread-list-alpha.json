@@ -32,7 +32,8 @@
     "report_hash": "",
     "acked_report_hash": "",
     "repo": "/fixture/repos/alpha",
-    "cwd": "/fixture/wt/alpha-t-0001"
+    "cwd": "/fixture/wt/alpha-t-0001",
+    "profile": "claude"
   },
   {
     "id": "t-0002",
@@ -67,7 +68,8 @@
     "report_hash": "",
     "acked_report_hash": "",
     "repo": "/fixture/repos/alpha",
-    "cwd": ""
+    "cwd": "",
+    "profile": "claude"
   },
   {
     "id": "t-0003",
@@ -102,7 +104,8 @@
     "report_hash": "h3",
     "acked_report_hash": "",
     "repo": "/fixture/repos/alpha",
-    "cwd": ""
+    "cwd": "",
+    "profile": "codex"
   },
   {
     "id": "t-0004",

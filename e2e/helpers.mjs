@@ -33,6 +33,9 @@ export function startServer(port, stubLog, extra = [], env = {}) {
     "--claude-dir", join(td, "claude"),
     "--codex-dir", join(td, "codex"),
     "--poll", "1s",
+    "--session-profiles", join(td, "session-profiles.toml"),
+    "--opencode-db", join(td, "opencode.db"),
+    "--opencode-config", join(td, "opencode-config"),
     ...extra,
   ], {
     // Usage reads real credentials under $HOME: off unless a test turns it on.
