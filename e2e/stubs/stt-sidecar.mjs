@@ -46,7 +46,7 @@ function frames(buf, onFrame) {
 }
 
 net.createServer((socket) => {
-  let buf = Buffer.alloc(0), up = false, samples = 0, saidDone = false;
+  let buf = Buffer.alloc(0), up = false, samples = 0, saidDone = false, partial = false;
   socket.on("data", (chunk) => {
     buf = Buffer.concat([buf, chunk]);
     if (!up) {
@@ -64,15 +64,20 @@ net.createServer((socket) => {
         if (payload.toString() === "Done" && !saidDone) {
           saidDone = true;
           say("done samples=" + (samples / 16000).toFixed(2) + "s");
-          send(socket, 0x1, Buffer.from(JSON.stringify({ text: reply, is_final: false, is_eof: false })));
-          send(socket, 0x1, Buffer.from(JSON.stringify({ text: reply + ".", is_final: true, is_eof: true })));
+          send(socket, 0x1, Buffer.from(JSON.stringify({ text: reply, segment: 0, is_final: true, is_eof: false })));
+          send(socket, 0x1, Buffer.from(JSON.stringify({ text: reply, segment: process.env.STT_REPEAT ? 1 : 0, is_final: true, is_eof: true })));
           send(socket, 0x1, Buffer.from("Done!"));
         }
         return true;
       }
       if (opcode === 0x2) {
+        if (saidDone) say("audio-after-done");
         const before = samples;
         samples += payload.length / 4;
+        if (!partial && samples >= 6400) {
+          partial = true;
+          send(socket, 0x1, Buffer.from(JSON.stringify({ text: reply, segment: 0, is_final: false })));
+        }
         if ((before / 16000 | 0) < (samples / 16000 | 0)) say("samples=" + (samples / 16000).toFixed(1) + "s");
       }
       return true;

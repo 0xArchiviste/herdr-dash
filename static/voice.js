@@ -62,10 +62,10 @@
   // when the engine ends them (Chrome stops after silence) until stop().
   // stop() finishes: the browser delivers what it heard; the server engine
   // transcribes the clip so far.
-  function listen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
+  function listen({ continuous, gate = false, onInterim, onFinal, onStatus, onEnd }) {
     const kind = engine();
     if (!kind) { explain(); return null; }
-    return kind === "browser" ? browserListen() : kind === "local" ? localListen({ continuous, onInterim, onFinal, onStatus, onEnd }) : serverListen();
+    return kind === "browser" ? browserListen() : kind === "local" ? localListen({ continuous, gate, onInterim, onFinal, onStatus, onEnd }) : serverListen();
 
     function browserListen() {
       let want = true, rec = null, restarts = [];
@@ -152,49 +152,88 @@
 
   // localListen streams the microphone to /api/voice/stream and gets partial
   // and final transcripts back. There is no fallback: an error is shown.
-  function localListen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
-    let want = true, ws = null, ac = null, node = null, stream = null, heard = false, done = false;
-    const close = () => { try { node?.disconnect(); } catch {} try { stream?.getTracks().forEach((t) => t.stop()); } catch {} try { ac?.close(); } catch {} };
+  function localListen({ continuous, gate, onInterim, onFinal, onStatus, onEnd }) {
+    let want = true, ws = null, ac = null, node = null, stream = null, done = false, timer = null;
+    const stopAudio = () => {
+      if (node) node.port.onmessage = null;
+      try { node?.disconnect(); } catch {}
+      stream?.getTracks().forEach((t) => t.stop());
+      if (ac && ac.state !== "closed") ac.close().catch(() => {});
+    };
     const finish = (err) => {
       if (done) return;
-      done = true;
-      close();
+      done = true; want = false;
+      clearTimeout(timer);
+      stopAudio();
+      ws?.close();
       onInterim("");
       onEnd();
       if (err) hd.toast("Local voice engine: " + err, "err");
     };
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(async (s) => {
-      if (!want) { finish(); return; }
-      stream = s;
-      onStatus("Listening… (local)");
-      onInterim("");
-      try {
-        ac = new AudioContext({ sampleRate: 16000 });
-        await ac.audioWorklet.addModule("/voice-stream.js");
-        node = new AudioWorkletNode(ac, "pcm-stream");
-      } catch (e) { return finish("this browser cannot stream audio (" + e.message + ")"); }
-      ws = new WebSocket(((location.protocol === "https:" ? "wss://" : "ws://") + location.host) + "/api/voice/stream");
-      ws.binaryType = "arraybuffer";
-      ws.onopen = () => node.port.onmessage = (e) => { if (ws?.readyState === 1 && e.data.length) { heard = true; ws.send(e.data); } };
-      ws.onmessage = (ev) => {
+    onStatus("Starting local engine…");
+    // Ask for microphone access after readiness: first-use model loading must
+    // never discard the beginning of the utterance.
+    try {
+      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/voice/stream");
+    } catch (e) { queueMicrotask(() => finish(e.message)); }
+    timer = setTimeout(() => finish("model startup timed out"), 330000);
+    if (ws) {
+      ws.onmessage = async (ev) => {
+        if (done) return;
         let m;
         try { m = JSON.parse(ev.data); } catch { return; }
         if (m.error) return finish(m.error);
-        if (m.interim && m.text) { heard = true; onInterim(m.text); }
-        else if (m.text || m.final) { heard = false; onInterim(""); onFinal((m.text || "").trim()); if (m.eof || !continuous) { want = false; ws?.close(); finish(); } }
-        else if (m.eof) { want = false; finish(); }
+        if (m.ready) {
+          clearTimeout(timer);
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (!want || done) { stopAudio(); return; }
+            ac = new AudioContext({ sampleRate: 16000 });
+            await ac.audioWorklet.addModule("/voice-stream.js");
+            if (!want || done) { stopAudio(); return; }
+            node = new AudioWorkletNode(ac, "pcm-stream");
+            let quiet = 12, preroll = [];
+            node.port.onmessage = (e) => {
+              if (!want || done || ws.readyState !== 1 || !e.data.length) return;
+              if (gate) {
+                const rms = Math.sqrt(e.data.reduce((sum, x) => sum + x * x, 0) / e.data.length);
+                if (rms >= 0.01) {
+                  for (const frame of preroll) ws.send(frame);
+                  preroll = []; quiet = 0;
+                } else if (++quiet > 12) {
+                  preroll.push(e.data); if (preroll.length > 5) preroll.shift();
+                  return;
+                }
+              }
+              ws.send(e.data);
+            };
+            ac.createMediaStreamSource(stream).connect(node);
+            onStatus(gate ? "Listening… (local, speech detection)" : "Listening… (local)");
+          } catch (e) { finish("Microphone: " + e.message); }
+          return;
+        }
+        if (m.interim && m.text) onInterim(m.text);
+        if (m.final) {
+          onInterim("");
+          if (m.text) onFinal(m.text.trim());
+          if (!continuous) return finish();
+        }
+        if (m.eof) finish();
       };
-      ws.onclose = () => { if (want) { want = false; finish("connection lost"); } else finish(); };
-      ws.onerror = () => {};
-      ac.createMediaStreamSource(s).connect(node);
-    }, (err) => { hd.toast("Microphone: " + err.message, "err"); want = false; finish(); });
+      ws.onclose = () => finish("connection lost");
+      ws.onerror = () => finish("connection failed");
+    }
     return {
       stop() {
+        if (!want || done) return;
         want = false;
-        // Finalising: the sidecar needs the end-of-input marker to flush the
-        // last words; wait briefly for its final transcript.
-        if (ws?.readyState === 1 && heard) { ws.send("Done"); onStatus("Transcribing… (local)"); }
-        else if (ws) { ws.close(); finish(); }
+        stopAudio();
+        clearTimeout(timer);
+        if (ws?.readyState === 1) {
+          ws.send("Done");
+          onStatus("Transcribing… (local)");
+          timer = setTimeout(() => finish("final transcript timed out"), 15000);
+        } else finish();
       },
     };
   }
@@ -237,7 +276,7 @@
   function startDictation(id, hold = false) {
     const box = document.getElementById(id);
     if (!box) return;
-    if (dict) stopDictation();
+    if (dict) { dict.cancelled = true; stopDictation(); }
     pauseNav();
     const mic = $(`.mic[data-for="${id}"]`), interim = $(`.voice-interim[data-for="${id}"]`);
     const d = { id, hold };
@@ -245,13 +284,17 @@
       continuous: true,
       onInterim: (t) => { if (interim) interim.textContent = t; },
       onFinal: (t) => {
-        if (!t) return;
-        box.value = box.value && !/\s$/.test(box.value) ? box.value + " " + t : box.value + t;
+        if (!t || d.cancelled || !box.isConnected) return;
+        const start = box.selectionStart, end = box.selectionEnd;
+        const before = box.value.slice(0, start), after = box.value.slice(end);
+        const text = (before && !/\s$/.test(before) ? " " : "") + t + (after && !/^\s/.test(after) ? " " : "");
+        box.setRangeText(text, start, end, "end");
         box.dispatchEvent(new Event("input", { bubbles: true }));
       },
       onStatus: (s) => { if (interim) interim.dataset.status = s; },
       onEnd: () => {
-        if (dict === d) dict = null;
+        if (dict !== d) return;
+        dict = null;
         mic?.classList.remove("recording");
         mic?.setAttribute("aria-pressed", "false");
         box.classList.remove("dictating");
@@ -307,9 +350,8 @@
   }
   function runNav() {
     if (navSession || !navOn) return;
-    if (cfg.vad && engine() === "local") { runNavVAD(); return; }
     const s = listen({
-      continuous: true,
+      continuous: true, gate: cfg.vad,
       onInterim: (t) => t && setHud({ heard: t + "…" }),
       onFinal: (t) => t && command(t),
       onStatus: (st) => setHud({ st: "Voice nav: " + st.toLowerCase() }),
@@ -318,48 +360,6 @@
     navSession = s;
     if (!s) { navOn = false; navOff(); }
   }
-  // Voice navigation gated by Silero VAD running in this page: the
-  // microphone is processed locally, and audio leaves only while someone is
-  // speaking. Each detected utterance is finalised as one local-engine
-  // session. Push-to-talk and dictation never touch the VAD.
-  let navVAD = null;
-  async function runNavVAD() {
-    try {
-      const vad = await import("https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.19/+esm");
-      if (!navOn || navSession) return;
-      const mv = await vad.MicVAD.create({
-        onSpeechStart: () => setHud({ st: "Voice nav: listening…" }),
-        onSpeechEnd: (audio) => { navVAD = null; finishUtterance(audio); },
-      });
-      if (!navOn || navSession) { await mv.destroy?.(); return; }
-      navSession = { stop: () => { mv.destroy(); navVAD = null; } };
-      navVAD = mv;
-      setHud({ st: "Voice nav: listening (VAD)…" });
-    } catch (e) {
-      hd.toast("Silero VAD could not load: " + e.message, "err");
-      if (navOn) runNav();
-    }
-  }
-  // finishUtterance streams one detected utterance through the local engine.
-  function finishUtterance(audio) {
-    if (!navOn) return;
-    setHud({ heard: "…" });
-    let ws;
-    try { ws = new WebSocket(((location.protocol === "https:" ? "wss://" : "ws://") + location.host) + "/api/voice/stream"); } catch { return; }
-    let done = false;
-    const finish = () => { if (done) return; done = true; try { ws.close(); } catch {} if (navOn && !navPaused) runNavVAD(); };
-    ws.onopen = () => { ws.send(new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength)); ws.send("Done"); };
-    ws.onmessage = (ev) => {
-      let m;
-      try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.error) { hd.toast("Local voice engine: " + m.error, "err"); navOn = false; navOff(); return finish(); }
-      if (m.text && m.final) { onNavText((m.text || "").trim()); return finish(); }
-      if (m.eof) return finish();
-    };
-    ws.onclose = () => finish();
-    ws.onerror = () => finish();
-  }
-  function onNavText(t) { if (t) command(t); }
   function stopNav() {
     navOn = false;
     navPaused = false;
@@ -838,7 +838,7 @@
       el("label", { class: "row" }, el("span", { text: "Dictation key mode" }), mode),
       el("label", { class: "row" }, el("span", { text: "Speech engine" }), eng),
       el("label", { class: "row" }, el("span", { text: "Language" }), lang),
-      el("label", { class: "row" }, el("span", { text: "Detect speech with Silero VAD in voice navigation" }), vad),
+      el("label", { class: "row" }, el("span", { text: "Detect speech in this browser for voice navigation" }), vad),
       el("label", { class: "row" }, el("span", { text: "Ask the AI model for phrases the grammar misses" + (server.intent ? "" : " (not configured)") }), ai),
       note,
       ...(window.HDPrompt ? [window.HDPrompt.settingsRow()] : []),

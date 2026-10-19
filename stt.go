@@ -1,8 +1,8 @@
 package main
 
 // Local speech-to-text: engine `local` (HERDR_DASH_STT=local). A sidecar
-// manager starts the model server (sherpa-onnx online-websocket-server with
-// the bake-off winning model, NVIDIA Nemotron Speech Streaming EN 0.6B int8)
+// manager starts the model server (sherpa-onnx Python adapter with
+// NVIDIA Parakeet TDT 0.6B v3 (int8, utterance buffering))
 // on the first voice session and kills it after about two idle minutes, so
 // idle cost is zero. Sessions are proxied: the page sends 16 kHz mono float32
 // over its WebSocket, the manager relays it to the sidecar and translates the
@@ -18,9 +18,10 @@ package main
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/bzip2"
 	"context"
+	"crypto/sha256"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,9 +45,14 @@ const (
 	sttStreamPath    = "/api/voice/stream"
 	sttIdleDefault   = 2 * time.Minute
 	sttStartTimeout  = 30 * time.Second
-	sttModelURL      = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2"
-	sttLicenceNotice = "Nemotron Speech Streaming EN 0.6B weights: NVIDIA Open Model License (see https://open.nvidia.com/licenses/nvidia-open-model-license); runtime sherpa-onnx, Apache-2.0. No weights are stored in the herdr-dash repository."
+	sttModelURL      = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+	sttModelSHA256   = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+	sttModelDir      = "parakeet-tdt-0.6b-v3-int8-5793d0fd"
+	sttLicenceNotice = "NVIDIA Parakeet TDT 0.6B v3 weights, ONNX conversion by k2-fsa: CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/); runtime sherpa-onnx, Apache-2.0. No weights are stored in the herdr-dash repository."
 )
+
+//go:embed voice/local_server.py
+var localSTTServer string
 
 // STTConfig holds the local-engine settings, read from the environment only.
 type STTConfig struct {
@@ -82,15 +88,15 @@ func (c STTConfig) Local() bool { return c.Engine == "local" }
 
 // STT manages the local speech-to-text sidecar.
 type STT struct {
-	cfg       STTConfig
-	fetchOnce sync.Once
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	cancel    context.CancelFunc
-	port      int
-	n         int // active streams
-	timer     *time.Timer
-	started   time.Time
+	cfg     STTConfig
+	startMu sync.Mutex // serialize startup, acquisition and idle shutdown
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	cancel  context.CancelFunc
+	port    int
+	n       int // active streams
+	timer   *time.Timer
+	started time.Time
 }
 
 func NewSTT(cfg STTConfig) *STT { return &STT{cfg: cfg} }
@@ -101,21 +107,15 @@ func (s *STT) sidecarArgs(port int) ([]string, error) {
 	if s.cfg.Cmd != "" {
 		return append(strings.Fields(s.cfg.Cmd), "--port="+strconv.Itoa(port)), nil
 	}
-	bin, err := exec.LookPath("sherpa-onnx-online-websocket-server")
-	if err != nil {
-		return nil, fail(http.StatusNotImplemented, "local engine: sherpa-onnx-online-websocket-server is not on PATH (run make stt-install)")
+	home, _ := os.UserHomeDir()
+	bin := env("HERDR_DASH_STT_PYTHON", filepath.Join(home, ".local", "share", "herdr-dash", "stt-runtime", "bin", "python"))
+	if _, err := exec.LookPath(bin); err != nil {
+		return nil, fail(http.StatusNotImplemented, "local engine: Python runtime missing (run make stt-install)")
 	}
-	p := strconv.Itoa(port)
-	args := []string{bin,
-		"--port=" + p,
-		"--num-work-threads=" + strconv.Itoa(s.cfg.Threads),
-		"--tokens=" + filepath.Join(s.cfg.Dir, "tokens.txt"),
-		"--encoder=" + filepath.Join(s.cfg.Dir, "encoder.int8.onnx"),
-		"--decoder=" + filepath.Join(s.cfg.Dir, "decoder.int8.onnx"),
-		"--joiner=" + filepath.Join(s.cfg.Dir, "joiner.int8.onnx"),
-	}
+	args := []string{bin, "-c", localSTTServer, "--model-dir=" + filepath.Join(s.cfg.Dir, sttModelDir),
+		"--threads=" + strconv.Itoa(s.cfg.Threads), "--port=" + strconv.Itoa(port)}
 	if bin, err := exec.LookPath("systemd-run"); err == nil && systemdRunWorks(bin) {
-		return append([]string{"systemd-run", "--user", "--scope", "-q",
+		return append([]string{"systemd-run", "--user", "--scope", "-q", "--unit=herdr-dash-stt-" + strconv.Itoa(os.Getpid()) + "-" + strconv.Itoa(port),
 			"-p", "MemoryMax=2G", "-p", "CPUQuota=200%"}, args...), nil
 	}
 	return args, nil
@@ -124,8 +124,9 @@ func (s *STT) sidecarArgs(port int) ([]string, error) {
 // systemdRunWorks checks that a user systemd is reachable; without one the
 // scope would fail to start.
 func systemdRunWorks(bin string) bool {
-	out, err := exec.Command(bin, "--version").Output()
-	return err == nil && bytes.Contains(out, []byte("systemd"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", "--user", "show-environment").Run() == nil
 }
 
 // fetchModel downloads the chosen model when it is missing.
@@ -149,12 +150,50 @@ func (s *STT) fetchModel(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		return fail(http.StatusBadGateway, "local engine: model fetch failed: HTTP %d", resp.StatusCode)
 	}
-	return untarBz2(resp.Body, s.cfg.Dir)
+	// Stage the complete, verified archive before publishing any model files.
+	stage, err := os.MkdirTemp(s.cfg.Dir, ".parakeet-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	archive, err := os.CreateTemp(s.cfg.Dir, ".download-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(archive.Name())
+	defer archive.Close()
+	hash := sha256.New()
+	if _, err = io.Copy(io.MultiWriter(archive, hash), io.LimitReader(resp.Body, 600<<20)); err != nil {
+		return err
+	}
+	if fmt.Sprintf("%x", hash.Sum(nil)) != sttModelSHA256 {
+		return fmt.Errorf("Parakeet model checksum mismatch; download rejected")
+	}
+	if _, err = archive.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err = untarBz2(archive, stage); err != nil {
+		return err
+	}
+	if err = os.WriteFile(filepath.Join(stage, "SHA256"), []byte(sttModelSHA256), 0644); err != nil {
+		return err
+	}
+	dest := filepath.Join(s.cfg.Dir, sttModelDir)
+	// A previous incomplete installation is never considered usable.
+	if err = os.RemoveAll(dest); err != nil {
+		return err
+	}
+	return os.Rename(stage, dest)
 }
 
 func (s *STT) modelPresent() bool {
+	dir := filepath.Join(s.cfg.Dir, sttModelDir)
+	marker, err := os.ReadFile(filepath.Join(dir, "SHA256"))
+	if err != nil || string(marker) != sttModelSHA256 {
+		return false
+	}
 	for _, f := range []string{"tokens.txt", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"} {
-		if _, err := os.Stat(filepath.Join(s.cfg.Dir, f)); err != nil {
+		if info, err := os.Stat(filepath.Join(dir, f)); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			return false
 		}
 	}
@@ -210,8 +249,9 @@ func (s *STT) start(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	if s.cfg.Cmd == "" && !s.modelPresent() {
-		var ferr error
-		s.fetchOnce.Do(func() { ferr = s.fetchModel(ctx) })
+		fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		ferr := s.fetchModel(fetchCtx)
+		cancel()
 		if ferr != nil || !s.modelPresent() {
 			if ferr == nil {
 				ferr = fail(http.StatusServiceUnavailable, "local engine: model not installed (run make stt-fetch)")
@@ -227,7 +267,20 @@ func (s *STT) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cctx, cancel := context.WithCancel(context.Background())
+	cctx, contextCancel := context.WithCancel(context.Background())
+	cancel := func() {
+		// Killing only the systemd-run client would orphan its scoped model.
+		if argv[0] == "systemd-run" {
+			for _, arg := range argv {
+				if strings.HasPrefix(arg, "--unit=") {
+					stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+					exec.CommandContext(stopCtx, "systemctl", "--user", "stop", strings.TrimPrefix(arg, "--unit=")+".scope").Run()
+					stopCancel()
+				}
+			}
+		}
+		contextCancel()
+	}
 	s.mu.Lock()
 	s.port = port
 	s.mu.Unlock()
@@ -253,7 +306,18 @@ func (s *STT) start(ctx context.Context) error {
 	}()
 	deadline := time.Now().Add(sttStartTimeout)
 	for {
+		if ctx.Err() != nil {
+			cancel()
+			return ctx.Err()
+		}
+		s.mu.Lock()
+		alive := s.cmd == cmd
+		s.mu.Unlock()
+		if !alive {
+			return fail(http.StatusBadGateway, "local engine exited during startup; check server log")
+		}
 		if time.Now().After(deadline) {
+			cancel()
 			return fail(http.StatusBadGateway, "local engine did not start within %s", sttStartTimeout)
 		}
 		c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 250*time.Millisecond)
@@ -277,17 +341,19 @@ func freePort() (int, error) {
 // stopSidecar kills the sidecar process.
 func (s *STT) stopSidecar(why string) {
 	s.mu.Lock()
-	cmd, started := s.cmd, s.started
+	cmd, started, cancel := s.cmd, s.started, s.cancel
 	s.cmd = nil
 	s.mu.Unlock()
 	if cmd == nil {
 		return
 	}
 	log.Printf("local engine: stopping sidecar (%s) after %s", why, time.Since(started).Round(time.Second))
-	s.cancel()
+	cancel()
 }
 
 func (s *STT) acquire(ctx context.Context) error {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 	if err := s.start(ctx); err != nil {
 		return err
 	}
@@ -312,7 +378,13 @@ func (s *STT) release() {
 	if idle <= 0 {
 		idle = sttIdleDefault
 	}
-	s.timer = time.AfterFunc(idle, func() { s.stopSidecar("idle") })
+	s.timer = time.AfterFunc(idle, func() {
+		s.startMu.Lock()
+		defer s.startMu.Unlock()
+		if s.count() == 0 {
+			s.stopSidecar("idle")
+		}
+	})
 	s.mu.Unlock()
 }
 
@@ -347,7 +419,9 @@ func (s *STT) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer page.Close()
+	page.SetReadLimit(1 << 20)
 	if err := s.acquire(r.Context()); err != nil {
+		log.Printf("local engine startup failed: %v", err)
 		var he httpErr
 		msg := "local speech-to-text unavailable"
 		if errors.As(err, &he) {
@@ -364,6 +438,9 @@ func (s *STT) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.Close()
+	if err := page.WriteJSON(map[string]bool{"ready": true}); err != nil {
+		return
+	}
 
 	go func() { // page -> sidecar, until the page goes away
 		for {
@@ -377,6 +454,7 @@ func (s *STT) stream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	finals := map[int]bool{}
 	for { // sidecar -> page
 		mt, data, err := c.ReadMessage()
 		if err != nil {
@@ -389,15 +467,24 @@ func (s *STT) stream(w http.ResponseWriter, r *http.Request) {
 		msg := string(data)
 		if msg == "Done!" {
 			page.WriteMessage(websocket.TextMessage, []byte(`{"eof":true}`))
-			continue
+			return
 		}
 		var res struct {
 			Text    string `json:"text"`
+			Segment int    `json:"segment"`
 			IsFinal bool   `json:"is_final"`
 			IsEOF   bool   `json:"is_eof"`
 		}
 		if err := json.Unmarshal(data, &res); err != nil {
 			continue
+		}
+		final := res.IsFinal || res.IsEOF
+		if final {
+			if finals[res.Segment] {
+				res.Text = ""
+			} else {
+				finals[res.Segment] = true
+			}
 		}
 		out, _ := json.Marshal(map[string]any{
 			"interim": !res.IsFinal && !res.IsEOF,
@@ -406,6 +493,9 @@ func (s *STT) stream(w http.ResponseWriter, r *http.Request) {
 			"eof":     res.IsEOF,
 		})
 		if err := page.WriteMessage(websocket.TextMessage, out); err != nil {
+			return
+		}
+		if res.IsEOF {
 			return
 		}
 	}

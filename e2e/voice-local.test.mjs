@@ -1,5 +1,5 @@
-// E2E for the local voice engine (HERDR_DASH_STT=local, the bake-off winner
-// Nemotron via sherpa-onnx). The browser talks to /api/voice/stream; the
+// E2E for the local voice engine (HERDR_DASH_STT=local, the required
+// Parakeet TDT v3 via sherpa-onnx). The browser talks to /api/voice/stream; the
 // sidecar is stubbed. Artifacts land in e2e/artifacts/voice-local-*.
 //
 // Ways this could fail, written before the feature existed:
@@ -15,6 +15,10 @@
 //  L5. No fallback: when the engine is selected but the sidecar cannot
 //      start, the page quietly switches to Web Speech or the cloud instead
 //      of showing the error.
+//  L7. Endpoint and EOF repeat the same segment and insert dictation twice.
+//  L8. Dictation ignores the cursor/selection or sends the chat automatically.
+//  L9. Audio continues after Done, late results insert after session cleanup,
+//      or a microphone granted after cancellation keeps recording.
 //  L6. The page streams audio at the wrong sample rate or format for the
 //      sidecar (not 16 kHz float32 mono).
 import { test, before, after } from "node:test";
@@ -122,6 +126,8 @@ test("dictation with the local engine writes the final transcript", async () => 
   await page.waitForSelector("#chat-input");
   await page.waitForSelector('.mic[data-for="chat-input"]');
   const mic = page.locator('.mic[data-for="chat-input"]');
+  await page.fill("#chat-input", "Before selected after");
+  await page.locator("#chat-input").evaluate((box) => box.setSelectionRange(7, 15));
   const mark = lines().length;
   await mic.click();
   await waitFor(async () => (await mic.getAttribute("aria-pressed")) === "true", 8000);
@@ -131,10 +137,17 @@ test("dictation with the local engine writes the final transcript", async () => 
     console.error("DICTATION LOG WINDOW:\n" + lines().slice(mark).join("\n"));
     throw e;
   }
+  await waitFor(async () => (await page.locator('.voice-interim[data-for="chat-input"]').innerText()) === "open alpha project", 8000);
+  assert.equal(await page.inputValue("#chat-input"), "Before selected after");
+  await page.screenshot({ path: join(artifacts, "voice-local-dictation-partial.png") });
   // Stopping finalises: the page sends "Done" and the sidecar's final
   // transcript lands in the box.
   await mic.click();
-  await waitFor(async () => (await page.inputValue("#chat-input")).startsWith("open alpha project"), 8000);
+  await waitFor(async () => (await page.inputValue("#chat-input")) === "Before open alpha project after", 8000);
+  await page.waitForTimeout(300);
+  assert.equal(await page.inputValue("#chat-input"), "Before open alpha project after", "one insertion for a repeated final segment");
+  assert.ok(!lines().slice(mark).includes("audio-after-done"));
+  await page.screenshot({ path: join(artifacts, "voice-local-dictation-final.png") });
   await page.close();
 });
 
@@ -148,13 +161,20 @@ test("no fallback: a dead sidecar surfaces the error, the engine stays local", a
   });
   await page.goto(localURL + "/");
   await page.waitForSelector('#voice-fab:not([disabled])');
-  // The stub only understands one session shape; break the audio path by
-  // asking for a dictation while the sidecar answers with an error shape:
-  // what matters is that the page reports the engine error and stays local.
-  await page.click("#voice-fab");
-  await page.waitForTimeout(500);
-  const title = await page.locator("#voice-fab").getAttribute("aria-pressed");
-  assert.equal(title, "true");
+  const badPort = await freePort();
+  const broken = startServer(badPort, "", [], {
+    HERDR_DASH_STT: "local", HERDR_DASH_STT_SERVER_CMD: "nonexistent-parakeet-server",
+  });
+  try {
+    await waitFor(async () => (await fetch(`http://127.0.0.1:${badPort}/api/config`)).ok);
+    await page.goto(`http://127.0.0.1:${badPort}/`);
+    await page.waitForSelector('#voice-fab:not([disabled])');
+    await page.click("#voice-fab");
+    await waitFor(async () => (await page.locator("body").innerText()).includes("Local voice engine:"), 8000);
+    assert.equal(await page.locator("#voice-fab").getAttribute("aria-pressed"), "false");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("hd-voice")).engine), "local");
+    await page.screenshot({ path: join(artifacts, "voice-local-error.png") });
+  } finally { broken.kill(); }
   await page.close();
 });
 
@@ -177,3 +197,77 @@ async function page_sessions() {
   await waitFor(async () => lines().slice(mark).some((l) => /^done samples=[1-9]/.test(l)), 8000);
   await page.close();
 }
+
+test("cancelling while microphone permission is pending stops the eventual stream", async () => {
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (...args) => {
+      const stream = await original(...args);
+      window.delayedStream = stream;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return stream;
+    };
+  });
+  await page.goto(localURL);
+  await page.click("#voice-fab");
+  await waitFor(async () => page.evaluate(() => !!window.delayedStream));
+  await page.click("#voice-fab");
+  await waitFor(async () => page.evaluate(() => window.delayedStream.getTracks().every((t) => t.readyState === "ended")));
+  assert.equal(await page.locator("#voice-fab").getAttribute("aria-pressed"), "false");
+  await page.close();
+});
+
+test("browser speech detection is toggleable and loads no external scripts", async () => {
+  const page = await browser.newPage();
+  const external = [];
+  page.on("request", (r) => { if (!r.url().startsWith(localURL)) external.push(r.url()); });
+  await page.goto(localURL);
+  await page.click("#voice-settings-btn");
+  const toggle = page.locator("#vs-vad");
+  await toggle.check();
+  await page.click("#voice-settings-close");
+  await page.click("#voice-fab");
+  await waitFor(async () => (await page.locator("#voice-hud").innerText()).includes("speech detection"));
+  await page.click("#voice-fab");
+  await page.click("#voice-settings-btn");
+  await toggle.uncheck();
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("hd-voice")).vad), false);
+  assert.deepEqual(external, []);
+  await page.screenshot({ path: join(artifacts, "voice-local-speech-detection.png") });
+  await page.close();
+});
+
+test("coordinator dictation preserves existing text and inserts only once", async () => {
+  const page = await browser.newPage();
+  await page.goto(localURL);
+  await page.locator('#needs .chip[data-key="hub:alpha"]').click();
+  const input = page.locator("#coord-input"), mic = page.locator('.mic[data-for="coord-input"]');
+  await input.fill("Existing");
+  await input.evaluate((box) => box.setSelectionRange(box.value.length, box.value.length));
+  await mic.click();
+  await waitFor(async () => (await page.locator('.voice-interim[data-for="coord-input"]').innerText()) === "open alpha project");
+  await mic.click();
+  await waitFor(async () => await input.inputValue() === "Existing open alpha project");
+  await page.waitForTimeout(200);
+  assert.equal(await input.inputValue(), "Existing open alpha project");
+  await page.screenshot({ path: join(artifacts, "voice-local-coordinator.png") });
+  await page.close();
+});
+
+test("identical words in two distinct final segments are both inserted", async () => {
+  const port = await freePort(), url = `http://127.0.0.1:${port}`;
+  const server = startServer(port, "", [], { HERDR_DASH_STT: "local", HERDR_DASH_STT_SERVER_CMD: `node ${stubScript}`, STT_REPLY: "Again.", STT_REPEAT: "1" });
+  const page = await browser.newPage();
+  try {
+    await waitFor(async () => (await fetch(url + "/api/config")).ok);
+    await page.goto(url);
+    await page.locator('#needs .chip[data-key="alpha/t-0002"]').click();
+    const mic = page.locator('.mic[data-for="chat-input"]');
+    await mic.click();
+    await waitFor(async () => (await page.locator('.voice-interim[data-for="chat-input"]').innerText()) === "Again.");
+    await mic.click();
+    await waitFor(async () => await page.inputValue("#chat-input") === "Again. Again.");
+    assert.equal(await page.inputValue("#chat-input"), "Again. Again.");
+  } finally { await page.close(); server.kill(); }
+});

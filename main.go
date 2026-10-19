@@ -66,8 +66,17 @@ func main() {
 	flag.StringVar(&cfg.Memex, "memex", env("HERDR_DASH_MEMEX", "off"), "memex binary for transcript search, e.g. \"memex\" (on PATH), $HERDR_DASH_MEMEX; default off; disabled when not found")
 	flag.DurationVar(&cfg.MemexTimeout, "memex-timeout", 2*time.Second, "time limit of one memex search")
 	flag.IntVar(&cfg.MemexPerMin, "memex-per-min", 30, "memex searches allowed a minute")
+	sttFetch := flag.Bool("stt-fetch", false, "download and verify the local Parakeet TDT v3 model, then exit")
 	usage := usageFlags(home)
 	flag.Parse()
+	if *sttFetch {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := NewSTT(cfg.STT).fetchModel(ctx); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	cfg.Usage = *usage
 	cfg.Usage.CodexDir = cfg.CodexDir
 	cfg.Memex = resolveMemex(cfg.Memex)
@@ -91,8 +100,8 @@ func main() {
 	col := NewCollector(cfg)
 	go col.Run(ctx)
 
-	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg)), ReadHeaderTimeout: 10 * time.Second}
 	stt := NewSTT(cfg.STT)
+	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg, stt)), ReadHeaderTimeout: 10 * time.Second}
 	defer stt.stopSidecar("shutdown")
 	go func() {
 		<-ctx.Done()
@@ -145,7 +154,7 @@ func defaultHerdrProjects(home string) string {
 	return best
 }
 
-func newMux(col *Collector, cfg Config) *http.ServeMux {
+func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(staticFS, "static")
 	files := http.FileServer(http.FS(sub))
@@ -195,6 +204,9 @@ func newMux(col *Collector, cfg Config) *http.ServeMux {
 	NewSearcher(cfg, col).register(mux)
 	NewVoice(cfg.Voice).register(mux)
 	stt := NewSTT(cfg.STT)
+	if len(localSTT) > 0 {
+		stt = localSTT[0]
+	}
 	stt.register(mux)
 	NewUsage(cfg.Usage).register(mux)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {

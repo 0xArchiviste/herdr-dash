@@ -280,36 +280,51 @@ The token is only sent to Cloudflare, never to the page.
 
 ### Local engine
 
-Dictation and voice navigation can run on a local model instead of the cloud,
-with no fallback to the cloud: pick **Local model on this machine** in the ⚙
-voice settings. Audio leaves the page only to this server, over its
-`/api/voice/stream` WebSocket, which proxies it to a sherpa-onnx
-`sherpa-onnx-online-websocket-server` sidecar running NVIDIA Nemotron Speech
-Streaming EN 0.6B (560 ms chunk, int8). The engine streams partial and final
-transcripts and never sends audio anywhere else; commands and dictation work
-the same as with the browser's Web Speech.
+Set `HERDR_DASH_STT=local` and choose **Local model on this machine** in
+voice settings. The only local model is
+[NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
+using the k2-fsa int8 ONNX conversion through sherpa-onnx 1.13.8 on CPU.
+There is no automatic fallback to browser or cloud transcription.
 
-Setup, one time:
+TDT v3 processes buffered utterances rather than cache-aware streaming.
+The adapter re-decodes the current utterance every two seconds for a
+replaceable preview. A 1.2-second pause, the stop button, or the 20-second
+utterance limit commits one final segment. Dictation replaces the selection
+at the cursor and never sends the chat. Audio is 16 kHz mono float32 over
+`/api/voice/stream`, relayed to a loopback-only Python sidecar. The microphone
+starts after the model is ready, so cold loading cannot drop the first words.
 
-- `make stt-install` installs the sherpa-onnx server binary to `~/.local/bin`
-  and its ONNX Runtime library to `~/.local/lib`.
-- Run `herdr-dash` once with the engine on; it fetches the model into
-  `~/.local/share/herdr-dash/stt/` on the first session (weights stay out of
-  the repository and the process prints their licences: NVIDIA Open Model
-  License for the weights, Apache-2.0 for sherpa-onnx).
+Setup:
 
-Settings (env, with the engine on):
+- `make stt-install` installs a pinned Python runtime in
+  `~/.local/share/herdr-dash/stt-runtime` (uses uv and Python 3.12, or an
+  existing compatible Python with venv/pip).
+- `make stt-fetch` downloads and verifies the model before enabling voice.
+  First use can also download it; allow up to five minutes on a slow link.
+- Add `HERDR_DASH_STT=local` to the service environment and restart Dash.
 
+Weights are CC-BY-4.0: original model by NVIDIA, quantized ONNX conversion by
+[k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
+The converted archive is 487,170,055 bytes (about 465 MiB), verified against
+SHA-256 `5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf`.
+The archive and weights remain outside the repository. Downloads are staged
+and published only after verification; older local-engine files are ignored.
+See [local voice validation](docs/local-voice.md) for provenance and measurements.
+
+| Setting | Meaning |
+| --- | --- |
 | `HERDR_DASH_STT` | `local` enables the engine (default off) |
-| `HERDR_DASH_STT_IDLE` | stop the sidecar after this idle time (default `2m`) |
-| `HERDR_DASH_STT_THREADS` | decoder CPU threads (default 2) |
-| `HERDR_DASH_STT_DIR` | where the model is stored |
+| `HERDR_DASH_STT_IDLE` | Stop after the last session closes (default `2m`) |
+| `HERDR_DASH_STT_THREADS` | CPU inference threads (default 2, range 1–8) |
+| `HERDR_DASH_STT_DIR` | Model cache parent directory |
+| `HERDR_DASH_STT_PYTHON` | Override the installed runtime's Python executable |
 
-The sidecar runs under `systemd-run --user --scope` with `MemoryMax=2G` and
-`CPUQuota=200%` when the user systemd is available (benchmarked: ~1.75 CPU
-seconds per second of audio, peak RSS under 1 GB). When user systemd is not
-available the process runs plain. A Silero VAD toggle in the settings runs
-voice navigation without touching the microphone unless you speak.
+With user systemd available, the sidecar uses `MemoryMax=2G` and
+`CPUQuota=200%`; otherwise it runs directly. Voice navigation has an optional
+browser speech-detection toggle: it keeps the microphone open while enabled,
+but suppresses quiet audio frames before sending them. This is an energy
+threshold, so background noise and quiet speech can affect detection. No
+external browser scripts or models are downloaded for this toggle.
 
 ## Usage
 
