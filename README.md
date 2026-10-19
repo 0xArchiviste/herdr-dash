@@ -278,6 +278,54 @@ Server side (env only, it holds a secret; both features are off without it):
 `HERDR_DASH_INTENT_MODEL` and `HERDR_DASH_STT_MODEL` (a model id, or `off`).
 The token is only sent to Cloudflare, never to the page.
 
+### Local engine
+
+Set `HERDR_DASH_STT=local` and choose **Local model on this machine** in
+voice settings. The only local model is
+[NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
+using the k2-fsa int8 ONNX conversion through sherpa-onnx 1.13.8 on CPU.
+There is no automatic fallback to browser or cloud transcription.
+
+TDT v3 processes buffered utterances rather than cache-aware streaming.
+The adapter re-decodes the current utterance every two seconds for a
+replaceable preview. A 1.2-second pause, the stop button, or the 20-second
+utterance limit commits one final segment. Dictation replaces the selection
+at the cursor and never sends the chat. Audio is 16 kHz mono float32 over
+`/api/voice/stream`, relayed to a loopback-only Python sidecar. The microphone
+starts after the model is ready, so cold loading cannot drop the first words.
+
+Setup:
+
+- `make stt-install` installs a pinned Python runtime in
+  `~/.local/share/herdr-dash/stt-runtime` (uses uv and Python 3.12, or an
+  existing compatible Python with venv/pip).
+- `make stt-fetch` downloads and verifies the model before enabling voice.
+  First use can also download it; allow up to five minutes on a slow link.
+- Add `HERDR_DASH_STT=local` to the service environment and restart Dash.
+
+Weights are CC-BY-4.0: original model by NVIDIA, quantized ONNX conversion by
+[k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
+The converted archive is 487,170,055 bytes (about 465 MiB), verified against
+SHA-256 `5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf`.
+The archive and weights remain outside the repository. Downloads are staged
+and published only after verification; older local-engine files are ignored.
+See [local voice validation](docs/local-voice.md) for provenance and measurements.
+
+| Setting | Meaning |
+| --- | --- |
+| `HERDR_DASH_STT` | `local` enables the engine (default off) |
+| `HERDR_DASH_STT_IDLE` | Stop after the last session closes (default `2m`) |
+| `HERDR_DASH_STT_THREADS` | CPU inference threads (default 2, range 1–8) |
+| `HERDR_DASH_STT_DIR` | Model cache parent directory |
+| `HERDR_DASH_STT_PYTHON` | Override the installed runtime's Python executable |
+
+With user systemd available, the sidecar uses `MemoryMax=2G` and
+`CPUQuota=200%`; otherwise it runs directly. Voice navigation has an optional
+browser speech-detection toggle: it keeps the microphone open while enabled,
+but suppresses quiet audio frames before sending them. This is an energy
+threshold, so background noise and quiet speech can affect detection. No
+external browser scripts or models are downloaded for this toggle.
+
 ## Usage
 
 A strip in the header shows what is left on your agent plans: Claude Code's

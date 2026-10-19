@@ -1,4 +1,4 @@
-.PHONY: build vet test e2e check install demo screenshots clean
+.PHONY: build vet test e2e check install demo screenshots clean stt-install stt-fetch stt-check
 
 build:
 	go build -o bin/herdr-dash .
@@ -10,6 +10,8 @@ vet:
 	node --check static/scrollback.js
 	node --check static/usage.js
 	node --check static/voice.js
+	node --check static/voice-stream.js
+	python3 -c "import ast, pathlib; ast.parse(pathlib.Path('voice/local_server.py').read_text())"
 	node --check static/prompts.js
 
 test:
@@ -42,6 +44,17 @@ install: build
 	systemctl --user daemon-reload
 	systemctl --user enable herdr-dash.service
 	systemctl --user restart herdr-dash.service
+
+# Pinned CPU runtime; NVIDIA Parakeet TDT v3 weights remain outside the repo.
+stt-install:
+	./voice/install.sh
+
+stt-fetch: build
+	bin/herdr-dash --stt-fetch
+
+# Supply HERDR_DASH_STT_FIXTURE with a mono WAV of the sentence in this test.
+stt-check: build e2e/node_modules
+	node --test e2e/voice-real.test.mjs
 
 clean:
 	rm -rf bin e2e/artifacts

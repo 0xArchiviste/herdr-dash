@@ -30,7 +30,7 @@
   const SEND = { "chat-input": "chat-send", "coord-input": "coord-send" };
 
   // ---------------------------------------------------------------- settings
-  const DEFAULTS = { nav: "Alt+KeyV", dict: "Alt+KeyM", dictMode: "toggle", engine: "auto", ai: true, lang: "" };
+  const DEFAULTS = { nav: "Alt+KeyV", dict: "Alt+KeyM", dictMode: "toggle", engine: "auto", ai: true, lang: "", vad: false };
   const cfg = { ...DEFAULTS, ...JSON.parse(localStorage.getItem("hd-voice") || "{}") };
   const saveCfg = () => localStorage.setItem("hd-voice", JSON.stringify(cfg));
   let server = { intent: false, transcribe: false };
@@ -41,12 +41,15 @@
   function engine() {
     if (!window.isSecureContext || !(navigator.mediaDevices || SR)) return null;
     const b = SR && !browserFailed, s = server.transcribe && window.MediaRecorder && navigator.mediaDevices;
+    if (cfg.engine === "local") return server.local ? "local" : null;
     if (cfg.engine === "browser") return b ? "browser" : null;
     if (cfg.engine === "server") return s ? "server" : null;
+    if (server.local) return "local";
     return b ? "browser" : s ? "server" : null;
   }
   function unavailable() {
     if (!window.isSecureContext) return "Voice not available: the microphone needs HTTPS" + (publicURL ? "." : " (see the README: tailscale serve).");
+    if (cfg.engine === "local" || (cfg.engine === "auto" && server.local)) return "Voice not available: the local engine is configured but could not start: check the server log (HERDR_DASH_STT=local).";
     return "Voice not available: this browser has no speech recognition and server transcription is not configured.";
   }
 
@@ -59,10 +62,10 @@
   // when the engine ends them (Chrome stops after silence) until stop().
   // stop() finishes: the browser delivers what it heard; the server engine
   // transcribes the clip so far.
-  function listen({ continuous, onInterim, onFinal, onStatus, onEnd }) {
+  function listen({ continuous, gate = false, onInterim, onFinal, onStatus, onEnd }) {
     const kind = engine();
     if (!kind) { explain(); return null; }
-    return kind === "browser" ? browserListen() : serverListen();
+    return kind === "browser" ? browserListen() : kind === "local" ? localListen({ continuous, gate, onInterim, onFinal, onStatus, onEnd }) : serverListen();
 
     function browserListen() {
       let want = true, rec = null, restarts = [];
@@ -147,6 +150,94 @@
     }
   }
 
+  // localListen streams the microphone to /api/voice/stream and gets partial
+  // and final transcripts back. There is no fallback: an error is shown.
+  function localListen({ continuous, gate, onInterim, onFinal, onStatus, onEnd }) {
+    let want = true, ws = null, ac = null, node = null, stream = null, done = false, timer = null;
+    const stopAudio = () => {
+      if (node) node.port.onmessage = null;
+      try { node?.disconnect(); } catch {}
+      stream?.getTracks().forEach((t) => t.stop());
+      if (ac && ac.state !== "closed") ac.close().catch(() => {});
+    };
+    const finish = (err) => {
+      if (done) return;
+      done = true; want = false;
+      clearTimeout(timer);
+      stopAudio();
+      ws?.close();
+      onInterim("");
+      onEnd();
+      if (err) hd.toast("Local voice engine: " + err, "err");
+    };
+    onStatus("Starting local engine…");
+    // Ask for microphone access after readiness: first-use model loading must
+    // never discard the beginning of the utterance.
+    try {
+      ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/voice/stream");
+    } catch (e) { queueMicrotask(() => finish(e.message)); }
+    timer = setTimeout(() => finish("model startup timed out"), 330000);
+    if (ws) {
+      ws.onmessage = async (ev) => {
+        if (done) return;
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.error) return finish(m.error);
+        if (m.ready) {
+          clearTimeout(timer);
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (!want || done) { stopAudio(); return; }
+            ac = new AudioContext({ sampleRate: 16000 });
+            await ac.audioWorklet.addModule("/voice-stream.js");
+            if (!want || done) { stopAudio(); return; }
+            node = new AudioWorkletNode(ac, "pcm-stream");
+            let quiet = 12, preroll = [];
+            node.port.onmessage = (e) => {
+              if (!want || done || ws.readyState !== 1 || !e.data.length) return;
+              if (gate) {
+                const rms = Math.sqrt(e.data.reduce((sum, x) => sum + x * x, 0) / e.data.length);
+                if (rms >= 0.01) {
+                  for (const frame of preroll) ws.send(frame);
+                  preroll = []; quiet = 0;
+                } else if (++quiet > 12) {
+                  preroll.push(e.data); if (preroll.length > 5) preroll.shift();
+                  return;
+                }
+              }
+              ws.send(e.data);
+            };
+            ac.createMediaStreamSource(stream).connect(node);
+            onStatus(gate ? "Listening… (local, speech detection)" : "Listening… (local)");
+          } catch (e) { finish("Microphone: " + e.message); }
+          return;
+        }
+        if (m.interim && m.text) onInterim(m.text);
+        if (m.final) {
+          onInterim("");
+          if (m.text) onFinal(m.text.trim());
+          if (!continuous) return finish();
+        }
+        if (m.eof) finish();
+      };
+      ws.onclose = () => finish("connection lost");
+      ws.onerror = () => finish("connection failed");
+    }
+    return {
+      stop() {
+        if (!want || done) return;
+        want = false;
+        stopAudio();
+        clearTimeout(timer);
+        if (ws?.readyState === 1) {
+          ws.send("Done");
+          onStatus("Transcribing… (local)");
+          timer = setTimeout(() => finish("final transcript timed out"), 15000);
+        } else finish();
+      },
+    };
+  }
+
   async function transcribe(blob) {
     const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.readAsDataURL(blob); });
     const r = await postJSON("/api/voice/transcribe", { audio: b64, mime: (blob.type || "audio/webm").toLowerCase() });
@@ -185,7 +276,7 @@
   function startDictation(id, hold = false) {
     const box = document.getElementById(id);
     if (!box) return;
-    if (dict) stopDictation();
+    if (dict) { dict.cancelled = true; stopDictation(); }
     pauseNav();
     const mic = $(`.mic[data-for="${id}"]`), interim = $(`.voice-interim[data-for="${id}"]`);
     const d = { id, hold };
@@ -193,13 +284,17 @@
       continuous: true,
       onInterim: (t) => { if (interim) interim.textContent = t; },
       onFinal: (t) => {
-        if (!t) return;
-        box.value = box.value && !/\s$/.test(box.value) ? box.value + " " + t : box.value + t;
+        if (!t || d.cancelled || !box.isConnected) return;
+        const start = box.selectionStart, end = box.selectionEnd;
+        const before = box.value.slice(0, start), after = box.value.slice(end);
+        const text = (before && !/\s$/.test(before) ? " " : "") + t + (after && !/^\s/.test(after) ? " " : "");
+        box.setRangeText(text, start, end, "end");
         box.dispatchEvent(new Event("input", { bubbles: true }));
       },
       onStatus: (s) => { if (interim) interim.dataset.status = s; },
       onEnd: () => {
-        if (dict === d) dict = null;
+        if (dict !== d) return;
+        dict = null;
         mic?.classList.remove("recording");
         mic?.setAttribute("aria-pressed", "false");
         box.classList.remove("dictating");
@@ -256,7 +351,7 @@
   function runNav() {
     if (navSession || !navOn) return;
     const s = listen({
-      continuous: true,
+      continuous: true, gate: cfg.vad,
       onInterim: (t) => t && setHud({ heard: t + "…" }),
       onFinal: (t) => t && command(t),
       onStatus: (st) => setHud({ st: "Voice nav: " + st.toLowerCase() }),
@@ -693,6 +788,7 @@
 
   function privacy() {
     const e = engine();
+    if (e === "local") return "Speech: streamed to this machine's own model (no cloud, no browser service).";
     if (e === "browser") return "Speech: the browser's recognizer (Chrome and Edge send the audio to Google or Microsoft; Safari may process on the device).";
     if (e === "server") return "Speech: recorded here and sent through this dashboard's server to Cloudflare Workers AI (Whisper).";
     return unavailable();
@@ -723,6 +819,7 @@
     mode.addEventListener("change", () => { cfg.dictMode = mode.value; saveCfg(); });
     const eng = el("select", { id: "vs-engine" },
       el("option", { value: "auto", text: "Automatic" }),
+      el("option", { value: "local", text: "Local model on this machine" + (server.local ? "" : " — not enabled on the server"), disabled: server.local ? null : "" }),
       el("option", { value: "browser", text: "Browser (Web Speech)" + (SR ? "" : " — not in this browser"), disabled: SR ? null : "" }),
       el("option", { value: "server", text: "Server (Cloudflare Whisper)" + (server.transcribe ? "" : " — not configured"), disabled: server.transcribe ? null : "" }));
     eng.value = cfg.engine;
@@ -732,6 +829,8 @@
     ai.addEventListener("change", () => { cfg.ai = ai.checked; saveCfg(); });
     const lang = el("input", { id: "vs-lang", value: cfg.lang, placeholder: navigator.language || "en-US", size: "8" });
     lang.addEventListener("change", () => { cfg.lang = lang.value.trim(); saveCfg(); });
+    const vad = el("input", { id: "vs-vad", type: "checkbox", checked: cfg.vad ? "" : null, disabled: engine() !== "local" ? "" : null });
+    vad.addEventListener("change", () => { cfg.vad = vad.checked; saveCfg(); });
     settings.replaceChildren(
       el("div", { class: "row head" }, el("b", { text: "Voice" }), el("button", { id: "voice-settings-close", class: "close", type: "button", "aria-label": "Close", text: "×", onclick: closeOverlays })),
       el("label", { class: "row" }, el("span", { text: "Voice navigation key" }), keyField("vs-nav-key", "nav")),
@@ -739,6 +838,7 @@
       el("label", { class: "row" }, el("span", { text: "Dictation key mode" }), mode),
       el("label", { class: "row" }, el("span", { text: "Speech engine" }), eng),
       el("label", { class: "row" }, el("span", { text: "Language" }), lang),
+      el("label", { class: "row" }, el("span", { text: "Detect speech in this browser for voice navigation" }), vad),
       el("label", { class: "row" }, el("span", { text: "Ask the AI model for phrases the grammar misses" + (server.intent ? "" : " (not configured)") }), ai),
       note,
       ...(window.HDPrompt ? [window.HDPrompt.settingsRow()] : []),
