@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 dash.test.mjs coordinator-switch.test.mjs taste.test.mjs voice.test.mjs https.test.mjs demo.test.mjs search.test.mjs usage.test.mjs update.test.mjs prompts.test.mjs session.test.mjs voice-local.test.mjs"
+    "test": "node --test --test-concurrency=1 dash.test.mjs coordinator-switch.test.mjs taste.test.mjs voice.test.mjs https.test.mjs demo.test.mjs search.test.mjs usage.test.mjs update.test.mjs prompts.test.mjs session.test.mjs voice-local.test.mjs perf.test.mjs"
   },
   "devDependencies": {
     "playwright": "1.63.0"

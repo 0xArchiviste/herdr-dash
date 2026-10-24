@@ -60,3 +60,45 @@ func TestConfiguredSessionFallbacks(t *testing.T) {
 		t.Fatal("global default profile was lost")
 	}
 }
+
+// Caching the parsed files must not serve stale values: a rewritten profile
+// config, a growing transcript (a record split across two polls too), and
+// a transcript that was replaced by a shorter one.
+func TestSessionCachesFollowFileChanges(t *testing.T) {
+	dir := t.TempDir()
+	profiles := filepath.Join(dir, "profiles.toml")
+	claude := filepath.Join(dir, "claude")
+	os.MkdirAll(filepath.Join(claude, "p"), 0700)
+	os.WriteFile(profiles, []byte("[profiles.a]\nagent='claude'\nmodel='first'\n"), 0600)
+	c := NewCollector(Config{SessionProfiles: profiles, ClaudeDir: claude})
+	if d := c.sessionDetails(Pane{}, "claude", "a"); d.Model.Value != "first" {
+		t.Fatalf("profile: %+v", d.Model)
+	}
+	os.WriteFile(profiles, []byte("[profiles.a]\nagent='claude'\nmodel='second-model'\n"), 0600)
+	if d := c.sessionDetails(Pane{}, "claude", "a"); d.Model.Value != "second-model" {
+		t.Fatalf("stale profile: %+v", d.Model)
+	}
+
+	id := "33333333-3333-3333-3333-333333333333"
+	path := filepath.Join(claude, "p", id+".jsonl")
+	pane := Pane{PaneID: "w1:p1", Agent: "claude"}
+	pane.AgentSession = &struct {
+		Agent string `json:"agent"`
+		Value string `json:"value"`
+	}{"claude", id}
+	rec := func(model string) string { return `{"type":"assistant","message":{"model":"` + model + `"}}` }
+	os.WriteFile(path, []byte(rec("m-one")+"\n"+rec("m-two")[:20]), 0600)
+	if d := c.sessionDetails(pane, "", ""); d.Model.Value != "m-one" {
+		t.Fatalf("first read: %+v", d.Model)
+	}
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(rec("m-two")[20:] + "\n")
+	f.Close()
+	if d := c.sessionDetails(pane, "", ""); d.Model.Value != "m-two" {
+		t.Fatalf("appended record split across reads lost: %+v", d.Model)
+	}
+	os.WriteFile(path, []byte(rec("m-3")+"\n"), 0600)
+	if d := c.sessionDetails(pane, "", ""); d.Model.Value != "m-3" {
+		t.Fatalf("replaced transcript: %+v", d.Model)
+	}
+}

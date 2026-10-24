@@ -81,12 +81,15 @@ var settingRe = regexp.MustCompile(`(?m)^(thread_profile|coordinator_profile|max
 
 // readSettings reads the PROJECT.md front matter settings worth showing.
 func readSettings(path string) map[string]string {
-	out := map[string]string{}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return out
+		return map[string]string{}
 	}
-	s := string(b)
+	return parseSettings(string(b))
+}
+
+func parseSettings(s string) map[string]string {
+	out := map[string]string{}
 	if strings.HasPrefix(s, "+++") {
 		if end := strings.Index(s[3:], "\n+++"); end >= 0 {
 			s = s[3 : 3+end]

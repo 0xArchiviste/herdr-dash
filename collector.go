@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +38,7 @@ type Config struct {
 	Poll          time.Duration // herdr pane list
 	ThreadsEvery  time.Duration // herdr-projects thread list, projects with open threads
 	QuietEvery    time.Duration // projects whose threads are all resolved
+	ThreadsMaxAge time.Duration // re-list an unchanged project at least this often
 	GHEvery       time.Duration
 	Memex         string        // memex binary, "" when transcript search is off
 	MemexTimeout  time.Duration // per memex search
@@ -213,12 +216,14 @@ type projectRaw struct {
 	fetched   time.Time
 	hasOpen   bool
 	listError string
+	sig       uint64 // files and panes as of the last good thread list
 	coords    []liveCoord
 	record    coordRecord
 }
 
 type Collector struct {
 	sessionCache map[string]sessionCacheEntry
+	files        map[string]decodedFile // config files, see decoded
 
 	cfg Config
 
@@ -239,6 +244,9 @@ type Collector struct {
 	burst      map[string]time.Time   // pane -> read its screen fast until
 	prompts    map[string]*Prompt     // blocked pane -> the prompt it shows
 	kick       chan struct{}
+	listSig    uint64    // root files and panes as of the last `list`
+	listAt     time.Time // when `list` last ran
+	listOut    []byte
 }
 
 type transcriptHit struct {
@@ -257,6 +265,7 @@ func NewCollector(cfg Config) *Collector {
 	return &Collector{
 		cfg:          cfg,
 		sessionCache: map[string]sessionCacheEntry{},
+		files:        map[string]decodedFile{},
 		projects:     map[string]*projectRaw{},
 		panes:        map[string]Pane{},
 		prs:          map[string]ghPR{},
@@ -281,6 +290,12 @@ func runIn(ctx context.Context, timeout time.Duration, stdin string, name string
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	// On timeout kill the whole process group, and stop waiting for output
+	// soon after: a grandchild (herdr under herdr-projects, sleep under sh)
+	// can hold the pipe open long after the command itself was killed.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 500 * time.Millisecond
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -317,8 +332,9 @@ func (e *cmdError) Message() string {
 
 // Run blocks, polling until ctx is done. One collector serves every client.
 func (c *Collector) Run(ctx context.Context) {
+	c.refreshPanes(ctx) // first: the thread lists are keyed to the panes
 	c.refreshThreads(ctx, true)
-	c.refreshPanes(ctx)
+	c.refreshOpencode(ctx)
 	c.refreshPrompts(ctx)
 	c.rebuild()
 	c.refreshPRs(ctx)
@@ -336,6 +352,7 @@ func (c *Collector) Run(ctx context.Context) {
 			return
 		case <-paneT.C:
 			c.refreshPanes(ctx)
+			c.refreshOpencode(ctx)
 			c.refreshPrompts(ctx)
 		case <-threadT.C:
 			c.refreshThreads(ctx, false)
@@ -343,6 +360,7 @@ func (c *Collector) Run(ctx context.Context) {
 			c.refreshPRs(ctx)
 		case <-c.kick: // a write just landed: show its effect now
 			c.refreshPanes(ctx)
+			c.refreshOpencode(ctx)
 			c.refreshThreads(ctx, false)
 			c.refreshPrompts(ctx)
 		}
@@ -368,8 +386,25 @@ func (c *Collector) refreshPanes(ctx context.Context) {
 	}
 	c.panesErr = ""
 	c.panes = map[string]Pane{}
+	live := map[string]bool{}
 	for _, p := range doc.Result.Panes {
 		c.panes[p.PaneID] = p
+		live[p.session()] = true
+	}
+	// Sessions are only looked up for live panes: forget the ones gone, so
+	// the caches do not grow with every session the machine ever ran.
+	paths := map[string]bool{}
+	for id, hit := range c.transcript {
+		if live[id] {
+			paths[hit.path] = true
+		} else {
+			delete(c.transcript, id)
+		}
+	}
+	for k := range c.sessionCache {
+		if id, ok := strings.CutPrefix(k, "opencode:"); ok && !live[id] || !ok && !paths[k] {
+			delete(c.sessionCache, k)
+		}
 	}
 	// A switch updates coordinator.json before the ticker updates its live
 	// list. Read both records with each pane poll so availability follows the
@@ -383,14 +418,43 @@ func (c *Collector) refreshPanes(ctx context.Context) {
 
 var countRe = regexp.MustCompile(`([A-Za-z ]+): (\d+)`)
 
+// refreshThreads runs `list`, then `thread list` for each project that may
+// have changed. Both are skipped while what herdr-projects derives them
+// from is unchanged: the files under each project's threads/ and .state/
+// and the panes. ThreadsMaxAge (QuietEvery for projects with only resolved
+// threads) bounds how long a skipped answer is trusted.
 func (c *Collector) refreshThreads(ctx context.Context, all bool) {
-	out, err := run(ctx, 10*time.Second, c.cfg.HerdrProjects, "--root", c.cfg.Root, "list")
-	if err != nil {
-		log.Printf("list: %v", err)
-		return
+	now := time.Now()
+	files := map[string]uint64{}
+	rootSig := fnv.New64a()
+	ents, _ := os.ReadDir(c.cfg.Root)
+	for _, e := range ents {
+		if e.IsDir() && slugRe.MatchString(e.Name()) {
+			dir := filepath.Join(c.cfg.Root, e.Name())
+			files[e.Name()] = statSig(filepath.Join(dir, "PROJECT.md"), filepath.Join(dir, "threads"), filepath.Join(dir, ".state"), filepath.Join(dir, "inbox"))
+			fmt.Fprintf(rootSig, "%s %x\n", e.Name(), files[e.Name()])
+		}
+	}
+	c.mu.Lock()
+	fmt.Fprintf(rootSig, "%x", c.panesSig(nil))
+	sig := rootSig.Sum64()
+	out := c.listOut
+	if all || out == nil || sig != c.listSig || now.Sub(c.listAt) >= c.cfg.ThreadsMaxAge {
+		out = nil
+	}
+	c.mu.Unlock()
+	if out == nil {
+		var err error
+		out, err = run(ctx, 10*time.Second, c.cfg.HerdrProjects, "--root", c.cfg.Root, "list")
+		if err != nil {
+			log.Printf("list: %v", err)
+			return
+		}
+		c.mu.Lock()
+		c.listOut, c.listSig, c.listAt = out, sig, now
+		c.mu.Unlock()
 	}
 	var order []string
-	now := time.Now()
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.SplitN(line, "\t", 3)
 		if len(f) < 2 || !slugRe.MatchString(f[0]) {
@@ -420,15 +484,22 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 		if p.Name == "" {
 			p.Name = slug
 		}
+		h := fnv.New64a()
+		fmt.Fprintf(h, "%s\n%x\n%x", line, files[slug], c.panesSig(p.threads))
+		psig := h.Sum64()
 		quiet := len(counts) == 0 || (len(counts) == 1 && counts["Resolved"] > 0)
-		due := all || p.fetched.IsZero() || !quiet || now.Sub(p.fetched) >= c.cfg.QuietEvery
+		maxAge := c.cfg.ThreadsMaxAge
+		if quiet {
+			maxAge = max(maxAge, c.cfg.QuietEvery)
+		}
+		due := all || p.fetched.IsZero() || psig != p.sig || now.Sub(p.fetched) >= maxAge
 		c.mu.Unlock()
 		if !due {
 			continue
 		}
 		if len(counts) == 0 {
 			c.mu.Lock()
-			p.threads, p.fetched, p.listError = nil, now, ""
+			p.threads, p.fetched, p.listError, p.sig = nil, now, "", psig
 			c.mu.Unlock()
 			continue
 		}
@@ -441,15 +512,76 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 		p.fetched = now
 		if terr != nil {
 			p.listError = terr.Error()
+			p.sig = 0 // try again next tick
 		} else {
 			p.listError = ""
 			p.threads = rows
+			// The new rows may name new panes: hash those, so the next tick
+			// compares like with like.
+			h := fnv.New64a()
+			fmt.Fprintf(h, "%s\n%x\n%x", line, files[slug], c.panesSig(rows))
+			p.sig = h.Sum64()
 		}
 		c.mu.Unlock()
 	}
 	c.mu.Lock()
 	c.order = order
 	c.mu.Unlock()
+}
+
+// panesSig hashes what herdr-projects reads from the panes of threads (all
+// panes when threads is nil): ids, status, session and its tokens. herdr's
+// own counters and spinner titles are not decoded, so they never count.
+// Called with c.mu held.
+func (c *Collector) panesSig(threads []RawThread) uint64 {
+	h := fnv.New64a()
+	enc := json.NewEncoder(h)
+	if threads == nil {
+		ids := make([]string, 0, len(c.panes))
+		for id := range c.panes {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			enc.Encode(c.panes[id])
+		}
+		return h.Sum64()
+	}
+	for _, t := range threads {
+		if pn, ok := c.panes[t.PaneID]; ok {
+			enc.Encode(pn)
+		} else {
+			fmt.Fprintf(h, "%s gone\n", t.PaneID)
+		}
+	}
+	return h.Sum64()
+}
+
+// statSig hashes the name, size and mtime of each path and, for folders,
+// of every entry in it (one level).
+func statSig(paths ...string) uint64 {
+	h := fnv.New64a()
+	add := func(p string, fi os.FileInfo) {
+		fmt.Fprintf(h, "%s %d %d\n", p, fi.Size(), fi.ModTime().UnixNano())
+	}
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			fmt.Fprintf(h, "%s -\n", p)
+			continue
+		}
+		add(p, fi)
+		if !fi.IsDir() {
+			continue
+		}
+		ents, _ := os.ReadDir(p)
+		for _, e := range ents {
+			if fi, err := e.Info(); err == nil {
+				add(e.Name(), fi)
+			}
+		}
+	}
+	return h.Sum64()
 }
 
 // readCoordState reads the coordinator records herdr-projects keeps and
@@ -798,7 +930,7 @@ func (c *Collector) rebuild() {
 		Projects []Project `json:"projects"`
 		Threads  []Thread  `json:"threads"`
 		E        []string  `json:"errors"`
-		P        bool      `json:"p"`
+		P        bool      `json:"prs_checked"`
 	}{snap.Projects, snap.Threads, snap.Errors, snap.PRsChecked})
 	changed := !bytes.Equal(body, c.snapJSON)
 	if changed || c.snap.GeneratedAt == "" {
@@ -806,9 +938,14 @@ func (c *Collector) rebuild() {
 		snap.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		c.snap = snap
 	}
-	var payload []byte
 	if changed {
-		payload, _ = json.Marshal(c.snap)
+		// The stream's payload is body with the header fields in front: the
+		// snapshot is marshalled once, not twice.
+		head, _ := json.Marshal(struct {
+			Build       string `json:"build"`
+			GeneratedAt string `json:"generated_at"`
+		}{c.snap.Build, c.snap.GeneratedAt})
+		payload := append(append(head[:len(head)-1:len(head)-1], ','), body[1:]...)
 		for ch := range c.subs {
 			select {
 			case ch <- payload:
