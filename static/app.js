@@ -267,6 +267,10 @@
       if (hubIds.has("hub:" + t.project)) links.push({ source: "hub:" + t.project, target: id, state: t.state });
     }
     const keep = new Set(want.map((n) => n.id));
+    // Reheat the layout only when it has something new to place: a node
+    // added or gone, or one that grew or shrank. A state or title change
+    // repaints in place, so a settled graph stays still (and idle).
+    let moved = keep.size !== nodes.size || want.some((n) => !nodes.has(n.id) || Math.abs((n.placedR ?? -1) - n.r) > 0.5);
     for (const k of nodes.keys()) if (!keep.has(k)) nodes.delete(k);
     want.forEach((n) => nodes.set(n.id, n));
 
@@ -293,20 +297,25 @@
       .style("color", (d) => d.color);
     nodeSel.classed("hit", (d) => dash.hits.has(d.id));
     svg.classed("searching", dash.hits.size > 0);
-    nodeSel.select("circle.core").transition().duration(motionMs(800)).attr("r", (d) => d.r)
+    // Animate only the nodes whose size or colour changed.
+    nodeSel.filter((d) => d.drawn !== d.r + d.color).each((d) => (d.drawn = d.r + d.color))
+      .select("circle.core").transition().duration(motionMs(800)).attr("r", (d) => d.r)
       .attr("fill", (d) => (d.hub ? "#262626" : d.color)).style("stroke", (d) => (d.hub ? d.color : null));
     nodeSel.filter((d) => d.hub).select("text.count").attr("fill", (d) => d.color);
     nodeSel.select("circle.ring").attr("r", (d) => d.r);
     nodeSel.filter((d) => d.hub).select("text.count").text((d) => d.open || "");
     hlabelSel = hlabelG.selectAll("text.name").data(want.filter((d) => d.hub), (d) => d.id)
       .join((enter) => enter.append("text").attr("class", "name").attr("text-anchor", "middle"))
-      .attr("data-key", (d) => d.id).text((d) => d.p.name)
-      .each(function (d) { d.lw = this.getComputedTextLength() / 2; });
+      .attr("data-key", (d) => d.id)
+      .each(function (d) { if (this.textContent !== d.p.name || d.lw == null) { this.textContent = d.p.name; d.lw = this.getComputedTextLength() / 2; moved = true; } });
     tlabelSel = tlabelG.selectAll("text.label").data(want.filter((d) => !d.hub), (d) => d.id)
       .join((enter) => enter.append("text").attr("class", "label off").attr("text-anchor", "middle"))
-      .attr("data-key", (d) => d.id).text((d) => trunc(d.t.title, 34))
-      .each(function (d) { d.tw = this.getComputedTextLength(); });
+      .attr("data-key", (d) => d.id)
+      // Measuring text forces a layout: only for labels whose text changed.
+      .each(function (d) { const s = trunc(d.t.title, 34); if (this.textContent !== s || d.tw == null) { this.textContent = s; d.tw = this.getComputedTextLength(); } });
 
+    if (!moved) { placeLabels(); return; }
+    want.forEach((n) => (n.placedR = n.r));
     sim.nodes(want);
     sim.force("link").links(links);
     sim.alpha(Math.max(sim.alpha(), 0.25)).restart();
@@ -680,9 +689,7 @@
     selected = key;
     nodeSel.classed("selected", (d) => d.id === key);
     placeLabels();
-    clearInterval(detailTimer);
-    screenES?.close();
-    screenES = null;
+    stopFeeds();
     live = "";
     coordDetail = null;
     promptCtl = null;
@@ -705,6 +712,20 @@
       const slug = key.slice(4);
       buildCoordPanel(slug);
       loadProject(slug);
+      startFeeds(key);
+      return;
+    }
+    buildPanel(key);
+    loadDetail(key);
+    startFeeds(key);
+  }
+
+  // The open panel's feeds: its details every 10s and the screen stream.
+  // Each costs the server pane reads, so they stop while the page is hidden.
+  function startFeeds(key) {
+    stopFeeds();
+    if (isHub(key)) {
+      const slug = key.slice(4);
       detailTimer = setInterval(() => loadProject(slug), 10000);
       // Always streamed while open: the server re-identifies the pane on each
       // read, so a coordinator that starts later shows up, and none is guessed.
@@ -712,8 +733,6 @@
       screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
       return;
     }
-    buildPanel(key);
-    loadDetail(key);
     detailTimer = setInterval(() => loadDetail(key), 10000);
     const t = state.threads.find((x) => x.key === key);
     if (t && t.pane_alive && t.state !== "resolved") {
@@ -721,6 +740,11 @@
       screenES = new EventSource(tpath(key, "screen"));
       screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
     }
+  }
+  function stopFeeds() {
+    clearInterval(detailTimer);
+    screenES?.close();
+    screenES = null;
   }
 
   function buildPanel(key) {
@@ -1174,11 +1198,29 @@
     state = { ...raw, threads: raw.threads.map(effective) };
     render();
   }
+  let stream = null;
   function connect() {
-    const es = new EventSource("/api/events");
+    stream?.close();
+    const es = (stream = new EventSource("/api/events"));
     es.addEventListener("state", (e) => { $("#live").className = "live on"; const s = JSON.parse(e.data); checkBuild(s.build); apply(s); });
     es.onerror = () => { $("#live").className = "live off"; };
   }
+  // A hidden page parses and draws nothing: the stream closes (the server
+  // sends a full snapshot on reconnect) and so do the open panel's feeds.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stream?.close();
+      stream = null;
+      stopFeeds();
+      $("#live").className = "live paused";
+      return;
+    }
+    connect();
+    if (selected) {
+      isHub(selected) ? loadProject(selected.slice(4)) : loadDetail(selected);
+      startFeeds(selected);
+    }
+  });
 
   // After an install the server restarts with a new frontend: the stream
   // reconnects with a new build id. Say so, and reload once nobody is
@@ -1231,5 +1273,5 @@
   fetch("/api/config").then((r) => r.json()).then((c) => { readOnly = c.read_only; document.body.classList.toggle("ro", readOnly); }).catch(() => {});
   connect();
   // Recency drives node size; nudge it as time passes even without changes.
-  setInterval(() => { if (state.threads.length) render(); }, 60000);
+  setInterval(() => { if (state.threads.length && !document.hidden) render(); }, 60000);
 })();

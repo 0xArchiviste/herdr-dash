@@ -161,6 +161,8 @@ The unit caps CPU at 25% and memory at 256M.
 | `--herdr`, `--gh` | | `herdr`, `gh` |
 | `--claude-dir`, `--codex-dir` | | `~/.claude/projects`, `~/.codex/sessions` |
 | `--poll`, `--threads-every`, `--quiet-every`, `--gh-every` | | `5s`, 3× poll, `5m`, `10m` |
+| `--threads-max-age` | | `1m`; a project whose files and panes did not change is re-listed this often |
+| `--pprof-addr` | `HERDR_DASH_PPROF_ADDR` | off; a loopback address such as `127.0.0.1:6060` serves Go's profiler |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -181,8 +183,8 @@ The unit caps CPU at 25% and memory at 256M.
 
 | Source | Used for | Cadence |
 | --- | --- | --- |
-| `herdr-projects --root R list` | projects, counts | 15s |
-| `herdr-projects --root R thread list SLUG --json` | threads, group, activity, PR | 15s (5m for all-resolved projects) |
+| `herdr-projects --root R list` | projects, counts | 15s, only when a project's files or the panes changed (at least every 1m) |
+| `herdr-projects --root R thread list SLUG --json` | threads, group, activity, PR | 15s, only when the project's `threads/`, `.state/`, list line or thread panes changed (at least every 1m; 5m for all-resolved projects) |
 | `PROJECT.md` front matter | project name, goal, settings | with the list |
 | `herdr pane list` | live agent status, session id, coordinator "needs you" (`hp_sub`) | 5s |
 | `~/.claude/projects/*/ID.jsonl`, `~/.codex/sessions/Y/M/D/*ID.jsonl` mtime | last activity | 5s (stat only, paths cached) |
@@ -194,6 +196,9 @@ The unit caps CPU at 25% and memory at 256M.
 | `gh pr list --repo R --state all` | PRs herdr-projects has not recorded yet | 10m, only repos with such threads |
 | `threads/t-NNNN{.task,,.next}.md`, `PROJECT.md`, `TASKS.md`, `MEMORY.md` | content search | on search only (stat, re-read when the mtime changed) |
 | `memex search --non-interactive --mode lexical …` (opt-in) | content search in transcripts | on search only |
+
+A hidden page closes its stream and panel feeds and reconnects when shown
+again; the stream is gzipped for browsers that accept it.
 
 The state carries a build id (a hash of the embedded frontend). After
 `make install`, open pages see it change when the stream reconnects, show

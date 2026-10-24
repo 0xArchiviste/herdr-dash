@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"embed"
@@ -60,6 +61,7 @@ func main() {
 	flag.DurationVar(&cfg.Poll, "poll", 5*time.Second, "herdr pane list interval")
 	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
 	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
+	flag.DurationVar(&cfg.ThreadsMaxAge, "threads-max-age", time.Minute, "re-list a project at least this often even when none of its files or panes changed")
 	flag.DurationVar(&cfg.GHEvery, "gh-every", 10*time.Minute, "gh pr list interval")
 	// Off by default: `memex search` also ingests new transcripts, which can
 	// cost seconds of CPU and hundreds of MB (see README, Content search).
@@ -67,6 +69,7 @@ func main() {
 	flag.DurationVar(&cfg.MemexTimeout, "memex-timeout", 2*time.Second, "time limit of one memex search")
 	flag.IntVar(&cfg.MemexPerMin, "memex-per-min", 30, "memex searches allowed a minute")
 	sttFetch := flag.Bool("stt-fetch", false, "download and verify the local Parakeet TDT v3 model, then exit")
+	pprofAddr := flag.String("pprof-addr", env("HERDR_DASH_PPROF_ADDR", ""), "serve Go's profiler on this loopback address, e.g. 127.0.0.1:6060, $HERDR_DASH_PPROF_ADDR; default off")
 	usage := usageFlags(home)
 	flag.Parse()
 	if *sttFetch {
@@ -99,6 +102,11 @@ func main() {
 	defer stop()
 	col := NewCollector(cfg)
 	go col.Run(ctx)
+	if *pprofAddr != "" {
+		if err := servePprof(*pprofAddr); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	stt := NewSTT(cfg.STT)
 	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg, stt)), ReadHeaderTimeout: 10 * time.Second}
@@ -173,12 +181,24 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
+		// A snapshot is large and mostly repeats itself: gzip cuts it ~10x on
+		// the wire, which matters to a phone that gets one every few seconds.
+		var out io.Writer = w
+		flush := fl.Flush
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Add("Vary", "Accept-Encoding")
+			gz, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+			defer gz.Close()
+			out = gz
+			flush = func() { gz.Flush(); fl.Flush() }
+		}
 		ch := col.Subscribe()
 		defer col.Unsubscribe(ch)
 		first, _ := json.Marshal(col.Snapshot())
 		send := func(b []byte) bool {
-			_, err := io.WriteString(w, "event: state\ndata: "+string(b)+"\n\n")
-			fl.Flush()
+			_, err := io.WriteString(out, "event: state\ndata: "+string(b)+"\n\n")
+			flush()
 			return err == nil
 		}
 		if !send(first) {
@@ -195,8 +215,8 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 					return
 				}
 			case <-ping.C:
-				io.WriteString(w, ": ping\n\n")
-				fl.Flush()
+				io.WriteString(out, ": ping\n\n")
+				flush()
 			}
 		}
 	})

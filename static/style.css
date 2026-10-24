@@ -22,6 +22,7 @@ header#top { display: flex; align-items: center; gap: 14px; padding: 8px 14px; b
 .live { width: 9px; height: 9px; border-radius: 50%; background: var(--g5); display: inline-block; }
 .live.on { background: var(--bgreen);  }
 .live.off { background: var(--red); }
+.live.paused { background: var(--g5); }
 @keyframes blink { 50% { opacity: .35; } }
 .legend { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
 .legend button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px;

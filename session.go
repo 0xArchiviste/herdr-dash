@@ -4,6 +4,7 @@ package main
 // values carry a reason; configured values retain their different provenance.
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -38,7 +39,11 @@ func observed(v string) SessionValue { return SessionValue{Value: v, Source: "se
 // parseSessionEvents accepts complete JSONL records, skipping malformed records
 // and synthetic assistant messages. A model switch invalidates old capacity.
 func parseSessionEvents(r io.Reader, agent string) SessionDetails {
-	var d SessionDetails
+	return parseSessionEventsFrom(r, agent, SessionDetails{})
+}
+
+// parseSessionEventsFrom continues from d, the details of earlier records.
+func parseSessionEventsFrom(r io.Reader, agent string, d SessionDetails) SessionDetails {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -104,6 +109,8 @@ type sessionCacheEntry struct {
 	size     int64
 	modified time.Time
 	details  SessionDetails
+	offset   int64       // transcripts: bytes parsed, through the last complete line
+	file     os.FileInfo // transcripts: the file parsed, to notice a replaced one
 }
 
 func (c *Collector) sessionDetails(p Pane, agent, profile string) SessionDetails {
@@ -120,25 +127,29 @@ func (c *Collector) sessionDetails(p Pane, agent, profile string) SessionDetails
 			if st, err := os.Stat(path); err == nil {
 				hit, ok := c.sessionCache[path]
 				if !ok || hit.size != st.Size() || !hit.modified.Equal(st.ModTime()) {
+					if !ok || !os.SameFile(hit.file, st) || st.Size() < hit.offset || st.Size()-hit.offset > 4*1024*1024 {
+						hit = sessionCacheEntry{} // new, replaced, or too far behind: read afresh
+					}
 					if f, err := os.Open(path); err == nil {
-						// Bounded reads keep large transcripts off the polling hot path. Read
-						// metadata at the beginning and recent turns at the end. Drop a partial line.
-						var r io.Reader = f
-						if st.Size() > 4*1024*1024 {
-							head := parseSessionEvents(io.LimitReader(f, 64*1024), agent)
-							f.Seek(-4*1024*1024, io.SeekEnd)
-							br := bufio.NewReader(f)
-							br.ReadString('\n')
-							r = br
-							d = parseSessionEvents(r, agent)
-							if d.Provider.Value == "" {
-								d.Provider = head.Provider
-							}
-						} else {
-							d = parseSessionEvents(r, agent)
+						// Bounded reads keep large transcripts off the polling hot path: only
+						// the complete lines appended since the last read, else metadata at
+						// the beginning and recent turns at the end. A partial line waits.
+						from, details, tail := hit.offset, hit.details, false
+						if from == 0 && st.Size() > 4*1024*1024 {
+							tail = true
+							details = SessionDetails{Provider: parseSessionEvents(io.LimitReader(f, 64*1024), agent).Provider}
+							from = st.Size() - 4*1024*1024
 						}
+						f.Seek(from, io.SeekStart)
+						b, _ := io.ReadAll(io.LimitReader(f, st.Size()-from))
 						f.Close()
-						hit = sessionCacheEntry{st.Size(), st.ModTime(), d}
+						if tail {
+							i := bytes.IndexByte(b, '\n') + 1 // the first line is cut
+							b, from = b[i:], from+int64(i)
+						}
+						b = b[:bytes.LastIndexByte(b, '\n')+1]
+						details = parseSessionEventsFrom(bytes.NewReader(b), agent, details)
+						hit = sessionCacheEntry{size: st.Size(), modified: st.ModTime(), details: details, offset: from + int64(len(b)), file: st}
 						c.sessionCache[path] = hit
 					}
 				}
@@ -148,10 +159,7 @@ func (c *Collector) sessionDetails(p Pane, agent, profile string) SessionDetails
 	}
 	d.Profile = profile
 	// Only the selected, matching herdr-projects profile is a valid fallback.
-	var cfg struct {
-		Profiles map[string]struct{ Agent, Model, Effort string }
-	}
-	if b, err := os.ReadFile(c.cfg.SessionProfiles); err == nil && toml.Unmarshal(b, &cfg) == nil {
+	if cfg, ok := decoded(c, c.cfg.SessionProfiles, tomlDecode[profileConfig]); ok {
 		if pr, ok := cfg.Profiles[profile]; ok && (agent == "" || pr.Agent == agent) {
 			if agent == "" {
 				agent = pr.Agent
@@ -185,18 +193,41 @@ func (c *Collector) sessionDetails(p Pane, agent, profile string) SessionDetails
 	return d
 }
 
+// opencodeSession is the last details refreshOpencode read for a session.
+// Called with c.mu held; it never runs sqlite3 itself.
+func (c *Collector) opencodeSession(id string) SessionDetails {
+	return c.sessionCache["opencode:"+id].details
+}
+
+// refreshOpencode reads the details of each opencode pane's session at most
+// every 5 seconds, without holding c.mu: a slow sqlite3 must not stall the
+// snapshot and every request behind it.
+func (c *Collector) refreshOpencode(ctx context.Context) {
+	c.mu.Lock()
+	var ids []string
+	for _, p := range c.panes {
+		id := p.session()
+		if p.Agent == "opencode" && p.AgentSession != nil && p.AgentSession.Agent == "opencode" && id != "" && !strings.ContainsAny(id, "/\\*?[") &&
+			time.Since(c.sessionCache["opencode:"+id].modified) >= 5*time.Second {
+			ids = append(ids, id)
+		}
+	}
+	c.mu.Unlock()
+	for _, id := range ids {
+		d := c.readOpencode(ctx, id)
+		c.mu.Lock()
+		c.sessionCache["opencode:"+id] = sessionCacheEntry{modified: time.Now(), details: d}
+		c.mu.Unlock()
+	}
+}
+
 // SQLite CLI is optional. Read only the selected session's latest user and
 // assistant metadata; never expose message text, credentials, or local paths.
-func (c *Collector) opencodeSession(id string) SessionDetails {
-	key := "opencode:" + id
-	hit := c.sessionCache[key]
-	if time.Since(hit.modified) < 5*time.Second {
-		return hit.details
-	}
+func (c *Collector) readOpencode(ctx context.Context, id string) SessionDetails {
 	var d SessionDetails
 	if c.cfg.OpencodeDB != "" {
 		query := `SELECT json_object('role',json_extract(data,'$.role'),'model',json_extract(data,'$.model'),'modelID',json_extract(data,'$.modelID'),'providerID',json_extract(data,'$.providerID'),'variant',json_extract(data,'$.variant')) FROM message WHERE session_id='` + strings.ReplaceAll(id, "'", "''") + `' AND json_extract(data,'$.role') IN ('user','assistant') ORDER BY time_created DESC LIMIT 8;`
-		out, err := run(context.Background(), time.Second, "sqlite3", "-readonly", c.cfg.OpencodeDB, query)
+		out, err := run(ctx, time.Second, "sqlite3", "-readonly", c.cfg.OpencodeDB, query)
 		if err == nil {
 			for _, line := range strings.Split(string(out), "\n") {
 				var m struct {
@@ -224,7 +255,6 @@ func (c *Collector) opencodeSession(id string) SessionDetails {
 			}
 		}
 	}
-	c.sessionCache[key] = sessionCacheEntry{modified: time.Now(), details: d}
 	return d
 }
 
@@ -234,38 +264,18 @@ func (c *Collector) configuredSession(d *SessionDetails, agent string) {
 	var model, provider, effort string
 	var window int64
 	if agent == "codex" {
-		var cfg struct {
-			Model    string `toml:"model"`
-			Provider string `toml:"model_provider"`
-			Effort   string `toml:"model_reasoning_effort"`
-			Window   int64  `toml:"model_context_window"`
-		}
-		if b, err := os.ReadFile(filepath.Join(filepath.Dir(c.cfg.CodexDir), "config.toml")); err == nil && toml.Unmarshal(b, &cfg) == nil {
+		if cfg, ok := decoded(c, filepath.Join(filepath.Dir(c.cfg.CodexDir), "config.toml"), tomlDecode[codexConfig]); ok {
 			model, provider, effort, window = cfg.Model, cfg.Provider, cfg.Effort, cfg.Window
 		}
 	} else if agent == "claude" {
-		var cfg struct {
-			Model  string `json:"model"`
-			Effort string `json:"effortLevel"`
-		}
-		if b, err := os.ReadFile(filepath.Join(filepath.Dir(c.cfg.ClaudeDir), "settings.json")); err == nil && json.Unmarshal(b, &cfg) == nil {
+		if cfg, ok := decoded(c, filepath.Join(filepath.Dir(c.cfg.ClaudeDir), "settings.json"), jsonDecode[claudeSettings]); ok {
 			model, effort = cfg.Model, cfg.Effort
 		}
 	}
 	if agent == "opencode" {
-		var cfg struct {
-			Model     string `json:"model"`
-			Providers map[string]struct {
-				Models map[string]struct {
-					Limit struct {
-						Context int64 `json:"context"`
-					} `json:"limit"`
-				} `json:"models"`
-			} `json:"provider"`
-		}
 		for _, name := range []string{"opencode.jsonc", "opencode.json", "config.json"} {
-			b, err := os.ReadFile(filepath.Join(c.cfg.Usage.OpencodeConfig, name))
-			if err != nil || json.Unmarshal(jsonc(b), &cfg) != nil {
+			cfg, ok := decoded(c, filepath.Join(c.cfg.Usage.OpencodeConfig, name), func(b []byte, v *opencodeConfig) error { return json.Unmarshal(jsonc(b), v) })
+			if !ok {
 				continue
 			}
 			if p, m, ok := strings.Cut(cfg.Model, "/"); ok {
@@ -299,13 +309,84 @@ func (c *Collector) configuredSession(d *SessionDetails, agent string) {
 }
 
 func (c *Collector) projectProfile(slug, kind string) string {
-	if p := readSettings(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))[kind+"_profile"]; p != "" {
+	settings, _ := decoded(c, filepath.Join(c.cfg.Root, slug, "PROJECT.md"), func(b []byte, v *map[string]string) error {
+		*v = parseSettings(string(b))
+		return nil
+	})
+	if p := settings[kind+"_profile"]; p != "" {
 		return p
 	}
-	var cfg struct{ Defaults map[string]any }
-	if b, err := os.ReadFile(c.cfg.SessionProfiles); err == nil && toml.Unmarshal(b, &cfg) == nil {
+	if cfg, ok := decoded(c, c.cfg.SessionProfiles, tomlDecode[profileConfig]); ok {
 		profile, _ := cfg.Defaults[kind+"_profile"].(string)
 		return profile
 	}
 	return ""
+}
+
+type profileConfig struct {
+	Profiles map[string]struct{ Agent, Model, Effort string }
+	Defaults map[string]any
+}
+
+type codexConfig struct {
+	Model    string `toml:"model"`
+	Provider string `toml:"model_provider"`
+	Effort   string `toml:"model_reasoning_effort"`
+	Window   int64  `toml:"model_context_window"`
+}
+
+type claudeSettings struct {
+	Model  string `json:"model"`
+	Effort string `json:"effortLevel"`
+}
+
+type opencodeConfig struct {
+	Model     string `json:"model"`
+	Providers map[string]struct {
+		Models map[string]struct {
+			Limit struct {
+				Context int64 `json:"context"`
+			} `json:"limit"`
+		} `json:"models"`
+	} `json:"provider"`
+}
+
+func tomlDecode[T any](b []byte, v *T) error { return toml.Unmarshal(b, v) }
+func jsonDecode[T any](b []byte, v *T) error { return json.Unmarshal(b, v) }
+
+// decodedFile is a config file decoded as of its size and mtime.
+type decodedFile struct {
+	size     int64
+	modified time.Time
+	value    any
+	ok       bool
+}
+
+// decoded reads and decodes path once per change of its size or mtime: the
+// snapshot asks for the same few config files once per thread every poll.
+// Called with c.mu held.
+func decoded[T any](c *Collector, path string, decode func([]byte, *T) error) (T, bool) {
+	var zero T
+	st, err := os.Stat(path)
+	if err != nil {
+		delete(c.files, path)
+		return zero, false
+	}
+	if h, ok := c.files[path]; ok && h.size == st.Size() && h.modified.Equal(st.ModTime()) {
+		if v, ok := h.value.(T); ok || !h.ok {
+			return v, h.ok
+		}
+	}
+	h := decodedFile{size: st.Size(), modified: st.ModTime()}
+	if b, err := os.ReadFile(path); err == nil {
+		var v T
+		if decode(b, &v) == nil {
+			h.value, h.ok = v, true
+		}
+	}
+	c.files[path] = h
+	if !h.ok {
+		return zero, false
+	}
+	return h.value.(T), true
 }
