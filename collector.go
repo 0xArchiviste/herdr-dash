@@ -1220,22 +1220,40 @@ func (c *Collector) store(m map[string]screenHit, pane string, h screenHit) {
 // readPane reads the newest lines of a pane. "recent", not "visible":
 // visible is the pane's viewport, which misses the newest lines whenever
 // someone scrolled the pane up in herdr.
+// An alternate-screen agent (Codex) has no "recent" lines: then the screen
+// herdr's detection sees is all there is.
 func (c *Collector) readPane(ctx context.Context, pane string, lines int) string {
-	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", strconv.Itoa(lines))
-	if err != nil {
-		return ""
+	read := func(src string) string {
+		out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", src, "--lines", strconv.Itoa(lines))
+		if err != nil {
+			return ""
+		}
+		return stripANSI(string(out))
 	}
-	return stripANSI(string(out))
+	text := read("recent")
+	if strings.TrimSpace(text) == "" {
+		text = read("detection")
+	}
+	return text
 }
 
 // readPaneANSI is readPane keeping the escapes: the prompt parser needs
-// colours to see a highlight drawn only as a background (opencode).
+// colours to see a highlight drawn only as a background (opencode). An
+// agent on the alternate screen (Codex) has no "recent" lines at all, so a
+// blank read falls back to the screen herdr's own detection sees.
 func (c *Collector) readPaneANSI(ctx context.Context, pane string, lines int) string {
-	out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", "recent", "--lines", strconv.Itoa(lines), "--format", "ansi")
-	if err != nil {
-		return ""
+	read := func(src string) string {
+		out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", src, "--lines", strconv.Itoa(lines), "--format", "ansi")
+		if err != nil {
+			return ""
+		}
+		return strings.ReplaceAll(string(out), "\r", "")
 	}
-	return strings.ReplaceAll(string(out), "\r", "")
+	raw := read("recent")
+	if strings.TrimSpace(stripANSI(raw)) == "" {
+		raw = read("detection")
+	}
+	return raw
 }
 
 // Screen reads the newest lines of a pane, reusing a read younger than

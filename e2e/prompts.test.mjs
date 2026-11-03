@@ -18,8 +18,8 @@
 //  P6. An option that takes text has no field, sends the text before the
 //      option is picked, or a required text may be empty.
 //  P7. Multi-select toggles are taken as answers, or there is no submit.
-//  P8. The strip shows no summary, or its popover cannot answer without the
-//      panel.
+//  P8. The strip shows no summary, or its dialog window cannot answer
+//      without the panel.
 //  P9. Coordinator: keys reach a pane that is not the identified
 //      coordinator, a coordinator that is not blocked, a trust screen, or go
 //      through anything but `herdr pane send-keys` after `herdr pane get`.
@@ -133,9 +133,11 @@ test("answer API: server-side keys, sig check, text rules, refusals", async () =
   ]) assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", body)).status, code, JSON.stringify(body));
   assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", { sig: p.sig, option: 0 }, { Origin: "http://evil.example" })).status, 403);
   assert.deepEqual(log.since(m), [], "nothing sent");
-  // Keys come from the server's parse: extra fields are ignored.
+  // Keys come from the server's parse: extra fields are ignored. The stub
+  // pane keeps showing the prompt, so the answer says it did not land.
   r = await post(url, "/api/thread/alpha/t-0002/answer", { sig: p.sig, option: 3, keys: ["esc"] });
-  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.equal(r.json.code, "prompt_stuck");
   assert.deepEqual(log.since(m), [`${hp} thread keys alpha t-0002 4`]);
 
   // A text option: pick it, then type and press Enter, in that order.
@@ -143,7 +145,7 @@ test("answer API: server-side keys, sig check, text rules, refusals", async () =
   const f = await waitFor(async () => { const x = await promptOf("alpha/t-0002"); return x?.title === "Fetch" && x; });
   m = log.mark();
   r = await post(url, "/api/thread/alpha/t-0002/answer", { sig: f.sig, option: 2, text: "use curl instead" });
-  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.code, "prompt_stuck", JSON.stringify(r.json));
   assert.deepEqual(log.since(m), [`${hp} thread keys alpha t-0002 3`, `${hp} thread keys alpha t-0002 enter --text=use curl instead`]);
   // A required text may not be empty; control characters are refused.
   show("w1B:p1", "claude-other.txt");
@@ -240,14 +242,15 @@ test("panel card: text options and multi-select", async () => {
   await page.close();
 });
 
-test("strip: summary on the chip, answered from a popover without the panel", async () => {
+test("strip: summary on the chip, answered from its dialog window without the panel", async () => {
   // P8
   show("w1B:p1", "claude-bash.txt");
   const page = await open();
   const chip = page.locator('#needs .chip[data-key="alpha/t-0002"]');
   await waitFor(async () => /Permission: Bash ls -la/.test(await chip.innerText()), 6000);
+  const pop = page.locator('.hwin[data-win="prompt:alpha/t-0002"]');
+  if (await pop.count()) await pop.locator(".hw-close").click(); // opened by itself: close, then Answer reopens it
   await page.locator('#needs .chip-answer[data-key="alpha/t-0002"]').click();
-  const pop = page.locator("#prompt-pop");
   await pop.locator(".pc-opt").first().waitFor();
   assert.equal(await page.locator("#panel.open").count(), 0, "panel stays closed");
   await page.screenshot({ path: join(artifacts, "prompt-popover.png") });
@@ -255,7 +258,7 @@ test("strip: summary on the chip, answered from a popover without the panel", as
   await pop.locator(".pc-opt", { hasText: /^1\s*Yes$/ }).click();
   await waitFor(() => log.since(m).includes(`${hp} thread keys alpha t-0002 1`), 4000);
   show("w1B:p1", null);
-  await waitFor(async () => /cleared/i.test(await status(page, "#prompt-pop")), 8000);
+  await waitFor(async () => /cleared/i.test(await status(page, '.hwin[data-win="prompt:alpha/t-0002"]')), 8000);
   // The graph's tooltip names the prompt too.
   show("w1B:p1", "claude-bash.txt");
   await waitFor(async () => (await promptOf("alpha/t-0002"))?.title === "Bash command");
@@ -286,7 +289,7 @@ test("coordinator: card answered with herdr pane send-keys on the verified pane 
   const p = await waitFor(() => promptOf("hub:beta"));
   m = log.mark();
   let r = await post(url, "/api/project/beta/answer", { sig: p.sig, option: 2, text: "run it in a temp dir" });
-  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.code, "prompt_stuck", JSON.stringify(r.json));
   assert.deepEqual(log.since(m), ["herdr pane get w2Z:p1", "herdr pane send-keys w2Z:p1 3", "herdr pane send-text w2Z:p1 run it in a temp dir", "herdr pane send-keys w2Z:p1 enter"]);
   // Raw keys for a blocked coordinator, allow-listed.
   m = log.mark();
@@ -407,7 +410,7 @@ test("voice: allow / option N answer the open prompt; always allow asks first", 
   await page.close();
 });
 
-test("phone: the card and the popover fit", async () => {
+test("phone: the card fits", async () => {
   // P12
   show("w1B:p1", "claude-edit.txt");
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -427,7 +430,7 @@ test("only allow-listed commands ran; coordinator keys only on its pane", () => 
   const allowed = [
     /^herdr-projects --root \S+ (list|thread list \S+ --json|progress --pane \S+|safety show \S+)$/,
     /^herdr pane list$/,
-    /^herdr pane read \S+ --source recent --lines \d+( --format ansi)?$/,
+    /^herdr pane read \S+ --source (recent|detection) --lines \d+( --format ansi)?$/,
     /^gh pr list /,
     /^herdr-projects --root \S+ thread keys [a-z]+ t-\d{4}( (enter|esc|up|down|left|right|tab|space|backspace|y|n|\d))+( --text=.*)?$/,
     /^herdr pane get w2Z:p1$/,

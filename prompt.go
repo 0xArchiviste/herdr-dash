@@ -42,7 +42,11 @@ type Prompt struct {
 
 // pline is one screen line: its raw text (with escapes) and its plain text,
 // with an opencode box bar ("┃") taken off the front.
-type pline struct{ raw, text string }
+type pline struct {
+	raw, text string
+	bar       bool // drawn inside a bar ("│", "┃"): joins only with its kind
+	width     int  // columns of the last screen line in it (before the bar came off)
+}
 
 var (
 	oscRe      = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
@@ -54,7 +58,7 @@ var (
 	hintRe     = regexp.MustCompile(`\s+\((esc|[a-z])\)$`)
 	boxRe      = regexp.MustCompile(`^\[([ ✔✓xX×])\]\s*`)
 	ynRe       = regexp.MustCompile(`^(.*?)\s*[\[(]\s*[yY](?:es)?\s*/\s*[nN]o?\s*[\])]\s*:?\s*$`)
-	alwaysRe   = regexp.MustCompile(`(?i)don'?t ask again|always|allow all|for this session|auto mode|accept edits|auto-approve|in the future|(from|for) this project|allow this host|trust`)
+	alwaysRe   = regexp.MustCompile(`(?i)don['’]?t ask again|always|allow all|for this session|auto mode|accept edits|auto-approve|in the future|(from|for) this project|allow this host|trust`)
 	textRe     = regexp.MustCompile(`(?i)^type something|^type your own answer|^other\b`)
 	tellRe     = regexp.MustCompile(`(?i)tell \w+ what to do differently`)
 	permQRe    = regexp.MustCompile(`(?i)^(do you want|would you like|allow\b)`)
@@ -94,7 +98,9 @@ func barless(s string) string {
 func ParsePrompt(screen, agent string) *Prompt {
 	var ls []pline
 	for _, r := range strings.Split(screen, "\n") {
-		ls = append(ls, pline{raw: r, text: barless(plainLine(r))})
+		plain := plainLine(r)
+		text := barless(plain)
+		ls = append(ls, pline{raw: r, text: text, bar: text != plain && strings.TrimSpace(plain) != strings.TrimSpace(text), width: utf8.RuneCountInString(plain)})
 	}
 	for len(ls) > 0 && strings.TrimSpace(ls[len(ls)-1].text) == "" {
 		ls = ls[:len(ls)-1]
@@ -105,6 +111,7 @@ func ParsePrompt(screen, agent string) *Prompt {
 	if len(ls) > 45 {
 		ls = ls[len(ls)-45:]
 	}
+	ls = unwrap(ls)
 	var p *Prompt
 	for _, f := range []func([]pline) *Prompt{buttonPrompt, numberedPrompt, cursorPrompt, ynPrompt} {
 		if p = f(ls); p != nil {
@@ -115,8 +122,82 @@ func ParsePrompt(screen, agent string) *Prompt {
 		return nil
 	}
 	p.Harness = harness(agent, ls)
+	if p.Harness == "codex" && p.Kind == "trust" {
+		arrowKeys(p)
+	}
 	finish(p)
 	return p
+}
+
+// arrowKeys replaces digit keys with arrows from the highlighted option,
+// then Enter (no keys without a visible highlight). Codex's trust screen
+// ignores the digit of the row already highlighted.
+func arrowKeys(p *Prompt) {
+	cur := -1
+	for i, o := range p.Options {
+		if o.Current {
+			cur = i
+		}
+	}
+	for i := range p.Options {
+		p.Options[i].Keys = nil
+		if cur >= 0 {
+			p.Options[i].Keys = arrows(i-cur, "up", "down")
+		}
+	}
+}
+
+// unwrap joins the lines an agent wrapped to fit the pane back into one:
+// a line continues the one above when the first word of it would not have
+// fit there. A word split mid-way (the line above reaches the edge and the
+// halves are too long for any line) joins without a space. Menu rows, rules and blank lines never join.
+func unwrap(ls []pline) []pline {
+	w := 0
+	for _, l := range ls {
+		if sepRe.MatchString(l.text) || dashRe.MatchString(l.text) {
+			w = max(w, l.width)
+		}
+	}
+	if w == 0 {
+		for _, l := range ls {
+			w = max(w, l.width)
+		}
+	}
+	if w < 40 {
+		return ls
+	}
+	edge := w - 2 // the agents keep a column or two free on the right
+	brk := func(t string) bool {
+		s := strings.TrimSpace(t)
+		return s == "" || sepRe.MatchString(t) || dashRe.MatchString(t) || optRe.MatchString(t) || cursorRe.MatchString(t) ||
+			strings.HasPrefix(s, "$ ") || strings.TrimSpace(t) == "Submit"
+	}
+	out := make([]pline, 0, len(ls))
+	for _, l := range ls {
+		if n := len(out); n > 0 && !brk(l.text) {
+			prev := &out[n-1]
+			pt := strings.TrimSpace(prev.text)
+			word := []rune(strings.Fields(l.text)[0])
+			full := prev.width >= edge
+			// A word too long for any line is broken where the line ends: only
+			// a full line above can be its first part.
+			long := len(word) >= w-indent(l.text)-2
+			if pt != "" && !sepRe.MatchString(prev.text) && !dashRe.MatchString(prev.text) && prev.bar == l.bar &&
+				indent(l.text) >= indent(prev.text) && prev.width+1+len(word) > edge && (!long || full) {
+				// Split mid-word: the two halves are one token too long for a line.
+				pw := strings.Fields(prev.text)
+				join := " "
+				if full && len([]rune(pw[len(pw)-1]))+len(word) > w-indent(l.text)-2 {
+					join = ""
+				}
+				prev.text = strings.TrimRight(prev.text, " ") + join + strings.TrimSpace(l.text)
+				prev.width = l.width
+				continue
+			}
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func harness(agent string, ls []pline) string {
@@ -614,19 +695,36 @@ func buttonPrompt(ls []pline) *Prompt {
 	if bi < 0 {
 		return nil
 	}
-	var labels []string
-	for _, tok := range regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(ls[bi].text), -1) {
-		if buttonHint.MatchString(tok) {
-			break
+	buttons := func(i int) []string {
+		var labels []string
+		for _, tok := range regexp.MustCompile(`\s{2,}`).Split(strings.TrimSpace(ls[i].text), -1) {
+			if buttonHint.MatchString(tok) {
+				break
+			}
+			if tok != "" {
+				labels = append(labels, tok)
+			}
 		}
-		labels = append(labels, tok)
+		return labels
+	}
+	// The buttons sit on the hint row, or (newer opencode) on their own row
+	// a blank line or two above it.
+	li, labels := bi, buttons(bi)
+	for i := bi - 1; len(labels) == 0 && i >= 0 && i >= bi-3; i-- {
+		if strings.TrimSpace(ls[i].text) == "" {
+			continue
+		}
+		li, labels = i, buttons(i)
+		if len(labels) < 2 {
+			return nil
+		}
 	}
 	if len(labels) < 2 {
 		return nil
 	}
 	bgs := make([]string, len(labels))
 	for i, l := range labels {
-		bgs[i] = bgAt(ls[bi].raw, l)
+		bgs[i] = bgAt(ls[li].raw, l)
 	}
 	cur := -1
 	if h := regexp.MustCompile(`⇆|ctrl\+f`).FindString(ls[bi].text); h != "" {
@@ -636,7 +734,7 @@ func buttonPrompt(ls []pline) *Prompt {
 	// The box above: "△ Permission required" or "△ Always allow", a title
 	// line, the subject and any diff.
 	var body []string
-	for i := bi - 1; i >= 0 && i >= bi-30; i-- {
+	for i := li - 1; i >= 0 && i >= li-30; i-- {
 		t := strings.TrimSpace(ls[i].text)
 		if strings.HasPrefix(t, "△ ") {
 			body = append([]string{t}, body...)

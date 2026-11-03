@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="usage.css">
 <link rel="stylesheet" href="system.css">
 <link rel="stylesheet" href="prompts.css">
+<link rel="stylesheet" href="windows.css">
 </head>
 <body>
 <header id="top">
@@ -77,6 +78,7 @@
     <button id="dock-bottom" class="dockbtn" data-pos="bottom" aria-pressed="false" title="Dock bottom" aria-label="Dock bottom"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="1.5" y="8.5" width="13" height="5" rx="1.5"/></svg></button>
     <button id="dock-right" class="dockbtn" data-pos="right" aria-pressed="true" title="Dock right" aria-label="Dock right"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="9.5" y="2.5" width="5" height="11" rx="1.5"/></svg></button>
   </div>
+  <button id="pop-out" class="close" aria-label="Open in a window" title="Open in a window (several can be open side by side)">⧉</button>
   <button id="close" class="close" aria-label="Close">×</button>
   <div id="panel-body"></div>
 </aside>
@@ -92,7 +94,9 @@
 <div id="toasts" aria-live="polite"></div>
 <script src="d3.min.js"></script>
 <script src="scrollback.js"></script>
+<script src="windows.js"></script>
 <script src="prompts.js"></script>
+<script src="threadwin.js"></script>
 <script src="app.js"></script>
 <script src="voice.js"></script>
 <script src="search.js"></script>
