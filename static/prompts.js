@@ -1,9 +1,10 @@
 // herdr-dash prompt cards: the prompt a blocked pane shows (parsed by the
 // server, prompt.go) as a card with one button per option. A click sends
-// {sig, option, text}; the server re-reads the pane, checks the prompt is
-// still the same and presses the option's keys itself. The card then
-// watches the pane until the prompt clears (or says it did not).
-// Also: the strip's answer popover and opt-in browser notifications.
+// {pane, sig, option, text}; the server re-reads the pane, checks it still
+// shows the same prompt, presses the option's keys once and watches the
+// pane until the prompt leaves; the card says what happened.
+// Also: one dialog window per waiting agent (static/windows.js), opened by
+// itself for a new prompt, and opt-in browser notifications.
 (() => {
   "use strict";
   const $ = (s) => document.querySelector(s);
@@ -20,7 +21,8 @@
     return e;
   };
   const KIND = { permission: "Permission", question: "Question", trust: "Trust", confirm: "Confirm" };
-  const CLEAR_WAIT = 8000; // how long an answered prompt may stay before the card says so
+  const STALE_MS = 3000; // after a confirmed answer, a snapshot still showing that prompt is old
+  const AUTO_MAX = 6; // windows opened by themselves at once
 
   async function post(path, body) {
     try {
@@ -37,7 +39,10 @@
     const [slug, id] = key.split("/");
     return `/api/thread/${encodeURIComponent(slug)}/${encodeURIComponent(id)}/answer`;
   };
-  const keyCap = (o) => (o.keys.length === 1 && /^\d$/.test(o.keys[0]) ? o.keys[0] : o.submit ? "✓" : o.keys.length ? "↵" : "·");
+  // An option's cap is its shortcut number in a focused window (for Claude
+  // and Codex menus also the digit the pane takes); its title names the keys.
+  const keyCap = (o, i) => (o.submit ? "✓" : i < 9 ? String(i + 1) : "·");
+  const keysTitle = (o) => (o.keys.length ? "Presses " + o.keys.join(" ") : "");
 
   // Diff-like lines (" 1 +foo", "-bar") get colours; everything stays text.
   function codeBlock(cls, text) {
@@ -55,13 +60,18 @@
 
   // mount fills box with a card for key's prompt; update(prompt) redraws it
   // (null: no prompt). opts: { id, compact, readOnly(prompt) -> reason }.
+  // mount fills box with a card for key's prompt; update(prompt) redraws it
+  // (null: no prompt). opts: { id, compact, readOnly(prompt) -> reason,
+  // onIdle() when the card has nothing left to show }.
+  const answered = new Map(); // key -> { sig, at }: confirmed gone from the pane
+  const stale = (key, p) => { const d = answered.get(key); return !!(p && d && d.sig === p.sig && Date.now() - d.at < STALE_MS); };
   function mount(box, key, opts = {}) {
-    let cur = null, shownSig = "", wait = null, hideTimer = null;
+    let cur = null, shownSig = "", busy = false, hideTimer = null;
     const body = el("div", { class: "pc-body" });
     const status = el("div", { class: "pc-status", role: "status" });
     const card = el("section", { id: opts.id || null, class: "pcard" + (opts.compact ? " compact" : ""), hidden: "", "aria-label": "Prompt" }, body, status);
     box.replaceChildren(card);
-    const ctl = { update, answer, prompt: () => cur, key };
+    const ctl = { update, answer, prompt: () => cur, key, pick };
     live.set(key, ctl);
 
     function setStatus(kind, text) {
@@ -69,21 +79,21 @@
       status.textContent = text;
     }
     function stateSig(p) { return p ? p.sig + "|" + p.options.map((o) => `${o.current ? 1 : 0}${o.checked == null ? "" : o.checked ? "+" : "-"}`).join("") : ""; }
+    function idle() {
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => { hideTimer = null; if (!cur && !busy) { card.hidden = true; opts.onIdle?.(); } }, 2500);
+    }
 
     function update(p) {
-      if (wait) {
-        if (!p || p.sig !== wait.sig) {
-          settle("ok", p ? `Answered “${wait.label}”: the prompt cleared (a new one is up).` : `Answered “${wait.label}”: the prompt cleared ✓`);
-          if (!p) { clearTimeout(hideTimer); hideTimer = setTimeout(() => { if (!cur) card.hidden = true; }, 2500); }
-        } else if (wait.toggle) {
-          const o = p.options[wait.opt];
-          if (o && o.checked !== wait.was) settle("ok", `“${wait.label}” ${o.checked ? "checked" : "unchecked"}.`);
-        }
-      }
+      if (stale(key, p)) p = null;
+      if (p && cur && p.sig !== cur.sig && !busy) setStatus("", "");
       cur = p || null;
       if (!p) {
         shownSig = "";
-        if (!wait && !hideTimer) card.hidden = true;
+        if (!busy && !hideTimer) {
+          if (status.textContent) idle();
+          else { card.hidden = true; opts.onIdle?.(); }
+        }
         return;
       }
       clearTimeout(hideTimer);
@@ -92,11 +102,6 @@
       if (stateSig(p) === shownSig) return;
       shownSig = stateSig(p);
       render(p);
-    }
-    function settle(kind, text) {
-      clearTimeout(wait?.timer);
-      wait = null;
-      setStatus(kind, text);
     }
 
     function render(p) {
@@ -113,22 +118,23 @@
       const list = el("div", { class: "pc-opts" });
       p.options.forEach((o, i) => {
         const why = ro || (o.keys.length ? null : "The highlight is not visible here: use the keys below the screen.");
+        const dis = why || busy ? "" : null;
         if (o.text) {
-          const input = el("input", { type: "text", maxlength: "500", placeholder: o.text === "required" ? "Type your answer" : "Optional: what to do instead", "aria-label": o.label, disabled: why ? "" : null });
-          const send = el("button", { type: "button", class: "tbtn primary", text: o.text === "required" ? "Send" : "Pick", disabled: why ? "" : null, title: why || null,
+          const input = el("input", { type: "text", maxlength: "500", placeholder: o.text === "required" ? "Type your answer" : "Optional: what to do instead", "aria-label": o.label, disabled: dis });
+          const send = el("button", { type: "button", class: "tbtn primary", text: o.text === "required" ? "Send" : "Pick", disabled: dis, title: why || keysTitle(o) || null,
             onclick: () => { if (o.text === "required" && !input.value.trim()) { input.focus(); return; } answer(i, input.value.trim()); } });
           input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send.click(); } });
           list.append(el("div", { class: "pc-text" + (o.current ? " current" : ""), "data-i": i },
-            el("span", { class: "k", text: keyCap(o) }), el("span", { class: "lbl", text: o.label }), input, send));
+            el("span", { class: "k", text: keyCap(o, i) }), el("span", { class: "lbl", text: o.label }), input, send));
           return;
         }
         list.append(el("button", {
-          type: "button", "data-i": i, disabled: why ? "" : null,
+          type: "button", "data-i": i, disabled: dis,
           class: "pc-opt" + (o.always ? " always" : "") + (o.current ? " current" : "") + (o.submit ? " submit" : ""),
           "aria-pressed": o.checked == null ? null : String(o.checked),
-          title: why || (o.always ? "A lasting grant: the agent will not ask again" : o.checked != null ? "Toggle" : "Pick this option"),
+          title: why || [o.always ? "A lasting grant: the agent will not ask again." : o.checked != null ? "Toggle." : "Pick this option.", keysTitle(o)].join(" "),
           onclick: () => answer(i),
-        }, el("span", { class: "k", text: o.checked == null ? keyCap(o) : o.checked ? "☑" : "☐" }), el("span", { class: "lbl", text: o.label }),
+        }, el("span", { class: "k", text: o.checked == null ? keyCap(o, i) : o.checked ? "☑" : "☐" }), el("span", { class: "lbl", text: o.label }),
         o.always ? el("span", { class: "warn", text: "lasting" }) : null,
         o.detail ? el("span", { class: "desc", text: o.detail }) : null));
       });
@@ -137,28 +143,53 @@
       body.replaceChildren(...parts);
     }
 
-    // answer picks option i (text: for options that take it). Resolves to
-    // the POST result.
+    // pick is a shortcut: option i, a text option's field focused instead.
+    function pick(i) {
+      const o = cur?.options[i];
+      if (!o || busy) return;
+      if (o.text) { card.querySelector(`.pc-text[data-i="${i}"] input`)?.focus(); return; }
+      const b = card.querySelector(`.pc-opt[data-i="${i}"]`);
+      if (b && !b.disabled) answer(i);
+    }
+
+    // answer picks option i (text: for options that take it), once. The
+    // server says whether the prompt left the pane. Resolves to the POST result.
     async function answer(i, text = "") {
       const p = cur;
       const o = p && p.options[i];
-      if (!o) return { ok: false, data: { error: "no such option" } };
+      if (!o || busy) return { ok: false, data: { error: "no such option" } };
+      busy = true;
       card.querySelectorAll("button, input").forEach((b) => (b.disabled = true));
-      setStatus("pending", `Sending “${o.label}”…`);
-      const r = await post(answerPath(key), text ? { sig: p.sig, option: i, text } : { sig: p.sig, option: i });
+      setStatus("pending", o.checked != null ? `Toggling “${o.label}”, checking…` : `Sending “${o.label}”, checking the pane…`);
+      const req = { sig: p.sig, option: i };
+      const pane = paneOf(key);
+      if (pane) req.pane = pane;
+      if (text) req.text = text;
+      const r = await post(answerPath(key), req);
+      busy = false;
       shownSig = "";
-      if (cur) render(cur);
       if (!r.ok) {
-        setStatus("err", r.data.error || "HTTP " + r.status);
+        const code = r.data.code;
+        setStatus("err", code === "prompt_stuck" ? `Still shows the prompt after “${o.label}”: the answer did not land. Nothing was sent again; check the screen.`
+          : code === "prompt_changed" ? "The pane shows another prompt now: nothing was sent. Check it and answer again."
+          : code === "prompt_gone" ? "The prompt is gone from the pane: nothing was sent."
+          : code === "pane_changed" ? "The agent runs in another pane now: nothing was sent. Check it and answer again."
+          : r.data.error || "HTTP " + r.status);
+        if (cur) render(cur);
         return r;
       }
-      clearTimeout(wait?.timer);
-      wait = { sig: p.sig, opt: i, label: o.label, toggle: o.checked != null, was: o.checked };
-      setStatus("pending", o.checked != null ? `Toggled “${o.label}”, checking…` : `Answered “${o.label}”, checking the prompt cleared…`);
-      const w = wait;
-      w.timer = setTimeout(() => {
-        if (wait === w) settle("warn", `Still showing ${CLEAR_WAIT / 1000}s after “${o.label}”: the answer may not have registered. Check the screen.`);
-      }, CLEAR_WAIT);
+      const after = r.data.after;
+      if (after === "toggled") setStatus("ok", `“${o.label}” ${o.checked ? "unchecked" : "checked"}.`);
+      else {
+        answered.set(key, { sig: p.sig, at: Date.now() });
+        // The same prompt asked again right away arrives looking stale and
+        // the snapshot stream only sends changes: look again once it is not.
+        setTimeout(() => syncWindows(state), STALE_MS + 100);
+        setStatus("ok", after === "next" ? `Answered “${o.label}”: the prompt cleared; a new one is up.` : `Answered “${o.label}”: the prompt cleared ✓`);
+        if (cur?.sig === p.sig) cur = null;
+      }
+      if (cur) render(cur);
+      else { shownSig = ""; idle(); }
       return r;
     }
     return ctl;
@@ -170,51 +201,101 @@
     if (key.startsWith("hub:")) return st.projects.find((p) => p.slug === key.slice(4))?.coordinator?.prompt || null;
     return st.threads.find((t) => t.key === key)?.prompt || null;
   }
+  function paneOf(key) {
+    if (key.startsWith("hub:")) return state.projects.find((p) => p.slug === key.slice(4))?.coordinator?.pane_id || "";
+    return state.threads.find((t) => t.key === key)?.pane_id || "";
+  }
   const coordTrust = (key) => (p) => (key.startsWith("hub:") && p.kind === "trust" ? "Trust screens are answered in the coordinator's own pane." : null);
 
-  // ---------------------------------------------------------------- strip popover
-  const pop = el("div", { id: "prompt-pop", hidden: "", role: "dialog", "aria-label": "Answer the prompt" });
-  let popKey = null, popCtl = null;
-  function openPop(key, anchor) {
-    const st = state;
-    const t = st.threads.find((x) => x.key === key);
-    const p = key.startsWith("hub:") && st.projects.find((x) => "hub:" + x.slug === key);
-    const name = t ? `${t.key} · ${t.title}` : p ? `${p.name} · coordinator` : key;
-    const box = el("div");
-    pop.replaceChildren(
-      el("div", { class: "pp-head" }, el("span", { class: "pp-t", text: name }),
-        el("button", { type: "button", class: "tbtn", text: "Open panel", onclick: () => { closePop(); window.hd?.select(key); } }),
-        el("button", { type: "button", class: "close", "aria-label": "Close", text: "×", onclick: closePop })),
-      box);
-    popKey = key;
-    popCtl = mount(box, key, { compact: true, readOnly: coordTrust(key) });
-    popCtl.update(promptIn(st, key));
-    pop.hidden = false;
-    const r = anchor.getBoundingClientRect();
-    const w = Math.min(460, innerWidth - 16);
-    pop.style.width = w + "px";
-    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + "px";
-    pop.style.top = Math.min(r.bottom + 6, innerHeight - 120) + "px";
+  // ---------------------------------------------------------------- dialog windows
+  // One window per waiting agent ("prompt:<key>"). A new prompt opens its
+  // window by itself (unless turned off); one the user closed stays closed
+  // for that prompt. Digits pick options in the focused window.
+  const autoOn = () => { try { return localStorage.getItem("hd-win-auto") !== "0"; } catch { return true; } };
+  const dismissed = (() => { try { return new Map(Object.entries(JSON.parse(sessionStorage.getItem("hd-win-dismissed") || "{}"))); } catch { return new Map(); } })();
+  const saveDismissed = () => { try { sessionStorage.setItem("hd-win-dismissed", JSON.stringify(Object.fromEntries(dismissed))); } catch {} };
+  const wctl = new Map(); // key -> card controller in its window
+
+  function whereOf(key) {
+    const t = state.threads.find((x) => x.key === key);
+    if (t) {
+      const p = state.projects.find((x) => x.slug === t.project);
+      return { title: `${p?.name || t.project} · ${t.id} · ${t.title}`, short: t.id };
+    }
+    const p = key.startsWith("hub:") && state.projects.find((x) => "hub:" + x.slug === key);
+    return p ? { title: `${p.name} · coordinator`, short: p.name } : { title: key, short: key };
   }
-  function closePop() {
-    if (popKey && live.get(popKey) === popCtl) live.delete(popKey);
-    pop.hidden = true;
-    popKey = popCtl = null;
+
+  function openWin(key, focus = true) {
+    if (!window.HDWin) return null;
+    const id = "prompt:" + key;
+    if (HDWin.has(id)) { if (focus) HDWin.restore(id); return HDWin.get(id); }
+    const where = whereOf(key);
+    const w = HDWin.open(id, {
+      title: where.title, short: "⚠ " + where.short, cls: "prompt-win", width: 480,
+      build(body) {
+        const box = el("div");
+        const tools = el("div", { class: "pw-tools" },
+          el("button", { type: "button", class: "tbtn", text: "Chat window", title: "Open the agent's screen and chat in a window", onclick: () => window.HDThreadWin?.open(key) }),
+          el("button", { type: "button", class: "tbtn", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }));
+        body.append(box, tools);
+        const ctl = mount(box, key, { compact: true, readOnly: coordTrust(key), onIdle: () => HDWin.close(id) });
+        wctl.set(key, ctl);
+        ctl.update(promptIn(state, key));
+      },
+      onClose() {
+        const ctl = wctl.get(key);
+        wctl.delete(key);
+        if (live.get(key) === ctl) live.delete(key);
+        // Closed while the prompt shows: not again for this prompt.
+        const p = ctl?.prompt();
+        if (p) { dismissed.set(key, p.sig); saveDismissed(); }
+      },
+    });
+    w.el.addEventListener("keydown", (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (/^[1-9]$/.test(e.key)) { e.preventDefault(); wctl.get(key)?.pick(+e.key - 1); }
+    });
+    if (!focus) w.el.blur();
+    return w;
   }
-  document.addEventListener("mousedown", (e) => {
-    if (!pop.hidden && !pop.contains(e.target) && !e.target.closest?.(".chip-answer")) closePop();
+  // Digits typed with no field focused go to the front prompt window.
+  document.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || !/^[1-9]$/.test(e.key) || e.target !== document.body) return;
+    const w = window.HDWin?.active();
+    if (!w || !w.id.startsWith("prompt:")) return;
+    e.preventDefault();
+    wctl.get(w.id.slice(7))?.pick(+e.key - 1);
   });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.hidden) { e.stopImmediatePropagation(); closePop(); } }, true);
+
+  function allPrompts(st) {
+    return [
+      ...st.threads.filter((t) => t.prompt).map((t) => ({ key: t.key, p: t.prompt, where: `${t.key} · ${t.title}` })),
+      ...st.projects.filter((p) => p.coordinator?.prompt).map((p) => ({ key: "hub:" + p.slug, p: p.coordinator.prompt, where: `${p.name} coordinator` })),
+    ];
+  }
+  function syncWindows(st) {
+    if (!window.HDWin) return;
+    const now = new Map(allPrompts(st).filter((it) => !stale(it.key, it.p)).map((it) => [it.key, it.p]));
+    for (const [key, ctl] of wctl) ctl.update(now.get(key) || null);
+    for (const [key, sig] of dismissed) if (now.get(key)?.sig !== sig) dismissed.delete(key);
+    saveDismissed();
+    if (!autoOn() || document.body.classList.contains("ro")) return;
+    let opened = HDWin.list().filter((id) => id.startsWith("prompt:")).length;
+    for (const [key, p] of now) {
+      if (opened >= AUTO_MAX) break;
+      if (wctl.has(key) || dismissed.get(key) === p.sig) continue;
+      openWin(key, false);
+      opened++;
+    }
+  }
 
   // ---------------------------------------------------------------- notifications
   const seen = new Set();
   let seeded = false;
   const notifyOn = () => localStorage.getItem("hd-notify") === "1" && "Notification" in window && Notification.permission === "granted";
   function notify(st) {
-    const items = [
-      ...st.threads.filter((t) => t.prompt).map((t) => ({ key: t.key, p: t.prompt, where: `${t.key} · ${t.title}` })),
-      ...st.projects.filter((p) => p.coordinator?.prompt).map((p) => ({ key: "hub:" + p.slug, p: p.coordinator.prompt, where: `${p.name} coordinator` })),
-    ];
+    const items = allPrompts(st);
     for (const it of items) {
       const id = it.key + "|" + it.p.sig;
       if (seen.has(id)) continue;
@@ -222,7 +303,7 @@
       if (!seeded || !notifyOn()) continue;
       try {
         const n = new Notification(it.p.summary, { body: it.where, tag: id });
-        n.onclick = () => { window.focus(); window.hd?.select(it.key); };
+        n.onclick = () => { window.focus(); openWin(it.key); };
       } catch {}
     }
     seeded = true;
@@ -240,15 +321,20 @@
       }
       localStorage.setItem("hd-notify", "1");
     });
-    return el("label", { class: "row" }, el("span", { text: "Notify me of new prompts (this browser)" + (supported ? "" : " — not supported here") }), box);
+    const auto = el("input", { id: "vs-win-auto", type: "checkbox", checked: autoOn() ? "" : null });
+    auto.addEventListener("change", () => { try { localStorage.setItem("hd-win-auto", auto.checked ? "1" : "0"); } catch {} });
+    const frag = document.createDocumentFragment();
+    frag.append(el("label", { class: "row" }, el("span", { text: "Notify me of new prompts (this browser)" + (supported ? "" : " — not supported here") }), box),
+      el("label", { class: "row" }, el("span", { text: "Open a window for each new prompt" }), auto));
+    return frag;
   }
 
   // ---------------------------------------------------------------- hooks
-  // onState runs on every snapshot: the popover follows it, notifications
+  // onState runs on every snapshot: the windows follow it, notifications
   // fire for prompts not seen before.
   function onState(st) {
     state = st;
-    if (popCtl) popCtl.update(promptIn(st, popKey));
+    syncWindows(st);
     notify(st);
   }
   // answerPrompt answers through the card showing key's prompt, if any, so
@@ -258,10 +344,12 @@
     if (c && c.prompt()) return c.answer(i, text);
     const p = promptIn(state, key);
     if (!p) return { ok: false, data: { error: "no prompt" } };
-    return post(answerPath(key), text ? { sig: p.sig, option: i, text } : { sig: p.sig, option: i });
+    const req = { sig: p.sig, option: i };
+    if (paneOf(key)) req.pane = paneOf(key);
+    if (text) req.text = text;
+    return post(answerPath(key), req);
   }
   const promptFor = (key) => live.get(key)?.prompt() || promptIn(state, key);
 
-  document.body.append(pop);
-  window.HDPrompt = { mount: (box, key, opts = {}) => mount(box, key, { readOnly: coordTrust(key), ...opts }), pop: openPop, onState, settingsRow, answerPrompt, promptFor };
+  window.HDPrompt = { mount: (box, key, opts = {}) => mount(box, key, { readOnly: coordTrust(key), ...opts }), pop: (key) => openWin(key), open: openWin, onState, settingsRow, answerPrompt, promptFor };
 })();

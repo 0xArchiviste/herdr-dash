@@ -26,6 +26,9 @@ package main
 // 10. The signature changes when nothing but the highlight moved, or stays
 //     the same for a different prompt.
 // 11. The one-line summary for the strip is missing or unbounded.
+// 12. A screen at a real pane width splits a command, path or option label
+//     over lines: the parts are kept apart, glued without a space where a
+//     word was split, or a label's second line becomes its description.
 
 import (
 	"os"
@@ -35,6 +38,7 @@ import (
 
 type wantOpt struct {
 	label  string
+	detail string // "": not checked
 	keys   string // space-joined; "" = not answerable by keys
 	always bool
 	text   string
@@ -45,12 +49,13 @@ type wantOpt struct {
 
 func TestParsePrompt(t *testing.T) {
 	cases := []struct {
-		file, agent                        string
+		file, agent                      string
 		kind, harness, title, q, subject string
-		multi                              bool
-		summary                            string
-		detail                             string // substring of Detail
-		opts                               []wantOpt
+		desc                             string // "": not checked
+		multi                            bool
+		summary                          string
+		detail                           string // substring of Detail
+		opts                             []wantOpt
 	}{
 		{file: "claude-bash.txt", agent: "claude", kind: "permission", harness: "claude", title: "Bash command",
 			q: "Do you want to proceed?", subject: "ls -la /etc/hostname && wc -l notes.txt",
@@ -60,7 +65,7 @@ func TestParsePrompt(t *testing.T) {
 		{file: "claude-edit.txt", agent: "claude", kind: "permission", harness: "claude", title: "Edit file",
 			q: "Do you want to make this edit to notes.txt?", subject: "notes.txt", detail: "1 +hello world",
 			summary: "Permission: Edit notes.txt",
-			opts: []wantOpt{{label: "Yes", keys: "1", cur: true}, {label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3"}}},
+			opts:    []wantOpt{{label: "Yes", keys: "1", cur: true}, {label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3"}}},
 		{file: "claude-fetch.txt", agent: "claude", kind: "permission", harness: "claude", title: "Fetch",
 			q: "Do you want to allow Claude to fetch this content?", subject: "https://example.com/",
 			summary: "Permission: Fetch https://example.com/",
@@ -70,7 +75,7 @@ func TestParsePrompt(t *testing.T) {
 			q: "Which database should we use?", summary: "Question: Which database should we use?",
 			opts: []wantOpt{{label: "Postgres", keys: "1", cur: true}, {label: "SQLite", keys: "2"}, {label: "MySQL", keys: "3"}, {label: "Type something.", keys: "4", text: "required"}}},
 		{file: "claude-question-wrapped.txt", agent: "claude", kind: "question", harness: "claude",
-			q: "Self-test of herdr-dash prompt cards: this question will be answered automatically from the dashboard in ~10s (no need to answer). Which option?",
+			q:    "Self-test of herdr-dash prompt cards: this question will be answered automatically from the dashboard in ~10s (no need to answer). Which option?",
 			opts: []wantOpt{{label: "Self-test A", keys: "1", cur: true}, {label: "Self-test B", keys: "2"}, {label: "Type something.", keys: "3", text: "required"}}},
 		{file: "claude-other.txt", agent: "claude", kind: "question", harness: "claude", q: "Which color?",
 			opts: []wantOpt{{label: "Red", keys: "1"}, {label: "Blue", keys: "2"}, {label: "Type something.", keys: "3", text: "required", cur: true}}},
@@ -82,9 +87,38 @@ func TestParsePrompt(t *testing.T) {
 			opts: []wantOpt{{label: "Submit answers", keys: "1", cur: true}, {label: "Cancel", keys: "2"}}},
 		{file: "claude-trust.txt", agent: "claude", kind: "trust", harness: "claude", subject: "/home/dev/code/demo-app",
 			summary: "Trust folder: /home/dev/code/demo-app",
-			opts: []wantOpt{{label: "No, exit", keys: "enter", cur: true}, {label: "Yes, I trust this folder", keys: "down enter", always: true}}},
+			opts:    []wantOpt{{label: "No, exit", keys: "enter", cur: true}, {label: "Yes, I trust this folder", keys: "down enter", always: true}}},
+		// Codex's trust screen ignores the digit of the highlighted row (seen
+		// live): it is answered with arrows from the highlight, then Enter.
 		{file: "codex-trust.txt", agent: "codex", kind: "trust", harness: "codex", subject: "/home/dev/code/demo-app",
-			opts: []wantOpt{{label: "Trust and continue", keys: "1", cur: true, always: true}, {label: "Back to Agent Command Center", keys: "2"}}},
+			opts: []wantOpt{{label: "Trust and continue", keys: "enter", cur: true, always: true}, {label: "Back to Agent Command Center", keys: "down enter"}}},
+		// 12. Screens at a real pane width (76 columns): the agent wraps long
+		// commands, paths and option labels. A wrapped line is one line again
+		// (a word split mid-way joins without a space), and a label's second
+		// line is not its description.
+		{file: "claude-bash-wrapped.txt", agent: "claude", kind: "permission", harness: "claude", title: "Bash command",
+			q:       "Do you want to proceed?",
+			subject: "/opt/demo-tools/plugins/report-kit-0123456789abcdef/target/release/report-kit --root /srv/demo-projects report --percent 10 --activity 'Running command'",
+			desc:    "Report task progress\nThis command requires approval",
+			opts: []wantOpt{{label: "Yes", keys: "1", cur: true},
+				{label: "Yes, and don’t ask again for: /opt/demo-tools/plugins/report-kit-0123456789abcdef/target/release/report-kit *", keys: "2", always: true},
+				{label: "Yes, and switch to auto mode", detail: "auto mode handles these prompts for you", keys: "3", always: true}, {label: "No", keys: "4"}}},
+		{file: "claude-edit-wrapped.txt", agent: "claude", kind: "permission", harness: "claude", title: "Edit file",
+			q: "Do you want to make this edit to notes.txt?", subject: "notes.txt", detail: "2 +hello world",
+			opts: []wantOpt{{label: "Yes", keys: "1", cur: true},
+				{label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3"}}},
+		{file: "claude-trust-wrapped.txt", agent: "claude", kind: "trust", harness: "claude",
+			subject: "/srv/demo-workspaces/agents/ws-0042/pane-scratch-0123456789abcdef0123456789abcdef/demo",
+			opts:    []wantOpt{{label: "No, exit", keys: "enter", cur: true}, {label: "Yes, I trust this folder", keys: "down enter", always: true}}},
+		{file: "codex-command-wrapped.txt", agent: "codex", kind: "permission", harness: "codex", title: "Run command",
+			q: "Would you like to run the following command?", subject: "printf hi > out2.txt",
+			desc: "Allow writing hi to out2.txt? The current sandbox only permits reading files.",
+			opts: []wantOpt{{label: "Yes, proceed", keys: "1", cur: true},
+				{label: "Yes, and don't ask again for commands that start with `printf hi > out2.txt`", keys: "2", always: true},
+				{label: "No, and tell Codex what to do differently", keys: "3", text: "optional"}}},
+		{file: "codex-trust-wrapped.txt", agent: "codex", kind: "trust", harness: "codex",
+			subject: "/srv/demo-workspaces/agents/ws-0042/pane-scratch-0123456789abcdef0123456789abcdef/demo",
+			opts:    []wantOpt{{label: "Trust and continue", keys: "enter", cur: true, always: true}, {label: "Back to Agent Command Center", keys: "down enter"}}},
 		{file: "codex-command.txt", agent: "codex", kind: "permission", harness: "codex", title: "Run command",
 			q: "Would you like to run the following command?", subject: "printf 'hi\\n' > out.txt",
 			summary: "Permission: Run command printf 'hi\\n' > out.txt",
@@ -96,11 +130,15 @@ func TestParsePrompt(t *testing.T) {
 				{label: "No, and tell Codex what to do differently", keys: "3", text: "optional"}}},
 		{file: "opencode-bash.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Shell command", subject: "wc -l notes.txt",
 			summary: "Permission: Shell wc -l notes.txt",
+			opts:    []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
+		// A newer opencode draws the buttons on their own row above the key
+		// hints (seen live).
+		{file: "opencode-bash-split.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Shell command", subject: "wc -l notes.txt",
 			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
 		{file: "opencode-edit.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Edit", subject: "notes.txt", detail: "1 + hello world",
 			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
 		{file: "opencode-always.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", subject: "wc *",
-			q: "This will allow the following patterns until OpenCode is restarted",
+			q:    "This will allow the following patterns until OpenCode is restarted",
 			opts: []wantOpt{{label: "Confirm", keys: "enter", cur: true, always: true}, {label: "Cancel", keys: "right enter"}}},
 		{file: "opencode-question.ansi", agent: "opencode", kind: "question", harness: "opencode", q: "Which database would you like to use?",
 			opts: []wantOpt{{label: "Postgres", keys: "1", cur: true}, {label: "SQLite", keys: "2"}, {label: "Type your own answer", keys: "3", text: "required"}}},
@@ -133,6 +171,9 @@ func TestParsePrompt(t *testing.T) {
 			}
 			if c.subject != "" {
 				eq("subject", p.Subject, c.subject)
+			}
+			if c.desc != "" {
+				eq("desc", p.Desc, c.desc)
 			}
 			if c.summary != "" {
 				eq("summary", p.Summary, c.summary)
@@ -175,6 +216,9 @@ func TestParsePrompt(t *testing.T) {
 					t.Errorf("%s: always = %v", w.label, o.Always)
 				}
 				eq(w.label+" text", o.Text, w.text)
+				if w.detail != "" {
+					eq(w.label+" detail", o.Detail, w.detail)
+				}
 				if o.Current != w.cur {
 					t.Errorf("%s: current = %v", w.label, o.Current)
 				}

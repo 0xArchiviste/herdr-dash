@@ -283,7 +283,8 @@
         g.append("circle").attr("class", "ring");
         g.append("circle").attr("class", "core").attr("r", 0);
         g.filter((d) => d.hub).append("text").attr("class", "count").attr("text-anchor", "middle").attr("dy", "0.35em");
-        g.on("click", (e, d) => { e.stopPropagation(); d.hub ? hubClick(d) : select(d.id); })
+        // Shift+click opens the thread (or coordinator) in a floating window.
+        g.on("click", (e, d) => { e.stopPropagation(); if (e.shiftKey && window.HDThreadWin) window.HDThreadWin.open(d.id); else d.hub ? hubClick(d) : select(d.id); })
           .on("mouseenter", (e, d) => { hovered = d.id; placeLabels(); showTip(e, d); }).on("mousemove", moveTip)
           .on("mouseleave", () => { hovered = null; placeLabels(); hideTip(); })
           .call(d3.drag().on("start", dragStart).on("drag", dragged).on("end", dragEnd));
@@ -355,6 +356,7 @@
         el("div", { class: "sub", text: `${t.key} · ${t.agent || "?"} · ${ago(t.last_activity)}` }));
       if (t.prompt) tip.append(el("div", { class: "s-blocked", text: t.prompt.summary }));
     }
+    tip.append(el("div", { class: "sub hint", text: "Shift+click: open in a window" }));
     tip.hidden = false;
     moveTip(e);
   }
@@ -458,10 +460,15 @@
 
   // A chip with a prompt gets an Answer button beside it: a popover with
   // the prompt card, without opening the panel.
+  // Every chip gets a window button (the thread's chat in a floating window);
+  // one with a prompt also an Answer button (its dialog window).
   function chipWith(t, chip) {
-    if (!t.prompt || selecting || readOnly) return chip;
+    if (selecting) return chip;
+    const win = el("button", { class: "chip-win", "data-key": t.key, title: "Open in a window", "aria-label": "Open " + t.title + " in a window", text: "⧉",
+      onclick: () => window.HDThreadWin?.open(t.key) });
+    if (!t.prompt || readOnly) return el("span", { class: "chipwrap" }, chip, win);
     return el("span", { class: "chipwrap" }, chip, el("button", { class: "chip-answer", "data-key": t.key, title: "Answer: " + t.prompt.summary, text: "Answer",
-      onclick: (e) => window.HDPrompt?.pop(t.key, e.currentTarget) }));
+      onclick: () => window.HDPrompt?.pop(t.key) }), win);
   }
 
   // POST JSON to a write endpoint. Never throws: { ok, status, data }.
@@ -677,6 +684,7 @@
   // ---------------------------------------------------------------- panel
   const panel = $("#panel");
   $("#close").addEventListener("click", () => select(null));
+  $("#pop-out").addEventListener("click", () => { if (selected) window.HDThreadWin?.open(selected); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || $("#dlg").open || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     select(null);

@@ -45,7 +45,7 @@ var allowedKeys = map[string]bool{
 }
 
 // codeRe pulls the machine-readable refusal out of a herdr-projects error.
-var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box)\b`)
+var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked)\b`)
 
 type Actions struct {
 	cfg     Config
@@ -152,7 +152,11 @@ func (a *Actions) guard(h func(r *http.Request, body []byte) (any, error)) http.
 			log.Printf("action %s from %s: refused %d: %s", target, r.RemoteAddr, he.status, he.msg)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(he.status)
-			json.NewEncoder(w).Encode(actionResult{Error: he.msg})
+			res := actionResult{Error: he.msg}
+			if m := codeRe.FindStringSubmatch(he.msg); m != nil {
+				res.Code = m[1]
+			}
+			json.NewEncoder(w).Encode(res)
 		default:
 			res := failed(err)
 			log.Printf("action %s from %s: failed (%s): %v", target, r.RemoteAddr, time.Since(start).Round(time.Millisecond), err)
@@ -317,35 +321,13 @@ func (a *Actions) threadAction(r *http.Request, body []byte) (any, error) {
 		if t.PaneID == "" {
 			return nil, fail(http.StatusConflict, "%s has no pane", id)
 		}
-		steps, _, err := a.answerSteps(t.PaneID, req)
-		if err != nil {
-			return nil, err
-		}
-		if !a.bucket.take() {
-			return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
-		}
-		a.mu.Lock()
-		var outs []string
-		for i, st := range steps {
-			if i > 0 {
-				time.Sleep(400 * time.Millisecond) // let the menu open its text field
-			}
+		return a.answer(t.PaneID, req, func(st keyStep) (string, error) {
 			args := append([]string{"thread", "keys", slug, id}, st.keys...)
 			if st.text != "" {
 				args = append(args, "--text="+st.text)
 			}
-			o, err := a.hpLocked(30*time.Second, "", args...)
-			if err != nil {
-				a.mu.Unlock()
-				a.col.Burst(t.PaneID)
-				return nil, err
-			}
-			outs = append(outs, o)
-		}
-		a.mu.Unlock()
-		a.col.Burst(t.PaneID)
-		a.kickSoon()
-		out = strings.Join(outs, "\n")
+			return a.hpLocked(30*time.Second, "", args...)
+		})
 	case "next":
 		var req struct{ Line int }
 		if err := decode(body, &req); err != nil {
@@ -615,6 +597,7 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 // ---------------------------------------------------------------- prompt answers
 
 type answerReq struct {
+	Pane   string `json:"pane"` // the pane the page saw the prompt in, if it knows
 	Sig    string `json:"sig"`
 	Option int    `json:"option"`
 	Text   string `json:"text"`
@@ -632,6 +615,9 @@ type keyStep struct {
 func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, error) {
 	if req.Sig == "" || len(req.Sig) > 64 {
 		return nil, nil, fail(http.StatusBadRequest, "sig missing")
+	}
+	if req.Pane != "" && req.Pane != pane {
+		return nil, nil, httpErr{http.StatusConflict, "pane_changed: the agent runs in another pane now; check it and answer again"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
@@ -669,6 +655,86 @@ func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, e
 		steps = append(steps, keyStep{keys: []string{"enter"}, text: text})
 	}
 	return steps, p, nil
+}
+
+type answerResult struct {
+	OK     bool   `json:"ok"`
+	Output string `json:"output,omitempty"`
+	After  string `json:"after"` // cleared, next (another prompt is up), toggled (multi-select)
+	Label  string `json:"label"`
+}
+
+// answer checks the request against the pane right now and presses the
+// chosen option's keys with send.
+func (a *Actions) answer(pane string, req answerReq, send func(keyStep) (string, error)) (any, error) {
+	steps, p, err := a.answerSteps(pane, req)
+	if err != nil {
+		return nil, err
+	}
+	return a.answerChecked(pane, steps, p, req, send)
+}
+
+// answerChecked presses steps once (never again), then watches the pane
+// until the prompt is gone, replaced, or (a multi-select toggle) shows the
+// new check; a prompt still unchanged after confirmWait is an error.
+func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req answerReq, send func(keyStep) (string, error)) (any, error) {
+	if !a.bucket.take() {
+		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
+	}
+	o := p.Options[req.Option]
+	a.mu.Lock()
+	var outs []string
+	for i, st := range steps {
+		if i > 0 {
+			time.Sleep(400 * time.Millisecond) // let the menu open its text field
+		}
+		out, err := send(st)
+		if err != nil {
+			a.mu.Unlock()
+			a.col.Burst(pane)
+			return nil, err
+		}
+		outs = append(outs, out)
+	}
+	a.mu.Unlock()
+	a.col.Burst(pane)
+	after := a.confirm(pane, p, req.Option)
+	a.kickSoon()
+	log.Printf("answer pane %s: %q -> %s", pane, o.Label, after)
+	if after == "" {
+		return nil, httpErr{http.StatusConflict, fmt.Sprintf("prompt_stuck: pressed %s for “%s” but the pane still shows the same prompt after %s; check the screen (nothing was sent again)",
+			strings.Join(steps[0].keys, " "), o.Label, confirmWait)}
+	}
+	return answerResult{OK: true, Output: strings.Join(outs, "\n"), After: after, Label: o.Label}, nil
+}
+
+// confirmWait bounds how long an answer waits to see the prompt leave.
+var confirmWait = 3 * time.Second
+
+// confirm re-reads pane until the prompt p is gone ("cleared"), another
+// one is up ("next") or, for a multi-select toggle, the option's check
+// flipped ("toggled"). "" when none of that happened in confirmWait.
+func (a *Actions) confirm(pane string, p *Prompt, opt int) string {
+	agent := a.col.paneAgent(pane)
+	was := p.Options[opt].Checked
+	end := time.Now().Add(confirmWait)
+	for {
+		time.Sleep(250 * time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		q := a.col.FreshPrompt(ctx, pane, agent)
+		cancel()
+		switch {
+		case q == nil:
+			return "cleared"
+		case q.Sig != p.Sig:
+			return "next"
+		case was != nil && opt < len(q.Options) && q.Options[opt].Checked != nil && *q.Options[opt].Checked != *was:
+			return "toggled"
+		}
+		if time.Now().After(end) {
+			return ""
+		}
+	}
 }
 
 // kickSoon refreshes the snapshot now and once more shortly after, when the
@@ -748,26 +814,7 @@ func (a *Actions) coordAnswer(r *http.Request, body []byte) (any, error) {
 	if p.Kind == "trust" {
 		return nil, fail(http.StatusForbidden, "trust screens are answered in the coordinator's own pane")
 	}
-	if !a.bucket.take() {
-		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var outs []string
-	for i, st := range steps {
-		if i > 0 {
-			time.Sleep(400 * time.Millisecond)
-		}
-		o, err := a.herdrKeys(slug, co.PaneID, st)
-		if err != nil {
-			a.col.Burst(co.PaneID)
-			return nil, err
-		}
-		outs = append(outs, o)
-	}
-	a.col.Burst(co.PaneID)
-	a.kickSoon()
-	return actionResult{OK: true, Output: strings.Join(outs, "\n")}, nil
+	return a.answerChecked(co.PaneID, steps, p, req, func(st keyStep) (string, error) { return a.herdrKeys(slug, co.PaneID, st) })
 }
 
 func (a *Actions) coordKeys(r *http.Request, body []byte) (any, error) {

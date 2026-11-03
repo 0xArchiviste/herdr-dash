@@ -1,0 +1,123 @@
+// herdr-dash thread windows: a thread's (or a coordinator's) live screen,
+// prompt card and chat in a floating window (static/windows.js), so several
+// can be watched side by side next to the docked panel. Each window streams
+// its own pane screen while open and stops when closed or hidden.
+window.HDThreadWin = (() => {
+  "use strict";
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) e.append(k);
+    return e;
+  };
+  const QUICK = [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["enter", "Enter"], ["esc", "Esc"], ["up", "↑"], ["down", "↓"], ["tab", "Tab"]];
+  const enc = encodeURIComponent;
+  async function post(path, body) {
+    try {
+      const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      return { ok: r.ok && data.ok !== false, status: r.status, data };
+    } catch (e) {
+      return { ok: false, status: 0, data: { error: "network error: " + e.message } };
+    }
+  }
+
+  // paths for key: a thread "slug/id" or a coordinator "hub:slug".
+  function paths(key) {
+    if (key.startsWith("hub:")) {
+      const s = enc(key.slice(4));
+      return { screen: `/api/project/${s}/screen`, history: `/api/project/${s}/history`, keys: `/api/project/${s}/keys`, send: `/api/project/${s}/coordinator` };
+    }
+    const [slug, id] = key.split("/");
+    const b = `/api/thread/${enc(slug)}/${enc(id)}`;
+    return { screen: b + "/screen", history: b + "/history", keys: b + "/keys", send: b + "/prompt" };
+  }
+  function about(key) {
+    const st = window.hd?.state() || { threads: [], projects: [] };
+    if (key.startsWith("hub:")) {
+      const p = st.projects.find((x) => x.slug === key.slice(4));
+      return { name: p ? `${p.name} · coordinator` : key, sub: p ? `Project · ${p.slug}` : "", short: p?.name || key, live: !!p?.coordinator?.pane_id };
+    }
+    const t = st.threads.find((x) => x.key === key);
+    const p = t && st.projects.find((x) => x.slug === t.project);
+    return { name: t?.title || key, sub: t ? `${p?.name || t.project} · ${t.id} · ${t.state}` : "", short: t?.id || key, live: !!(t && t.pane_alive && t.state !== "resolved") };
+  }
+
+  function open(key) {
+    if (!window.HDWin) return null;
+    const id = "thread:" + key;
+    if (HDWin.has(id)) { HDWin.restore(id); return HDWin.get(id); }
+    const a = about(key);
+    const P = paths(key);
+    let es = null, blocked = false, ctl = null, screen = null;
+    const w = HDWin.open(id, {
+      title: (key.startsWith("hub:") ? "" : key.split("/")[1] + " · ") + a.name, short: a.short, cls: "thread-win", width: 560,
+      build(body, win) {
+        const log = el("div", { class: "tw-log" });
+        const msg = (text, kind) => { log.append(el("div", { class: "msg " + kind, text })); while (log.childElementCount > 6) log.firstElementChild.remove(); };
+        const input = el("textarea", { class: "tw-input w", rows: "2", placeholder: "Follow-up prompt… (Ctrl+Enter sends)" });
+        const send = el("button", { type: "button", class: "tbtn primary w tw-send", text: "Send" });
+        const quick = el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
+          ...QUICK.map(([k, label]) => el("button", { type: "button", class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => keys([k]) })));
+        async function keys(ks, text) {
+          const r = await post(P.keys, text ? { keys: ks, text } : { keys: ks });
+          msg(r.ok ? (text ? `Typed “${text}”, pressed ${ks.join(" ")}` : `Pressed ${ks.join(" ")}`) : r.data.error || "HTTP " + r.status, r.ok ? "ok" : "err");
+          return r;
+        }
+        async function go() {
+          const text = input.value.trim();
+          if (!text || send.disabled) return;
+          send.disabled = true;
+          try {
+            if (blocked && !key.startsWith("hub:")) { if ((await keys(["enter"], text)).ok) input.value = ""; return; }
+            msg("Sending…", "pending");
+            const r = await post(P.send, { text });
+            log.querySelector(".pending")?.remove();
+            if (r.ok) { input.value = ""; msg("Sent: " + text, "ok"); return; }
+            if (r.data.code === "prompt_unconfirmed") { input.value = ""; msg("Typed into the pane but not confirmed as started. Not resent: check the screen.", "warn"); }
+            else if (r.data.code === "agent_blocked") msg("The agent is waiting on a prompt: answer it with the card above.", "err");
+            else msg(r.data.error || "HTTP " + r.status, "err");
+          } finally { send.disabled = false; }
+        }
+        send.addEventListener("click", go);
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
+        const card = el("div", { class: "tw-prompt" });
+        screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
+        body.append(
+          el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
+            el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) })),
+          card, screen.el, quick,
+          a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." }),
+          log);
+        ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
+        const start = () => {
+          if (es || document.hidden || !(a.live || key.startsWith("hub:"))) return;
+          es = new EventSource(P.screen);
+          es.addEventListener("screen", (e) => {
+            const d = JSON.parse(e.data);
+            screen.live(d.screen);
+            blocked = d.live_status === "blocked";
+            quick.hidden = !blocked;
+            ctl?.update(blocked ? d.prompt : null);
+            input.placeholder = blocked && !key.startsWith("hub:") ? "Type an answer: typed into the prompt, then Enter" : "Follow-up prompt… (Ctrl+Enter sends)";
+          });
+        };
+        const stop = () => { es?.close(); es = null; };
+        const vis = () => (document.hidden ? stop() : start());
+        document.addEventListener("visibilitychange", vis);
+        win.stop = () => { stop(); document.removeEventListener("visibilitychange", vis); };
+        start();
+      },
+      onClose: (win) => win.stop?.(),
+    });
+    return w;
+  }
+  return { open };
+})();
