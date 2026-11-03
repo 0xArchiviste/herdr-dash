@@ -71,6 +71,7 @@ func defineServerFlags() *serverOpts {
 	flag.StringVar(&cfg.OpencodeDB, "opencode-db", filepath.Join(home, ".local/share/opencode/opencode.db"), "OpenCode session database (optional sqlite3 CLI)")
 	flag.StringVar(&cfg.ClaudeDir, "claude-dir", filepath.Join(home, ".claude/projects"), "Claude Code transcripts")
 	flag.StringVar(&cfg.CodexDir, "codex-dir", filepath.Join(home, ".codex/sessions"), "Codex sessions")
+	flag.StringVar(&cfg.Proc, "proc", env("HERDR_DASH_PROC", "/proc"), "proc filesystem for the System strip (CPU, memory, agent processes), $HERDR_DASH_PROC; \"off\" turns it off")
 	flag.DurationVar(&cfg.Poll, "poll", 5*time.Second, "herdr pane list interval")
 	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
 	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
@@ -232,15 +233,27 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 			out = gz
 			flush = func() { gz.Flush(); fl.Flush() }
 		}
-		ch := col.Subscribe()
-		defer col.Unsubscribe(ch)
+		sub := col.Subscribe()
+		defer col.Unsubscribe(sub)
 		first, _ := json.Marshal(col.Snapshot())
-		send := func(b []byte) bool {
-			_, err := io.WriteString(out, "event: state\ndata: "+string(b)+"\n\n")
+		sendEv := func(ev string, b []byte) bool {
+			_, err := io.WriteString(out, "event: "+ev+"\ndata: "+string(b)+"\n\n")
 			flush()
 			return err == nil
 		}
+		send := func(b []byte) bool { return sendEv("state", b) }
 		if !send(first) {
+			return
+		}
+		// System numbers: sample now if nobody watched lately, and again a
+		// second later so CPU shares need not wait for the next pane tick.
+		if col.sys.Stale() {
+			col.SampleSystem()
+			t := time.AfterFunc(time.Second, col.SampleSystem)
+			defer t.Stop()
+		}
+		sys, _ := json.Marshal(col.sys.Frame())
+		if !sendEv("system", sys) {
 			return
 		}
 		ping := time.NewTicker(25 * time.Second)
@@ -249,8 +262,12 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 			select {
 			case <-r.Context().Done():
 				return
-			case b := <-ch:
+			case b := <-sub.State:
 				if !send(b) {
+					return
+				}
+			case b := <-sub.System:
+				if !sendEv("system", b) {
 					return
 				}
 			case <-ping.C:
@@ -268,6 +285,15 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 	}
 	stt.register(mux)
 	NewUsage(cfg.Usage).register(mux)
+	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
+		if col.sys.Stale() {
+			col.SampleSystem()
+		}
+		writeJSON(w, col.sys.Frame())
+	})
+	mux.HandleFunc("GET /api/system/stats", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, col.sys.Stats())
+	})
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")
 		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {
