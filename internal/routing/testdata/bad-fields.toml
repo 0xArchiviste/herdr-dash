@@ -1,0 +1,37 @@
+version = 1
+colour = "blue"
+
+[usage]
+max_age_seconds = -5
+avoid_at_percent = 140
+
+[global]
+enabled = "yes"
+
+[[global.modes.coding]]
+provider = "refuseless"
+profile = "glm53"
+
+[[global.modes.coding]]
+provider = "claude"
+profile = ""
+
+[[global.modes.coding]]
+provider = "claude"
+profile = "claude"
+temperature = 1
+
+[[global.modes.coding]]
+provider = "claude"
+profile = "claude"
+
+[global.modes]
+summary = []
+
+[projects."Not A Slug"]
+enabled = true
+
+[projects.alpha.threads.t-0002]
+enabled = true
+
+[projects.alpha.threads.thread-two.modes]

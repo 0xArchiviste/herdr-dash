@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xArchiviste/herdr-dash/internal/routing"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
@@ -68,6 +69,7 @@ func defineServerFlags() *serverOpts {
 	flag.StringVar(&cfg.Herdr, "herdr", "herdr", "herdr binary")
 	flag.StringVar(&cfg.GH, "gh", "gh", "gh binary")
 	flag.StringVar(&cfg.SessionProfiles, "session-profiles", filepath.Join(home, ".config/herdr-projects/config.toml"), "herdr-projects profile config for session fallbacks")
+	flag.StringVar(&cfg.RoutingConfig, "routing-config", env("HERDR_DASH_ROUTING_CONFIG", routing.DefaultPath(os.Getenv, home)), "agent routing policy (routing.toml), $HERDR_DASH_ROUTING_CONFIG; default $XDG_CONFIG_HOME/herdr-projects/routing.toml")
 	flag.StringVar(&cfg.OpencodeDB, "opencode-db", filepath.Join(home, ".local/share/opencode/opencode.db"), "OpenCode session database (optional sqlite3 CLI)")
 	flag.StringVar(&cfg.ClaudeDir, "claude-dir", filepath.Join(home, ".claude/projects"), "Claude Code transcripts")
 	flag.StringVar(&cfg.CodexDir, "codex-dir", filepath.Join(home, ".codex/sessions"), "Codex sessions")
@@ -276,7 +278,8 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 			}
 		}
 	})
-	NewActions(cfg, col).register(mux)
+	act := NewActions(cfg, col)
+	act.register(mux)
 	NewSearcher(cfg, col).register(mux)
 	NewVoice(cfg.Voice).register(mux)
 	stt := NewSTT(cfg.STT)
@@ -284,7 +287,9 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		stt = localSTT[0]
 	}
 	stt.register(mux)
-	NewUsage(cfg.Usage).register(mux)
+	usage := NewUsage(cfg.Usage)
+	usage.register(mux)
+	NewRouting(cfg, col, usage, act).register(mux)
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		if col.sys.Stale() {
 			col.SampleSystem()

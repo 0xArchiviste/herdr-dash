@@ -122,6 +122,9 @@ type UsageSource struct {
 	Stale      bool          `json:"stale"`
 	Windows    []UsageWindow `json:"windows"`
 	Balance    *UsageBalance `json:"balance"`
+	// Metered: the provider bills per token (opencode on OpenRouter). Routing
+	// never treats such a source as a free fallback.
+	Metered bool `json:"metered,omitempty"`
 }
 
 type Usage struct {
@@ -590,12 +593,14 @@ func (c *codexUsage) read(ctx context.Context) UsageSource {
 		if !ok {
 			continue
 		}
+		// No event time: the reading's age is unknown, never "now".
 		at := time.Now()
+		var asOf *time.Time
 		if t := usageTime(ev.Timestamp); t != nil {
-			at = *t
+			at, asOf = *t, t
 		}
 		rl := ev.Payload.RateLimits
-		s := UsageSource{Status: "ok", Plan: rl.PlanType, AsOf: ptrTime(at)}
+		s := UsageSource{Status: "ok", Plan: rl.PlanType, AsOf: asOf}
 		for _, w := range []*codexWindow{rl.Primary, rl.Secondary} {
 			if w == nil || w.UsedPercent == nil {
 				continue
@@ -778,7 +783,7 @@ func (o *opencodeUsage) read(ctx context.Context) UsageSource {
 	key := o.key(id, p.Options.APIKey, cfgPath)
 	if key == "" {
 		s := unavailable("no API key found for " + name)
-		s.Plan = model
+		s.Plan, s.Metered = model, true
 		return s
 	}
 
@@ -806,6 +811,6 @@ func (o *opencodeUsage) read(ctx context.Context) UsageSource {
 		o.netAt, o.netKey = time.Now(), base
 	}
 	s := o.net
-	s.Plan = model
+	s.Plan, s.Metered = model, true
 	return s
 }
