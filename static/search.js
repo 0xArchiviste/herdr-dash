@@ -24,7 +24,7 @@
   };
 
   const input = $("#f-search"), btn = $("#search-mode"), box = $("#search-results");
-  let timer = null, ctrl = null, shown = "";
+  let timer = null, ctrl = null, shown = "", last = null;
 
   function setMode(content, boot) {
     dash.contentMode = content;
@@ -43,6 +43,7 @@
     ctrl?.abort();
     ctrl = null;
     shown = "";
+    last = null;
     box.replaceChildren();
     box.hidden = true;
     if (dash.hits?.size) { dash.hits = new Set(); dash.render?.(); }
@@ -90,10 +91,20 @@
     }
   }
 
+  // Results keep to the project focus, and follow it live.
+  document.addEventListener("hd-focus", () => {
+    if (!last || !box.childElementCount) return;
+    const hide = box.hidden;
+    show(last);
+    box.hidden = hide;
+  });
   function show(d) {
+    last = d;
     const words = d.query.split(" ").filter(Boolean);
     const groups = new Map();
+    const inFocus = dash.inFocus || (() => true);
     for (const h of d.hits) {
+      if (!inFocus(h.project)) continue;
       if (!groups.has(h.key)) groups.set(h.key, []);
       groups.get(h.key).push(h);
     }

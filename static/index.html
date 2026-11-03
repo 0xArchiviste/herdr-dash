@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="system.css">
 <link rel="stylesheet" href="prompts.css">
 <link rel="stylesheet" href="windows.css">
+<link rel="stylesheet" href="focus.css">
 </head>
 <body>
 <header id="top">
@@ -20,7 +21,16 @@
   <div class="updated" id="updated"></div>
 </header>
 <section id="filters">
-  <select id="f-project" aria-label="Project"><option value="">All projects</option></select>
+  <div id="focus-box">
+    <button id="f-project" class="fbtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="proj-picker" title="Focus projects (P)">All projects</button>
+    <div id="proj-picker" role="dialog" aria-label="Focus projects" hidden>
+      <div class="pp-head"><input id="pp-filter" type="search" placeholder="Filter projects…" aria-label="Filter projects" autocomplete="off"><button id="pp-done" class="tbtn" type="button">Done</button></div>
+      <div class="pp-acts"><button id="pp-all" class="tbtn" type="button" title="Tick every project">All</button><button id="pp-none" class="tbtn" type="button" title="Untick every project: all show">None</button><label class="pp-fade" title="Unfocused projects stay on the map, faded"><input id="pp-fade" type="checkbox"> Fade others</label></div>
+      <div id="pp-list" role="group" aria-label="Projects"></div>
+      <p id="pp-note" class="pp-note"></p>
+    </div>
+  </div>
+  <div id="focus-chips" aria-label="Focused projects" hidden></div>
   <select id="f-state" aria-label="State">
     <option value="">All states</option>
     <option value="needs">Needs you</option>

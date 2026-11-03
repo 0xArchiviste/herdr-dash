@@ -28,6 +28,8 @@
 // S12. Without /proc (macOS, Windows, --proc off) the page breaks instead of
 //      saying the system view is unavailable.
 // S13. The strip overflows the header on a phone.
+// S14. With a project focus, agents, queue or processes still list projects
+//      outside it, or the machine numbers (and Dash/voice rows) drop out.
 //
 // Artifacts: e2e/artifacts/system-*.png and system.json.
 import { test, before, after } from "node:test";
@@ -366,4 +368,27 @@ test("without /proc the strip says unavailable and the page still works", async 
       s.kill();
     }
   }
+});
+
+test("agents, queue and processes follow the project focus; the machine stays whole", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await page.goto(url + "/?focus=beta");
+  await waitFor(async () => /\d%/.test(await page.locator('#sys [data-id="cpu"]').innerText()), 10_000);
+  await page.click('#sys [data-id="agents"]');
+  await page.waitForSelector(".ssec[data-id='agents']");
+  const keys = (sel) => page.locator(sel).evaluateAll((es) => es.map((e) => e.dataset.key || e.dataset.slug));
+  const proj = (k) => k.replace(/^hub:/, "").split("/")[0];
+  await waitFor(async () => (await keys(".sproc")).length > 0);
+  for (const s of await keys(".sproj")) assert.equal(s, "beta", "agents row " + s);
+  for (const k of await keys(".squeue")) assert.equal(proj(k), "beta", "queue row " + k);
+  const procs = await page.locator(".sproc").evaluateAll((es) => es.map((e) => [e.dataset.kind, e.dataset.key]));
+  for (const [kind, k] of procs) if (kind === "thread" || kind === "coordinator") assert.equal(proj(k), "beta", "process row " + k);
+  assert.ok(procs.some(([kind]) => kind === "dash"), "Dash row kept");
+  assert.match(await page.locator(".sfocus").innerText(), /1 focused project/);
+  // Adding alpha brings its rows back, live.
+  await page.evaluate(() => window.hd.setFocus(["alpha", "beta"]));
+  await waitFor(async () => (await keys(".sproc")).includes("alpha/t-0001"), 3000);
+  await waitFor(async () => (await keys(".sproj")).includes("alpha"), 3000);
+  await page.screenshot({ path: join(artifacts, "system-focus.png") });
+  await page.close();
 });

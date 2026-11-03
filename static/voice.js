@@ -630,7 +630,7 @@
     e.dispatchEvent(new Event(ev, { bubbles: true }));
   }
   function clearFilters() {
-    setControl("#f-project", "", "change");
+    hd.setFocus?.([]);
     setControl("#f-state", "", "change");
     setControl("#f-window", "", "change");
     setControl("#f-search", "", "input");
@@ -757,6 +757,8 @@
       [fmtKey(cfg.dict), `Dictate into the chat box (${cfg.dictMode === "hold" ? "hold to talk" : "press to start/stop"})`],
       ["?", "This help (not while typing)"],
       ["D", "Dock the panel right, left or bottom, in turn (not while typing)"],
+      ["P", "Project focus: pick any number of projects, type to filter (Space ticks, O only this)"],
+      ["Ctrl/Shift+click", "A project on the map: add it to the focus or take it out"],
       ["Esc", "Close help, settings, a voice question, the focused window, or the panel"],
       ["Alt+W", "Next window (with Shift: previous)"],
       ["Alt+Shift+D", "Dock the focused window right, left, bottom, then float it again"],

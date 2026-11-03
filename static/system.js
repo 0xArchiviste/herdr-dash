@@ -48,11 +48,18 @@
   }
   const since = (iso) => (iso ? (Date.now() - Date.parse(iso)) / 1000 : 0);
   const st = () => window.dash?.state?.() || { projects: [], threads: [] };
+  // Agents, processes and the queue follow the project focus; the machine
+  // (CPU, RAM, swap) stays whole. Dash and voice belong to no project.
+  const inFocus = (slug) => !slug || !window.dash?.inFocus || window.dash.inFocus(slug);
+  const focusNote = () => {
+    const f = window.hd?.focus?.() || [];
+    return f.length && f.length < st().projects.length ? el("div", { class: "snote sfocus", text: `Agents, queue and processes: ${f.length} focused project${f.length === 1 ? "" : "s"} only.` }) : null;
+  };
 
   // ------------------------------------------------------------ derived
   function agents() {
     const s = st(), per = new Map();
-    for (const p of s.projects) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0 });
+    for (const p of s.projects) if (inFocus(p.slug)) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0 });
     const tot = { working: 0, waiting: 0, idle: 0 };
     for (const t of s.threads) {
       const p = per.get(t.project);
@@ -70,7 +77,7 @@
 
   function queue() {
     const order = { placing: 0, queued: 0, launching: 0, briefing: 0, stuck: 1, failed: 2 };
-    const rows = st().threads.filter((t) => t.launch && t.state !== "resolved")
+    const rows = st().threads.filter((t) => t.launch && t.state !== "resolved" && inFocus(t.project))
       .sort((a, b) => (order[a.launch.stage] ?? 0) - (order[b.launch.stage] ?? 0) || Date.parse(a.launch.since) - Date.parse(b.launch.since));
     let n = 0;
     for (const t of rows) t._pos = t.launch.stage === "failed" || t.launch.stage === "stuck" ? null : ++n;
@@ -209,7 +216,7 @@
 
   function procsSec() {
     const body = [el("h3", { text: "Processes" })];
-    const rows = frame?.available ? frame.procs : [];
+    const rows = frame?.available ? frame.procs.filter((p) => inFocus(p.project)) : [];
     if (!rows.length) body.push(el("div", { class: "snote", text: frame?.available ? "No agent processes." : "Unavailable." }));
     for (const p of rows) {
       const lv = level(p.cpu);
@@ -252,7 +259,7 @@
       el("div", { class: "stop" }, el("b", { text: "System" }),
         frame?.at ? el("time", { class: "snote", datetime: frame.at, text: `sampled ${new Date(frame.at).toLocaleTimeString()}` }) : null,
         el("button", { class: "close", type: "button", "aria-label": "Close system details", text: "×", onclick: close })),
-      machine(), agentsSec(), queueSec(), procsSec());
+      machine(), focusNote(), agentsSec(), queueSec(), procsSec());
     pop.querySelector(`.ssec[data-id="${focus}"]`)?.classList.add("focus");
     const r = $("#top").getBoundingClientRect();
     pop.style.top = `${Math.round(r.bottom + 4)}px`;
@@ -275,6 +282,7 @@
     renderStrip();
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.hidden) close(); });
+  document.addEventListener("hd-focus", () => { renderStrip(); renderPop(); });
   document.addEventListener("click", (e) => { if (!pop.hidden && !pop.contains(e.target) && !strip.contains(e.target)) close(); });
 
   // app.js hands over each `system` event and each new snapshot.
