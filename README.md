@@ -56,9 +56,23 @@ always through `herdr-projects` and its safety checks.
   confirmation, a card above the screen shows the question, the command,
   file and diff or URL, and one button per option, labelled with its text.
   Lasting grants ("don't ask again", "always allow") are marked but stay
-  available. A click presses that option's keys; the card then says whether
-  the prompt cleared. Claude Code, Codex and opencode screens are read;
-  anything else falls back to the quick replies.
+  available. A click presses that option's keys once, only if the pane still
+  shows that same prompt in the same pane; the server then watches the pane
+  and the card says whether the prompt cleared, or that it still shows
+  (nothing is resent). Claude Code, Codex (also on its alternate screen) and
+  opencode screens are read, including commands and labels the agent wrapped
+  over several lines; anything else falls back to the quick replies.
+- **Dialog windows**: each agent waiting on a permission or a question gets
+  its own floating window with the card, opened by itself for a new prompt
+  (⚙ → "Open a window for each new prompt" turns that off). Several can be
+  open at once; they have no backdrop, so the graph stays usable. Click to
+  bring one to front, drag it by its title bar (mouse or touch), `–`
+  minimises it to the tray at the bottom, `×` or `Esc` closes it, `Alt+W`
+  cycles through them, and digits `1`–`9` pick an option of the focused one.
+  Positions are kept per window. A thread's or coordinator's screen and chat
+  open in the same kind of window (Shift+click its node, `⧉` on its strip
+  chip or in the panel), so several can be watched side by side. On a phone
+  they are full-width sheets, one at a time, switched from the tray.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
   is blocked. Or type an answer.
 - **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
@@ -90,7 +104,8 @@ Use **Fit graph** to bring the visible projects back into view after panning or 
   the map on desktop and above it on smaller screens. Blocked or "needs you"
   coordinators show here too. A blocked item shows a short prompt summary
   ("Permission: Bash make test", "Question: Which DB?") and an *Answer*
-  button that opens the prompt card in a popover, without the panel.
+  button that opens its dialog window, without the panel; every item has a
+  `⧉` button that opens it in a window.
 - **Notifications** (opt-in, ⚙ → "Notify me of new prompts"): a browser
   notification when a new prompt appears, with its summary.
 - **Select mode**: pick several threads, then *Ack selected* or *Snooze 1
@@ -188,7 +203,7 @@ The unit caps CPU at 25% and memory at 256M.
 | `PROJECT.md` front matter | project name, goal, settings | with the list |
 | `herdr pane list` | live agent status, session id, coordinator "needs you" (`hp_sub`) | 5s |
 | `~/.claude/projects/*/ID.jsonl`, `~/.codex/sessions/Y/M/D/*ID.jsonl` mtime | last activity | 5s (stat only, paths cached) |
-| `herdr pane read PANE --source recent --lines 60 --format ansi` | the agent's screen, and the prompt card of a blocked pane | while a panel is open: 3s, 0.7s after a send; blocked panes only: 5s |
+| `herdr pane read PANE --source recent --lines 60 --format ansi` (`--source detection` when that is blank: an alternate-screen agent such as Codex) | the agent's screen, and the prompt card of a blocked pane | while a panel or window is open: 3s, 0.7s after a send; blocked panes only: 5s; after an answer, every 0.25s for up to 3s to confirm the prompt left |
 | `.state/coordinators.json`, `.state/coordinator.json` | coordinator pane (never guessed: same session, or the recorded pane still in the project folder) | with the list |
 | `herdr-projects --root R progress --pane PANE` | coordinator progress line | coordinator panel open: 10s |
 | `herdr-projects --root R safety show SLUG` | safety summary | coordinator panel open, cached 1m |
@@ -441,8 +456,11 @@ are refused, the rate limit, that nothing outside the allow-list ran, and
 that the demo names nothing real (no home paths, emails, IPs, real orgs or
 real project names). `go test` runs the prompt parser on screens taken
 from real Claude Code, Codex and opencode panes (`testdata/prompts/`);
-`e2e/prompts.test.mjs` drives the cards, the strip popover, the exact keys,
-the prompt-cleared check and the coordinator path. `e2e/voice.test.mjs` drives voice with a mocked
+`e2e/prompts.test.mjs` drives the cards, the exact keys, the prompt-cleared
+check and the coordinator path; `e2e/windows.test.mjs` drives the dialog and
+thread windows (several at once, drag, tray, Esc, Alt+W, reload, phone
+sheets) and the answer confirmation on 76-column Claude Code and Codex
+screens. `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
 token never reaches the page. `e2e/usage.test.mjs` runs the usage strip

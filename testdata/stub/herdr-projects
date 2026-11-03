@@ -19,7 +19,12 @@ case "$1 $2" in
       beta/t-0002) echo "herdr-projects: prompt_unconfirmed: the text was typed into t-0002's pane (w2B:p1) but the agent was not seen starting on it (timeout). Do not send it again" >&2; exit 1 ;;
     esac
     echo "sent to $4" ;;
-  "thread keys") echo "$4 (agent was blocked): pressed keys" ;;
+  "thread keys")
+    # STUB_SCREENS/<slug>_<id>.pane names the thread's pane (":" as "_");
+    # with <pane>.onkeys there, the pane shows that file after the keys.
+    m="${STUB_SCREENS:-/nonexistent}/$3_$4.pane"
+    if [ -f "$m" ] && [ -f "$STUB_SCREENS/$(cat "$m").onkeys" ]; then mv "$STUB_SCREENS/$(cat "$m").onkeys" "$STUB_SCREENS/$(cat "$m")"; fi
+    echo "$4 (agent was blocked): pressed keys" ;;
   "thread ack")
     [ "$3/$4" = "beta/t-0001" ] && { echo "herdr-projects: stub refuses to ack beta/t-0001" >&2; exit 1; }
     echo "$4: report acknowledged" ;;

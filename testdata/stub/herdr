@@ -3,6 +3,8 @@
 # `pane read` serves a screen whose newest lines are at the bottom;
 # `--source visible` acts like a pane someone scrolled up in herdr: it misses
 # the last lines, so only `--source recent` shows the newest output.
+# STUB_SCREENS/<pane>.alt makes the pane an alternate-screen TUI (Codex):
+# `--source recent` reads blank, `--source detection` reads the screen.
 D="$(cd "$(dirname "$0")" && pwd)"
 echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
 case "$1 $2" in
@@ -46,7 +48,9 @@ case "$1 $2" in
     }
     # A long read takes a while, so concurrent readers would overlap.
     if [ "${lines:-0}" -gt 60 ]; then sleep 0.3; fi
-    if [ "$src" = "visible" ]; then screen | head -n -9; else screen; fi | tail -n "${lines:-+1}" ;;
+    if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${pane/:/_}.alt" ] && [ "$src" != "detection" ]; then
+      printf '\n\n\n'
+    elif [ "$src" = "visible" ]; then screen | head -n -9; else screen; fi | tail -n "${lines:-+1}" ;;
   "pane get")
     # The pane's row from panes.json; STUB_SCREENS/<pane>.status overrides
     # its agent_status.
@@ -56,6 +60,11 @@ case "$1 $2" in
       row="$(printf '%s' "$row" | sed "s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$STUB_SCREENS/${3/:/_}.status")\"/")"
     fi
     printf '{"id":"cli:pane:get","result":{"pane":%s,"type":"pane_info"}}\n' "$row" ;;
-  "pane send-keys"|"pane send-text") echo "ok" ;;
+  "pane send-keys"|"pane send-text")
+    # STUB_SCREENS/<pane>.onkeys: after a key press the pane shows that file
+    # (an agent moving on); the marker is used up.
+    f="${STUB_SCREENS:-/nonexistent}/${3/:/_}"
+    if [ "$1 $2" = "pane send-keys" ] && [ -f "$f.onkeys" ]; then mv "$f.onkeys" "$f"; fi
+    echo "ok" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

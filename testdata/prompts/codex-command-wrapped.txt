@@ -1,0 +1,18 @@
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Allow writing hi to out2.txt? The current sandbox only permits
+  reading files.
+
+  $ printf hi > out2.txt
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `printf hi >
+     out2.txt` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+
