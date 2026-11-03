@@ -44,11 +44,10 @@ always through `herdr-projects` and its safety checks.
 - **Project focus** on any number of projects at once: tick them in the
   picker (**P** opens it, type to filter; All, None, Only), or Ctrl/Cmd or
   Shift+click a project on the map. Chips show the focus, × removes one;
-  nothing ticked shows everything. The graph, Needs-you strip and search
+  nothing ticked shows everything. The graph, Needs-you strip, search
   results and the System strip's agents, queue and processes follow it
-  live; unfocused projects hide, or fade with **Fade
-  others**. The focus survives reloads and lives in the URL (`?focus=a,b`)
-  for bookmarks.
+  live; unfocused projects hide, or fade with **Fade others**. The focus
+  survives reloads and lives in the URL (`?focus=a,b`) for bookmarks.
 - **Content search** finds threads by what was said or done in them, not
   just their titles (see [Content search](#content-search)).
 
