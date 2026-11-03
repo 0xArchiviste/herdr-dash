@@ -1,0 +1,63 @@
+/* Project focus: the picker button, its popover (a bottom sheet on phones),
+   the focus chips, and faded unfocused projects on the map. */
+#focus-box { position: relative; flex: none; }
+.fbtn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 220px; padding: 5px 10px; font: inherit; font-size: 14px;
+  background: var(--g1); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px; cursor: pointer; }
+.fbtn .fl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fbtn .caret { color: var(--bblack); font-size: 11px; }
+.fbtn:hover { background: var(--g2); }
+.fbtn.on { border-color: var(--byellow); }
+
+#proj-picker { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 300px; max-height: min(70vh, 520px);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--black); border: 1px solid var(--g4); border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.6); }
+#proj-picker[hidden] { display: none; }
+.pp-head { display: flex; gap: 6px; }
+#filters .pp-head input { flex: 1; min-width: 0; }
+.pp-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pp-fade { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; font-size: 13px; color: var(--white); cursor: pointer; }
+#filters .pp-fade input { min-height: 0; accent-color: var(--byellow); }
+#pp-list { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 2px; scrollbar-width: thin; }
+.prow { -webkit-tap-highlight-color: transparent; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 6px 4px 8px; border-radius: 4px; cursor: pointer; user-select: none; }
+.prow[hidden] { display: none; }
+.prow:hover, .prow:focus-visible { background: var(--g2); }
+.prow .box { flex: none; width: 16px; height: 16px; border: 1.5px solid var(--g5); border-radius: 3px; display: grid; place-items: center; }
+.prow[aria-checked="true"] .box { background: var(--byellow); border-color: var(--byellow); }
+.prow[aria-checked="true"] .box::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--hard-black); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.prow .dot, .fchip .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.prow .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .pc { color: var(--bblack); font-size: 12px; font-variant-numeric: tabular-nums; }
+.prow .ponly { flex: none; padding: 2px 8px; font-size: 12px; border-radius: 4px; background: var(--g3); color: var(--white); border: 0; cursor: pointer; opacity: 0; }
+.prow:hover .ponly, .prow:focus-within .ponly, .prow .ponly:focus-visible { opacity: 1; }
+@media (hover: none) { .prow .ponly { opacity: 1; } }
+.pp-note { margin: 0; font-size: 12px; color: var(--bblack); }
+
+#focus-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+#focus-chips[hidden] { display: none; }
+.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 2px 2px 9px; border-radius: 999px; background: var(--g2);
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); font-size: 13px; max-width: 200px; }
+.fchip .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fchip .fx { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 0; background: transparent; color: var(--white); font-size: 16px; line-height: 1; cursor: pointer; }
+.fchip .fx:hover, .fchip .fx:focus-visible { background: var(--g4); color: var(--bwhite); }
+
+/* Fade mode: unfocused projects stay on the map, quietly. Children, not the
+   node, because the node's own opacity is its enter/exit transition. */
+#graph .node.faded > * { opacity: .18; transition: opacity .3s; }
+#graph .node.faded.attn > *, #graph .node.faded .ring { animation: none; }
+#graph .link.faded { opacity: .12; }
+#graph .labels .faded { opacity: .25; }
+
+/* Phones: the picker is a bottom sheet over the page. */
+@media (max-width: 700px) {
+  #focus-box { flex: 1 1 30%; }
+  .fbtn { width: 100%; max-width: none; justify-content: space-between; }
+  #proj-picker { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: 100vw; max-height: 72dvh; z-index: 60;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); border-radius: 14px 14px 0 0; border-width: 1px 0 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.6); animation: pp-up .22s cubic-bezier(.2,.8,.2,1); }
+  body.picking::after { content: ""; position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45); }
+  .prow { min-height: 44px; }
+  .pp-head .tbtn, .pp-acts .tbtn { min-height: 40px; }
+  #focus-chips { flex-basis: 100%; }
+}
+@keyframes pp-up { from { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { #proj-picker { animation: none; } }

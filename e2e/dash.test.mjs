@@ -327,7 +327,9 @@ test("page renders graph, needs-you strip, panel and filters", async () => {
   await page.fill("#f-search", "widget");
   await waitFor(async () => (await page.locator("svg g.node.thread").count()) === 2, 3000);
   await page.fill("#f-search", "");
-  await page.selectOption("#f-project", "beta");
+  await page.click("#f-project");
+  await page.click('#proj-picker .prow[data-slug="beta"]');
+  await page.keyboard.press("Escape");
   await waitFor(async () => (await page.locator("svg g.node.thread").count()) === 3, 3000);
   assert.deepEqual(errors, []);
   await page.close();
@@ -788,7 +790,7 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   assert.equal(await page.locator("#coord-input").inputValue(), "hello", "kept for a retry");
 
   // 23: gamma has no identifiable pane.
-  await page.selectOption("#f-project", "");
+  await page.evaluate(() => window.hd.setFocus([]));
   await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:gamma"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Gamma (broken)", 3000);
   await page.waitForSelector("#p-chat .no-pane");
