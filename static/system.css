@@ -1,0 +1,96 @@
+/* System: the header strip (CPU, RAM, swap, agents, queue) and its popover.
+   Levels: ok green, warn (80%) yellow, crit (95%) red, na grey. */
+.sys { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.sys-pop[hidden] { display: none; }
+.sysc { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+  background: var(--g1); border: 1px solid var(--g3); font-size: 12px; color: var(--bwhite); white-space: nowrap; }
+.sysc:hover, .sysc:focus-visible, .sysc[aria-expanded="true"] { border-color: var(--bwhite); }
+.sysc[data-level="warn"] { border-color: #5c4610; }
+.sysc[data-level="crit"] { border-color: #6b1d19; }
+.sysc .sl { color: var(--white); }
+.sysc .sv { font-weight: 700; font-variant-numeric: tabular-nums; }
+.sysc[data-level="warn"] .sv { color: var(--byellow); }
+.sysc[data-level="crit"] .sv { color: var(--bred); }
+.sysc .sna { color: var(--bblack); }
+.sysc .sn { font-weight: 700; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 3px; }
+.sysc .sn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+[data-k="working"] { color: var(--s-working); }
+[data-k="waiting"] { color: var(--s-waiting); }
+[data-k="idle"] { color: var(--s-idle); }
+.sysc .sfail { color: var(--bred); font-weight: 700; }
+
+.sbar { width: 26px; height: 5px; border-radius: 3px; background: var(--g3); overflow: hidden; display: inline-block; flex: none; }
+.sbar i { display: block; height: 100%; transition: width .8s; background: var(--bgreen); }
+.sbar[data-level="warn"] i { background: var(--yellow); }
+.sbar[data-level="crit"] i { background: var(--red); }
+
+.sys-pop { position: fixed; right: 10px; z-index: 28; width: min(520px, calc(100vw - 20px)); max-height: calc(100dvh - 90px); overflow-y: auto;
+  background: var(--black); border: 1px solid var(--g4); border-radius: 10px; padding: 10px 12px; box-shadow: 0 8px 28px rgba(0,0,0,.55); font-size: 13px; }
+.sys-pop .stop { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.sys-pop .stop b { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--white); }
+.sys-pop .stop .close { position: static; font-size: 22px; padding: 0 4px; margin-left: auto; }
+.ssec { padding: 8px 0; border-top: 1px solid var(--g2); }
+.ssec h3 { margin: 0 0 6px; font-size: 12px; color: var(--white); font-weight: 700; }
+.ssec.focus h3 { color: var(--borange); }
+.snote { font-size: 11px; color: var(--bblack); }
+.swsl { font-size: 12px; color: var(--bcyan); margin-bottom: 6px; }
+
+.smeter { display: grid; grid-template-columns: 44px 1fr minmax(0, max-content); gap: 8px; align-items: center; margin: 4px 0; }
+.smeter .sbar { width: auto; height: 6px; }
+.smeter .sl, .sload .sl { color: var(--white); font-size: 12px; }
+.smeter .sv { font-variant-numeric: tabular-nums; font-size: 12px; }
+.smeter[data-level="warn"] .sv { color: var(--byellow); }
+.smeter[data-level="crit"] .sv { color: var(--bred); }
+.scpu { display: flex; align-items: center; gap: 8px; }
+.scpu .smeter { flex: 1; min-width: 0; }
+.spark { width: 60px; height: 18px; flex: none; }
+.spark polyline { fill: none; stroke: var(--bgreen); stroke-width: 1.4; stroke-linejoin: round; }
+[data-level="warn"] > .spark polyline { stroke: var(--yellow); }
+[data-level="crit"] > .spark polyline { stroke: var(--red); }
+.scores { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 3px 10px; margin: 4px 0 6px; }
+.score { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.score .sci { color: var(--bblack); width: 16px; text-align: right; font-variant-numeric: tabular-nums; }
+.score .scv { font-variant-numeric: tabular-nums; width: 32px; text-align: right; }
+.score[data-level="warn"] .scv { color: var(--byellow); }
+.score[data-level="crit"] .scv { color: var(--bred); }
+.sload { display: flex; align-items: baseline; gap: 8px; margin: 4px 0; }
+.sload .sv { font-variant-numeric: tabular-nums; white-space: pre; }
+.sload[data-level="warn"] .sv { color: var(--byellow); }
+.sload[data-level="crit"] .sv { color: var(--bred); }
+
+.sagent-tot { font-size: 12px; margin-bottom: 4px; }
+.sproj { display: grid; grid-template-columns: 1fr repeat(3, 26px) 48px; gap: 6px; align-items: center; padding: 2px 0; font-size: 12px; }
+.sproj .spn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sproj .sc { text-align: right; font-variant-numeric: tabular-nums; }
+.slimit { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.slimit[data-level="warn"] { color: var(--byellow); }
+.slimit[data-level="crit"] { color: var(--bred); }
+
+.sproc, .squeue { all: unset; box-sizing: border-box; display: grid; gap: 2px 8px; align-items: baseline; width: 100%; padding: 4px 6px;
+  border-radius: 6px; font-size: 12px; }
+.sproc { grid-template-columns: minmax(0, 1fr) 52px 64px; }
+.sproc .spname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sproc .spagent { grid-column: 1; grid-row: 2; color: var(--bblack); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sproc .spcpu, .sproc .sprss { text-align: right; font-variant-numeric: tabular-nums; grid-row: 1 / span 2; align-self: center; }
+.sproc .spcpu { font-weight: 700; }
+.sproc[data-level="warn"] .spcpu { color: var(--byellow); }
+.sproc[data-level="crit"] .spcpu { color: var(--bred); }
+.spproj, .sqproj { color: var(--bblack); margin-right: 6px; }
+button.sproc, .squeue { cursor: pointer; }
+button.sproc:hover, button.sproc:focus-visible, .squeue:hover, .squeue:focus-visible { background: var(--g2); }
+
+.squeue { grid-template-columns: 22px minmax(0, 1fr) max-content; }
+.squeue .spos { grid-row: 1 / span 2; font-weight: 800; color: var(--borange); text-align: right; }
+.squeue .sqt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.squeue .sprof { color: var(--bblue); font-size: 11px; text-align: right; }
+.squeue .sstage { grid-column: 2; color: var(--bblack); font-size: 11px; overflow-wrap: anywhere; }
+.squeue .swait { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; }
+.squeue[data-level="warn"] .swait { color: var(--byellow); }
+.squeue[data-level="crit"] .sstage, .squeue[data-level="crit"] .spos { color: var(--bred); }
+
+@media (max-width: 700px) {
+  .sys { order: 4; flex-basis: 100%; gap: 4px; }
+  .sysc { padding: 2px 7px; gap: 4px; }
+  .sysc .sbar { display: none; }
+  .sys-pop { left: 10px; right: 10px; width: auto; }
+}

@@ -45,6 +45,7 @@ type Config struct {
 	Voice         VoiceConfig   // optional Cloudflare Workers AI, env only
 	STT           STTConfig     // optional local speech-to-text sidecar, env only
 	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
+	Proc          string        // /proc to read machine and agent load from, "off" for none (sysstat.go)
 	PublicURL     string        // optional https://host[:port] that remote plain-http page loads go to
 	Build         string        // id of the embedded frontend; open pages reload when it changes
 }
@@ -85,6 +86,11 @@ type RawThread struct {
 	WorktreePath     string   `json:"worktree_path"`
 	Cwd              string   `json:"cwd"`
 	Repo             string   `json:"repo"`
+	// The launch: accepted, placed, agent started, brief delivered.
+	PromptPending  bool   `json:"prompt_pending"`
+	LaunchAttempts int    `json:"launch_attempts"`
+	LaunchedAt     string `json:"launched_at"`
+	BriefStuck     bool   `json:"brief_stuck"`
 }
 
 type Pane struct {
@@ -164,7 +170,10 @@ type Project struct {
 	Summary string         `json:"summary"`
 	Counts  map[string]int `json:"counts"`
 	Inbox   int            `json:"inbox"`
-	Error   string         `json:"error,omitempty"`
+	// MaxParallel is max_parallel_threads from PROJECT.md (herdr-projects
+	// warns past it; it does not hold threads back).
+	MaxParallel int    `json:"max_parallel"`
+	Error       string `json:"error,omitempty"`
 
 	Coordinator Coordinator `json:"coordinator"`
 }
@@ -182,10 +191,12 @@ type Thread struct {
 	Activity     string   `json:"activity"`
 	Percent      int      `json:"percent"`
 	Agent        string   `json:"agent"`
+	Profile      string   `json:"profile,omitempty"`
 	Kind         string   `json:"kind"`
 	PaneID       string   `json:"pane_id"`
 	TabID        string   `json:"tab_id"`
 	PaneAlive    bool     `json:"pane_alive"`
+	Launch       *Launch  `json:"launch,omitempty"`
 	Branch       string   `json:"branch"`
 	PR           string   `json:"pr"`
 	PRState      string   `json:"pr_state"`
@@ -236,7 +247,9 @@ type Collector struct {
 	transcript map[string]transcriptHit
 	snapJSON   []byte
 	snap       Snapshot
-	subs       map[chan []byte]struct{}
+	subs       map[*Sub]struct{}
+	sys        *SysMon
+	owners     map[string]paneOwner // pane id -> thread or coordinator, for sys
 	screens    map[string]screenHit
 	history    map[string]screenHit
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
@@ -269,7 +282,9 @@ func NewCollector(cfg Config) *Collector {
 		panes:        map[string]Pane{},
 		prs:          map[string]ghPR{},
 		transcript:   map[string]transcriptHit{},
-		subs:         map[chan []byte]struct{}{},
+		subs:         map[*Sub]struct{}{},
+		sys:          NewSysMon(cfg.Proc, cfg.Poll),
+		owners:       map[string]paneOwner{},
 		screens:      map[string]screenHit{},
 		history:      map[string]screenHit{},
 		paneLocks:    map[string]*sync.Mutex{},
@@ -352,6 +367,9 @@ func (c *Collector) Run(ctx context.Context) {
 			c.refreshPanes(ctx)
 			c.refreshOpencode(ctx)
 			c.refreshPrompts(ctx)
+			if c.watched() {
+				c.SampleSystem()
+			}
 		case <-threadT.C:
 			c.refreshThreads(ctx, false)
 		case <-ghT.C:
@@ -477,7 +495,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 			c.projects[slug] = p
 		}
 		p.Slug, p.Status, p.Summary, p.Counts = slug, f[1], summary, counts
-		p.Name, p.Goal = readProjectMeta(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))
+		p.Name, p.Goal, p.MaxParallel = readProjectMeta(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))
 		p.coords, p.record, p.Inbox = readCoordState(filepath.Join(c.cfg.Root, slug))
 		if p.Name == "" {
 			p.Name = slug
@@ -683,12 +701,14 @@ func (c *Collector) coordPane(slug string) (Coordinator, bool) {
 
 var nameRe = regexp.MustCompile(`(?m)^name\s*=\s*"((?:[^"\\]|\\.)*)"`)
 var goalRe = regexp.MustCompile(`(?m)^goal\s*=\s*"((?:[^"\\]|\\.)*)"`)
+var maxParRe = regexp.MustCompile(`(?m)^max_parallel_threads\s*=\s*(\d+)`)
 
-// readProjectMeta reads name and goal from the TOML front matter.
-func readProjectMeta(path string) (name, goal string) {
+// readProjectMeta reads name, goal and max_parallel_threads (herdr-projects'
+// default 10) from the TOML front matter.
+func readProjectMeta(path string) (name, goal string, maxPar int) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", ""
+		return "", "", 10
 	}
 	s := string(b)
 	if strings.HasPrefix(s, "+++") {
@@ -706,7 +726,13 @@ func readProjectMeta(path string) (name, goal string) {
 		}
 		return m[1]
 	}
-	return unq(nameRe.FindStringSubmatch(s)), unq(goalRe.FindStringSubmatch(s))
+	maxPar = 10
+	if m := maxParRe.FindStringSubmatch(s); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			maxPar = n
+		}
+	}
+	return unq(nameRe.FindStringSubmatch(s)), unq(goalRe.FindStringSubmatch(s)), maxPar
 }
 
 var ghRepoRe = regexp.MustCompile(`github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?$`)
@@ -883,7 +909,7 @@ func (c *Collector) rebuild() {
 			th := Thread{
 				Key: slug + "/" + t.ID, Project: slug, ID: t.ID, Title: t.Title,
 				State: dashState(t, live), Group: t.Group, LiveStatus: live,
-				Activity: t.Activity, Percent: t.Percent, Agent: t.Agent, Kind: t.Kind,
+				Activity: t.Activity, Percent: t.Percent, Agent: t.Agent, Profile: t.Profile, Kind: t.Kind,
 				PaneID: t.PaneID, TabID: t.TabID, PaneAlive: alive, Branch: t.Branch,
 				PR: t.PR, PRState: t.PRState, Created: t.Created, Updated: t.Updated,
 				Note: t.Note, Error: t.Error, Next: t.Next,
@@ -909,6 +935,7 @@ func (c *Collector) rebuild() {
 					th.PR, th.PRState = g.URL, g.State
 				}
 			}
+			th.Launch = launchOf(t, alive && pane.AgentStatus != "")
 			if live == "blocked" {
 				th.Prompt = c.prompts[t.PaneID]
 			}
@@ -924,6 +951,22 @@ func (c *Collector) rebuild() {
 			snap.Threads = append(snap.Threads, th)
 		}
 	}
+	// What runs in each pane, for the System strip's process rows.
+	owners := make(map[string]paneOwner, len(c.panes))
+	for id, pn := range c.panes {
+		owners[id] = paneOwner{key: "pane:" + id, kind: "pane", agent: pn.Agent}
+	}
+	for _, pr := range snap.Projects {
+		if id := pr.Coordinator.PaneID; id != "" {
+			owners[id] = paneOwner{key: "hub:" + pr.Slug, kind: "coordinator", project: pr.Slug, agent: pr.Coordinator.Agent}
+		}
+	}
+	for _, th := range snap.Threads {
+		if th.PaneID != "" && th.State != "resolved" {
+			owners[th.PaneID] = paneOwner{key: th.Key, kind: "thread", project: th.Project, thread: th.ID, agent: th.Agent}
+		}
+	}
+	c.owners = owners
 	body, _ := json.Marshal(struct {
 		Projects []Project `json:"projects"`
 		Threads  []Thread  `json:"threads"`
@@ -944,9 +987,9 @@ func (c *Collector) rebuild() {
 			GeneratedAt string `json:"generated_at"`
 		}{c.snap.Build, c.snap.GeneratedAt})
 		payload := append(append(head[:len(head)-1:len(head)-1], ','), body[1:]...)
-		for ch := range c.subs {
+		for s := range c.subs {
 			select {
-			case ch <- payload:
+			case s.State <- payload:
 			default: // slow client: it gets the next one
 			}
 		}
@@ -962,18 +1005,102 @@ func (c *Collector) Snapshot() Snapshot {
 	return s
 }
 
-func (c *Collector) Subscribe() chan []byte {
-	ch := make(chan []byte, 1)
-	c.mu.Lock()
-	c.subs[ch] = struct{}{}
-	c.mu.Unlock()
-	return ch
+// Sub is one event-stream client: snapshots, and System frames while it
+// is subscribed.
+type Sub struct {
+	State  chan []byte
+	System chan []byte
 }
 
-func (c *Collector) Unsubscribe(ch chan []byte) {
+func (c *Collector) Subscribe() *Sub {
+	s := &Sub{State: make(chan []byte, 1), System: make(chan []byte, 1)}
 	c.mu.Lock()
-	delete(c.subs, ch)
+	c.subs[s] = struct{}{}
 	c.mu.Unlock()
+	return s
+}
+
+func (c *Collector) Unsubscribe(s *Sub) {
+	c.mu.Lock()
+	delete(c.subs, s)
+	c.mu.Unlock()
+}
+
+// watched reports whether any page holds the stream open: pages close it
+// while hidden, so /proc is read only while someone can see the numbers.
+func (c *Collector) watched() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.subs) > 0
+}
+
+// SampleSystem reads /proc once and sends the frame to every stream if it
+// changed. The read runs without c.mu.
+func (c *Collector) SampleSystem() {
+	c.mu.Lock()
+	owners := c.owners
+	c.mu.Unlock()
+	b := c.sys.Sample(owners)
+	if b == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for s := range c.subs {
+		select {
+		case <-s.System: // replace an unread older frame: only the newest matters
+		default:
+		}
+		select {
+		case s.System <- b:
+		default:
+		}
+	}
+}
+
+// launchOf places a thread in herdr-projects' launch pipeline, nil once its
+// agent has the brief (or it is resolved). herdr-projects starts every
+// accepted thread at once (max_parallel_threads only warns), so the queue
+// is threads being placed, waiting for the ticker to start the agent,
+// retrying it, or failed.
+func launchOf(t RawThread, agentRunning bool) *Launch {
+	const maxAttempts = 3 // herdr-projects' MAX_LAUNCH_ATTEMPTS
+	since := t.LastStateChange
+	if since == "" {
+		since = t.Created
+	}
+	l := &Launch{Since: since, Attempt: t.LaunchAttempts, MaxAttempts: maxAttempts, Error: t.Error}
+	switch {
+	case t.Status == "starting":
+		l.Stage, l.Since = "placing", t.Created
+	case t.Status == "failed":
+		l.Stage = "failed"
+	case t.Status != "open" || !t.PromptPending:
+		return nil
+	case t.BriefStuck:
+		l.Stage = "stuck"
+	case agentRunning:
+		l.Stage = "briefing"
+	case t.LaunchAttempts >= maxAttempts:
+		l.Stage = "failed"
+		if l.Error == "" {
+			l.Error = fmt.Sprintf("agent did not start after %d tries", maxAttempts)
+		}
+	case t.LaunchAttempts > 0:
+		l.Stage = "launching"
+	default:
+		l.Stage = "queued"
+	}
+	return l
+}
+
+// Launch is where a thread is between being accepted and having its brief.
+type Launch struct {
+	Stage       string `json:"stage"` // placing, queued, launching, briefing, stuck, failed
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+	Since       string `json:"since"` // when it entered the pipeline
+	Error       string `json:"error,omitempty"`
 }
 
 // raw returns the raw thread record and whether its pane is alive.

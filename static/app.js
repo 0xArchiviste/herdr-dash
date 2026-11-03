@@ -1197,12 +1197,14 @@
   function reapply() {
     state = { ...raw, threads: raw.threads.map(effective) };
     render();
+    window.HDSystem?.state();
   }
   let stream = null;
   function connect() {
     stream?.close();
     const es = (stream = new EventSource("/api/events"));
     es.addEventListener("state", (e) => { $("#live").className = "live on"; const s = JSON.parse(e.data); checkBuild(s.build); apply(s); });
+    es.addEventListener("system", (e) => window.HDSystem?.frame(JSON.parse(e.data)));
     es.onerror = () => { $("#live").className = "live off"; };
   }
   // A hidden page parses and draws nothing: the stream closes (the server
