@@ -28,6 +28,8 @@
 //  R8. An invalid routing.toml half-loads: the panel lets you save over it,
 //      or the preview routes instead of saying invalid.
 //  R9. On a phone the window overflows sideways.
+// R10. Docked like any other window, the panel does not work (editing,
+//      moving the window off the dock), or is not back after a reload.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -395,6 +397,32 @@ test("read-only mode refuses saves but still previews (R7)", async () => {
     ro.kill();
   }
   record("read-only", true);
+});
+
+test("the panel docks, works docked, and comes back after a reload (R10)", async () => {
+  const page = await openPage();
+  await openPanel(page);
+  await page.click('.hwin[data-win="routing"] .hw-dock');
+  await page.waitForSelector('.wdock:not([hidden]) .hwin[data-win="routing"].docked');
+  const box = await page.locator('.hwin[data-win="routing"]').boundingBox();
+  const dockBox = await page.locator('.wdock:has(.hwin[data-win="routing"])').boundingBox();
+  assert.ok(box.x >= dockBox.x - 1 && box.x + box.width <= dockBox.x + dockBox.width + 1, "panel stays inside its dock");
+  const before = await order(page, "coding");
+  await page.click(`.rt-mode[data-mode="coding"] .rt-card[data-profile="${before[1]}"] .rt-up`);
+  assert.deepEqual(await order(page, "coding"), [before[1], before[0]]);
+  await page.click("#rt-discard");
+  assert.deepEqual(await order(page, "coding"), before);
+  await page.screenshot({ path: join(artifacts, "routing-docked.png") });
+  await page.reload();
+  await page.waitForSelector('.wdock:not([hidden]) .hwin[data-win="routing"].docked .rt-mode[data-mode="coding"] .rt-card');
+  assert.deepEqual(await order(page, "coding"), before);
+  // Float it again; then close it so other tests start without it.
+  await page.click('.wdock:has(.hwin[data-win="routing"]) .wd-float');
+  await page.waitForSelector('.hwin[data-win="routing"]:not(.docked)');
+  await page.click('.hwin[data-win="routing"] .hw-close');
+  assert.deepEqual(page.errors, []);
+  record("docked", true);
+  await page.close();
 });
 
 test("phone: the window fits the screen (R9)", async () => {

@@ -78,8 +78,17 @@ always through `herdr-projects` and its safety checks.
   cycles through them, and digits `1`–`9` pick an option of the focused one.
   Positions are kept per window. A thread's or coordinator's screen and chat
   open in the same kind of window (Shift+click its node, `⧉` on its strip
-  chip or in the panel), so several can be watched side by side. On a phone
-  they are full-width sheets, one at a time, switched from the tray.
+  chip or in the panel), so several can be watched side by side; they come
+  back after a reload, and the three front-most stream their screens.
+- **Tray and docks**: the tray takes any number of windows (it wraps; `+N`
+  lists the rest); drag its buttons to reorder them and its `⠿` grip to move
+  it to another edge or corner. Windows dock right, left or bottom: drag one
+  onto an edge, press its `⇥` button or `Alt+Shift+D` (right → left → bottom
+  → floating). A dock holds any number, as tabs or a resizable split; drag a
+  tab or pane to reorder it, out to float it, or into another dock;
+  `Alt+]` / `Alt+[` step through tabs. Order, docks and the tray's place are
+  kept across reloads. On a phone windows are full-width sheets, one at a
+  time; docked ones are tabs of one sheet.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
   is blocked. Or type an answer.
 - **Chat**: send a follow-up prompt. **Next**: forward one of the thread's

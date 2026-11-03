@@ -466,7 +466,7 @@
 
   async function openWin() {
     const existed = HDWin.has("routing");
-    win = HDWin.open("routing", { title: "Agent routing", short: "Routing", cls: "rt-win", width: 620,
+    win = HDWin.open("routing", { title: "Agent routing", short: "Routing", cls: "rt-win", width: 620, persist: true,
       build: (body) => body.append(el("p", { class: "rt-hint", text: "Loading…" })),
       onClose: () => { win = null; } });
     if (existed && st) return;
@@ -488,7 +488,7 @@
   // A tall window opened low would hang off the screen: lift it to fit.
   function fit() {
     const w = HDWin.get("routing");
-    if (!w || innerWidth <= 700) return;
+    if (!w || w.dock || innerWidth <= 700) return;
     const r = w.el.getBoundingClientRect();
     if (r.bottom <= innerHeight - 8) return;
     w.y = Math.max(8, Math.round(innerHeight - 8 - r.height));
@@ -496,4 +496,6 @@
   }
 
   window.HDRouting = { open: openWin };
+  // Open (floating or docked) at the last visit: open again, in place.
+  if (window.HDWin?.saved?.().includes("routing")) openWin();
 })();
