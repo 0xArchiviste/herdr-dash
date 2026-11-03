@@ -43,7 +43,7 @@
 .smeter[data-level="crit"] .sv { color: var(--bred); }
 .scpu { display: flex; align-items: center; gap: 8px; }
 .scpu .smeter { flex: 1; min-width: 0; }
-.spark { width: 60px; height: 18px; flex: none; }
+.spark { width: 60px; height: 18px; flex: none; background: var(--g1); border-radius: 3px; }
 .spark polyline { fill: none; stroke: var(--bgreen); stroke-width: 1.4; stroke-linejoin: round; }
 [data-level="warn"] > .spark polyline { stroke: var(--yellow); }
 [data-level="crit"] > .spark polyline { stroke: var(--red); }

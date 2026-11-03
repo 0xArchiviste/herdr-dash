@@ -186,6 +186,7 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--poll`, `--threads-every`, `--quiet-every`, `--gh-every` | | `5s`, 3× poll, `5m`, `10m` |
 | `--threads-max-age` | | `1m`; a project whose files and panes did not change is re-listed this often |
 | `--pprof-addr` | `HERDR_DASH_PPROF_ADDR` | off; a loopback address such as `127.0.0.1:6060` serves Go's profiler |
+| `--proc` | `HERDR_DASH_PROC` | `/proc`; `off` hides machine and process numbers (see [System](#system)) |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -392,6 +393,35 @@ the provider's own endpoint, never to the page or the log. Paths:
 `--opencode-data` (each with a `HERDR_DASH_*` env), defaulting to
 `$CLAUDE_CONFIG_DIR` / `~/.claude`, `~/.codex/sessions` and opencode's XDG
 directories.
+
+## System
+
+Next to the usage strip, a second strip shows the machine and the herd
+(`static/system.js`, `sysstat.go`): CPU, RAM and swap, active agents
+(working, waiting on you, idle) and the launch queue. It turns amber at 80%
+and red at 95% (of a core, of RAM, or of a project's
+`max_parallel_threads`). Click it for per-core sparklines, load average,
+each project's open threads against its limit, the CPU and RSS of every
+pane's processes heaviest first, and the queue in order with project,
+profile and wait time. Clicking a process or queue row opens its thread.
+
+- **Machine**: `/proc/stat`, `/proc/meminfo`, `/proc/loadavg`. On WSL these
+  are the WSL VM's numbers, and the page says so.
+- **Processes**: a process belongs to a pane when its environment carries
+  herdr's `HERDR_PANE_ID`. The pane maps to its thread or coordinator.
+  Dash marks its own children (`HERDR_DASH_ROLE`), so the Dash service and
+  the voice sidecar get rows of their own. Each environment is read once.
+  After that, every sample reads one `stat` file per pane process.
+- **Queue**: threads `herdr-projects thread list` already reports as
+  starting, waiting for the ticker to start the agent (`prompt_pending`),
+  retrying (`launch_attempts`), stuck or failed. No extra calls.
+  herdr-projects starts accepted threads at once; `max_parallel_threads`
+  only warns, so the queue shows launches, not slot waits.
+
+Samples ride the collector's pane tick (`--poll`) and run only while some
+page holds the event stream open. Pages close it while hidden. A frame goes
+out only when it changed. Without `/proc` (macOS, Windows) or with `--proc off`,
+the strip says the numbers are unavailable; agents and the queue still show.
 
 ## Content search
 

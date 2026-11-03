@@ -98,6 +98,7 @@ type SysMon struct {
 	wsl   bool
 
 	mu       sync.Mutex
+	buf      [1024]byte // stat reads, under mu
 	procs    map[int]*procEntry
 	cpu      []cpuTimes // [0] all, then each core
 	cpuAt    time.Time
@@ -269,24 +270,42 @@ func (m *SysMon) readLoad() []float64 {
 }
 
 // statFields reads comm, starttime, utime+stime and rss (bytes) from
-// /proc/<pid>/stat.
+// /proc/<pid>/stat, into a reused buffer and without allocating fields:
+// this runs for every pane process on every sample.
 func (m *SysMon) statFields(pid int) (comm string, start, ticks, rss uint64, ok bool) {
-	b, err := os.ReadFile(filepath.Join(m.dir, strconv.Itoa(pid), "stat"))
+	f, err := os.Open(m.dir + "/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
 		return "", 0, 0, 0, false
 	}
+	n, _ := f.Read(m.buf[:])
+	f.Close()
+	b := m.buf[:n]
 	// comm may hold spaces and parentheses: it ends at the last ')'.
 	open, end := bytes.IndexByte(b, '('), bytes.LastIndexByte(b, ')')
 	if open < 0 || end < open {
 		return "", 0, 0, 0, false
 	}
-	fs := strings.Fields(string(b[end+1:]))
-	// fs[0] is field 3 (state): utime 14, stime 15, starttime 22, rss 24.
-	if len(fs) < 22 {
+	// After ") " comes field 3 (state); utime is 14, stime 15, starttime
+	// 22, rss 24.
+	field, i := 3, end+2
+	var v [25]uint64
+	for i < len(b) && field <= 24 {
+		j := i
+		var x uint64
+		for j < len(b) && b[j] != ' ' && b[j] != '\n' {
+			if c := b[j]; c >= '0' && c <= '9' {
+				x = x*10 + uint64(c-'0')
+			}
+			j++
+		}
+		v[field] = x
+		field++
+		i = j + 1
+	}
+	if field <= 24 {
 		return "", 0, 0, 0, false
 	}
-	n := func(i int) uint64 { v, _ := strconv.ParseUint(fs[i-3], 10, 64); return v }
-	return string(b[open+1 : end]), n(22), n(14) + n(15), n(24) * m.page, true
+	return string(b[open+1 : end]), v[22], v[14] + v[15], v[24] * m.page, true
 }
 
 // tagOf classifies a new process from its environment.

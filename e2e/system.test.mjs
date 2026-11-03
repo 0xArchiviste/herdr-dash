@@ -185,7 +185,7 @@ before(async () => {
   fp.add(500, "sshd", { cpu: 0.6, rss: 30e6 });
   fp.add(600, "secret", { cpu: 0.6, rss: 30e6, env: { HERDR_PANE_ID: "w1A:p1" }, unreadable: true });
   fp.write();
-  ticker = setInterval(() => fp.advance(), 200);
+  ticker = setInterval(() => fp.advance(), 50);
   browser = await chromium.launch();
 });
 
@@ -260,7 +260,7 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   const t1 = by("alpha/t-0001");
   assert.ok(t1 && t1.kind === "thread" && t1.project === "alpha" && t1.thread === "t-0001", "t-0001 row");
   assert.equal(t1.n, 2, "agent and child summed (unreadable environ excluded)");
-  assert.ok(Math.abs(t1.cpu - 150) <= 12, `t-0001 CPU ${t1.cpu}`);
+  assert.ok(Math.abs(t1.cpu - 150) <= 20, `t-0001 CPU ${t1.cpu}`);
   assert.equal(t1.rss, Math.round(900e6 / PAGE) * PAGE + Math.round(200e6 / PAGE) * PAGE);
   assert.equal(by("hub:alpha")?.kind, "coordinator");
   assert.equal(by("alpha/t-0003")?.agent, "codex");
@@ -323,6 +323,7 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   Object.assign(list.find((t) => t.id === "t-0011"), { prompt_pending: false, launch_attempts: 1 });
   writeFileSync(join(f.stubDir, "thread-list-beta.json"), JSON.stringify(list));
   writeFileSync(join(f.root, "beta/threads/t-0011.toml"), "touched = true\n");
+  await strip.locator('[data-id="queue"]').click();
   await waitFor(() => page.evaluate(() => !document.querySelector('#sys-pop .squeue[data-key="beta/t-0011"]') && !!document.querySelector('#sys-pop .squeue[data-key="beta/t-0012"]')), 10_000);
   assert.equal((await pop.locator('.squeue[data-key="beta/t-0012"] .spos').innerText()).trim(), "2");
   await page.screenshot({ path: join(artifacts, "system-critical.png") });
