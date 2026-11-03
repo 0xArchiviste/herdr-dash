@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Herdr Dash</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #151515; color: #f3ede3;
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { height: 100%; display: grid; place-content: center; text-align: center; padding: 0 16px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 4px 0; color: #b8b2a8; max-width: 52ch; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2be4d0;
+    margin-right: 8px; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="dot"></span>Herdr Dash</h1>
+  <p id="msg">Starting…</p>
+</main>
+<script>
+  const msg = document.getElementById("msg");
+  async function tick() {
+    try {
+      const s = await window.go.main.DesktopApp.Status();
+      if (s.url) { location.replace(s.url); return; }
+      msg.textContent = s.message;
+    } catch (e) { /* bindings not ready yet */ }
+    setTimeout(tick, 250);
+  }
+  tick();
+</script>
+</body>
+</html>

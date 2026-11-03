@@ -33,9 +33,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -45,6 +48,8 @@ const (
 	sttStreamPath    = "/api/voice/stream"
 	sttIdleDefault   = 2 * time.Minute
 	sttStartTimeout  = 30 * time.Second
+	sttWarmDefault   = 3 * time.Minute
+	sttModelName     = "nvidia/parakeet-tdt-0.6b-v3"
 	sttModelURL      = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
 	sttModelSHA256   = "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
 	sttModelDir      = "parakeet-tdt-0.6b-v3-int8-5793d0fd"
@@ -61,6 +66,8 @@ type STTConfig struct {
 	Idle    time.Duration // HERDR_DASH_STT_IDLE, default 2m
 	Cmd     string        // HERDR_DASH_STT_SERVER_CMD, replaces the sidecar command (tests)
 	Threads int           // HERDR_DASH_STT_THREADS: work threads for the decoder
+	Hold    time.Duration // HERDR_DASH_STT_WARM_HOLD: how long one warm keeps the model loaded, default 3m
+	URL     string        // HERDR_DASH_STT_MODEL_URL: a mirror of the pinned archive (the checksum still applies)
 }
 
 func sttConfigFromEnv() STTConfig {
@@ -70,10 +77,16 @@ func sttConfigFromEnv() STTConfig {
 		Dir:     env("HERDR_DASH_STT_DIR", filepath.Join(home, ".local", "share", "herdr-dash", "stt")),
 		Cmd:     env("HERDR_DASH_STT_SERVER_CMD", ""),
 		Threads: 2,
+		URL:     env("HERDR_DASH_STT_MODEL_URL", sttModelURL),
 	}
 	if s := env("HERDR_DASH_STT_IDLE", ""); s != "" {
 		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			cfg.Idle = d
+		}
+	}
+	if s := env("HERDR_DASH_STT_WARM_HOLD", ""); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			cfg.Hold = d
 		}
 	}
 	if s := env("HERDR_DASH_STT_THREADS", ""); s != "" {
@@ -97,6 +110,16 @@ type STT struct {
 	n       int // active streams
 	timer   *time.Timer
 	started time.Time
+	ready   bool // the running sidecar accepts connections
+
+	// What the status endpoint reports (guarded by mu, bytes atomic).
+	phase     string // "downloading" or "starting" while that runs
+	lastErr   string // why the last start failed, until the next attempt
+	dlBytes   atomic.Int64
+	dlTotal   atomic.Int64
+	warming   bool      // a warm is starting the sidecar
+	holding   bool      // a warm holds one session slot
+	holdUntil time.Time // when the warm hold ends; each warm extends it
 }
 
 func NewSTT(cfg STTConfig) *STT { return &STT{cfg: cfg} }
@@ -138,7 +161,11 @@ func (s *STT) fetchModel(ctx context.Context) error {
 		return err
 	}
 	log.Printf("local engine: fetching model into %s; %s", s.cfg.Dir, sttLicenceNotice)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sttModelURL, nil)
+	s.setPhase("downloading")
+	defer s.setPhase("")
+	s.dlBytes.Store(0)
+	s.dlTotal.Store(0)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.URL, nil)
 	if err != nil {
 		return err
 	}
@@ -150,6 +177,7 @@ func (s *STT) fetchModel(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		return fail(http.StatusBadGateway, "local engine: model fetch failed: HTTP %d", resp.StatusCode)
 	}
+	s.dlTotal.Store(max(resp.ContentLength, 0))
 	// Stage the complete, verified archive before publishing any model files.
 	stage, err := os.MkdirTemp(s.cfg.Dir, ".parakeet-")
 	if err != nil {
@@ -163,7 +191,7 @@ func (s *STT) fetchModel(ctx context.Context) error {
 	defer os.Remove(archive.Name())
 	defer archive.Close()
 	hash := sha256.New()
-	if _, err = io.Copy(io.MultiWriter(archive, hash), io.LimitReader(resp.Body, 600<<20)); err != nil {
+	if _, err = io.Copy(io.MultiWriter(archive, hash, countWriter{&s.dlBytes}), io.LimitReader(resp.Body, 600<<20)); err != nil {
 		return err
 	}
 	if fmt.Sprintf("%x", hash.Sum(nil)) != sttModelSHA256 {
@@ -184,6 +212,20 @@ func (s *STT) fetchModel(ctx context.Context) error {
 		return err
 	}
 	return os.Rename(stage, dest)
+}
+
+// countWriter counts download progress for the status endpoint.
+type countWriter struct{ n *atomic.Int64 }
+
+func (c countWriter) Write(p []byte) (int, error) {
+	c.n.Add(int64(len(p)))
+	return len(p), nil
+}
+
+func (s *STT) setPhase(p string) {
+	s.mu.Lock()
+	s.phase = p
+	s.mu.Unlock()
 }
 
 func (s *STT) modelPresent() bool {
@@ -259,6 +301,8 @@ func (s *STT) start(ctx context.Context) error {
 			return ferr
 		}
 	}
+	s.setPhase("starting")
+	defer s.setPhase("")
 	port, err := freePort()
 	if err != nil {
 		return err
@@ -285,6 +329,14 @@ func (s *STT) start(ctx context.Context) error {
 	s.port = port
 	s.mu.Unlock()
 	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
+	// Ask the model to stop before killing it.
+	cmd.Cancel = func() error {
+		if runtime.GOOS == "windows" {
+			return cmd.Process.Kill()
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 3 * time.Second
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -297,7 +349,7 @@ func (s *STT) start(ctx context.Context) error {
 		err := cmd.Wait()
 		s.mu.Lock()
 		if s.cmd == cmd {
-			s.cmd = nil
+			s.cmd, s.ready = nil, false
 		}
 		s.mu.Unlock()
 		if err != nil && ctx.Err() == nil {
@@ -323,6 +375,9 @@ func (s *STT) start(ctx context.Context) error {
 		c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(port), 250*time.Millisecond)
 		if err == nil {
 			c.Close()
+			s.mu.Lock()
+			s.ready = s.cmd == cmd
+			s.mu.Unlock()
 			return nil
 		}
 		time.Sleep(150 * time.Millisecond)
@@ -342,7 +397,7 @@ func freePort() (int, error) {
 func (s *STT) stopSidecar(why string) {
 	s.mu.Lock()
 	cmd, started, cancel := s.cmd, s.started, s.cancel
-	s.cmd = nil
+	s.cmd, s.ready = nil, false
 	s.mu.Unlock()
 	if cmd == nil {
 		return
@@ -354,7 +409,13 @@ func (s *STT) stopSidecar(why string) {
 func (s *STT) acquire(ctx context.Context) error {
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
+	s.mu.Lock()
+	s.lastErr = ""
+	s.mu.Unlock()
 	if err := s.start(ctx); err != nil {
+		s.mu.Lock()
+		s.lastErr = errText(err)
+		s.mu.Unlock()
 		return err
 	}
 	s.mu.Lock()
@@ -513,7 +574,117 @@ func jsonError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(actionResult{Error: msg})
 }
 
-// register wires the streaming endpoint.
+func errText(err error) string {
+	var he httpErr
+	if errors.As(err, &he) {
+		return he.msg
+	}
+	return err.Error()
+}
+
+// sttStatus is what GET /api/voice/local reports.
+type sttStatus struct {
+	State   string `json:"state"` // off, missing, idle, downloading, starting, ready, error
+	Model   string `json:"model,omitempty"`
+	Licence string `json:"licence,omitempty"`
+	Bytes   int64  `json:"bytes,omitempty"`
+	Total   int64  `json:"total,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (s *STT) status() sttStatus {
+	if !s.cfg.Local() {
+		return sttStatus{State: "off"}
+	}
+	st := sttStatus{Model: sttModelName, Licence: sttLicenceNotice}
+	s.mu.Lock()
+	phase, ready, lastErr := s.phase, s.ready, s.lastErr
+	s.mu.Unlock()
+	switch {
+	case phase == "downloading":
+		st.State, st.Bytes, st.Total = phase, s.dlBytes.Load(), s.dlTotal.Load()
+	case phase != "":
+		st.State = phase
+	case ready:
+		st.State = "ready"
+	case lastErr != "":
+		st.State, st.Error = "error", lastErr
+	case s.cfg.Cmd == "" && !s.modelPresent():
+		st.State = "missing"
+	default:
+		st.State = "idle"
+	}
+	return st
+}
+
+// warm loads the model in the background (downloading it when missing) and
+// keeps it loaded for the warm hold; every further warm extends the hold.
+// When the warms stop, the normal idle shutdown applies.
+func (s *STT) warm() {
+	hold := s.cfg.Hold
+	if hold <= 0 {
+		hold = sttWarmDefault
+	}
+	s.mu.Lock()
+	s.holdUntil = time.Now().Add(hold)
+	if s.warming || s.holding {
+		s.mu.Unlock()
+		return
+	}
+	s.warming = true
+	s.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		err := s.acquire(ctx)
+		cancel()
+		s.mu.Lock()
+		s.warming = false
+		s.holding = err == nil
+		s.mu.Unlock()
+		if err != nil {
+			log.Printf("local engine: warm-up failed: %v", err)
+			return
+		}
+		log.Printf("local engine: model loaded (warm)")
+		for {
+			s.mu.Lock()
+			d := time.Until(s.holdUntil)
+			if d <= 0 {
+				s.holding = false
+				s.mu.Unlock()
+				s.release()
+				return
+			}
+			s.mu.Unlock()
+			time.Sleep(d)
+		}
+	}()
+}
+
+// register wires the streaming, status and warm-up endpoints.
 func (s *STT) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+sttStreamPath, s.stream)
+	mux.HandleFunc("GET /api/voice/local", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, s.status())
+	})
+	// Same-origin like the write actions; read-only mode does not apply, it
+	// changes nothing but this server's own model process.
+	mux.HandleFunc("POST /api/voice/warm", func(w http.ResponseWriter, r *http.Request) {
+		if err := sameOriginJSON(r); err != nil {
+			var he httpErr
+			errors.As(err, &he)
+			jsonError(w, he.status, he.msg)
+			return
+		}
+		if !s.cfg.Local() {
+			jsonError(w, http.StatusNotImplemented, "local speech-to-text is not enabled (set HERDR_DASH_STT=local)")
+			return
+		}
+		io.Copy(io.Discard, io.LimitReader(r.Body, 4096))
+		s.warm()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(s.status())
+	})
 }
