@@ -23,6 +23,7 @@ import (
 type Config struct {
 	SessionProfiles string
 	OpencodeDB      string
+	RoutingConfig   string // routing.toml (internal/routing); stage 1 previews only
 
 	Auth          string
 	ReadOnly      bool

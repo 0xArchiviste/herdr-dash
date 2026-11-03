@@ -1,0 +1,18 @@
+# Caps are reserved for a later stage: accepted, kept, not enforced.
+version = 1
+
+[caps]
+max_active = 2
+
+[global]
+enabled = true
+
+[global.caps]
+claude = 2
+
+[[global.modes.coding]]
+provider = "claude"
+profile = "claude"
+
+[projects.alpha.caps]
+max_active = 1

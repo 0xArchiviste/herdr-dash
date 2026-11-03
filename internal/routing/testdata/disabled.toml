@@ -1,0 +1,8 @@
+version = 1
+
+[global]
+enabled = false
+
+[[global.modes.coding]]
+provider = "claude"
+profile = "claude"

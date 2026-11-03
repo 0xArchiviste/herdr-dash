@@ -13,6 +13,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "routing" {
+		os.Exit(routingMain(os.Args[2:]))
+	}
 	o := defineServerFlags()
 	flag.Parse()
 	if o.sttFetch {

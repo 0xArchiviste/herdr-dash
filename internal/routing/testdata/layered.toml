@@ -1,0 +1,55 @@
+# Every precedence layer: global, project, thread.
+version = 1
+
+[usage]
+max_age_seconds = 900
+avoid_at_percent = 90
+
+[global]
+enabled = false
+
+[[global.modes.planning]]
+provider = "codex"
+profile = "astra"
+
+[[global.modes.coding]]
+provider = "claude"
+profile = "claude"
+model = "claude-opus-5-5"
+
+[[global.modes.coding]]
+provider = "codex"
+profile = "codex"
+
+[[global.modes.crawl]]
+provider = "opencode"
+profile = "opencode"
+
+[projects.alpha]
+enabled = true
+
+[[projects.alpha.modes.coding]]
+provider = "codex"
+profile = "codex"
+
+[[projects.alpha.modes.coding]]
+provider = "claude"
+profile = "claude"
+
+[[projects.alpha.threads.t-0002.modes.coding]]
+provider = "opencode"
+profile = "opencode"
+
+[[projects.alpha.threads.t-0003.modes.planning]]
+provider = "claude"
+profile = "claude"
+
+[projects.beta]
+# no enabled: inherits global (false); no modes: inherits global lists
+
+[projects.gamma]
+enabled = false
+
+[[projects.gamma.modes.planning]]
+provider = "claude"
+profile = "claude"

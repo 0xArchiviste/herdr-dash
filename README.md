@@ -203,6 +203,7 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--threads-max-age` | | `1m`; a project whose files and panes did not change is re-listed this often |
 | `--pprof-addr` | `HERDR_DASH_PPROF_ADDR` | off; a loopback address such as `127.0.0.1:6060` serves Go's profiler |
 | `--proc` | `HERDR_DASH_PROC` | `/proc`; `off` hides machine and process numbers (see [System](#system)) |
+| `--routing-config` | `HERDR_DASH_ROUTING_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/routing.toml`, else `~/.config/herdr-projects/routing.toml` (see [Agent routing](#agent-routing-preview)) |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -438,6 +439,51 @@ Samples ride the collector's pane tick (`--poll`) and run only while some
 page holds the event stream open. Pages close it while hidden. A frame goes
 out only when it changed. Without `/proc` (macOS, Windows) or with `--proc off`,
 the strip says the numbers are unavailable; agents and the queue still show.
+
+## Agent routing (preview)
+
+The **Routing** button (filter bar) opens a window that edits which agent a
+new thread would get, per mode: **Planning**, **Coding** and **Crawl +
+summary**. Each mode has an ordered list of candidates (a provider, a
+herdr-projects profile, optionally a model). Nothing is built in: the lists
+are yours, and `docs/routing.example.toml` is only an example.
+
+This is stage 1: **preview only**. herdr-projects does not ask Dash before
+a launch yet, so saving changes no launch and never touches a running
+agent. Saving writes `routing.toml` and nothing else.
+
+- **Scopes**: global, a project, a thread. For each mode the first scope
+  with its own list (thread, then project, then global) supplies the whole
+  list; lists never merge. A scope without a list shows the inherited one,
+  read-only, with *Override here*; *Reset to inherited* drops an override.
+  `enabled` inherits on its own, project then global, default off. No file,
+  or routing off, means legacy launches: PROJECT.md `thread_profile`.
+- **Reorder** by dragging a card or with its ↑ ↓ buttons (keyboard
+  friendly). Edits stay a draft until *Save*.
+- **Why this choice?** asks the server which candidate a new (or a given)
+  thread in a project would get, from the saved policy and current usage,
+  with a reason for every candidate it skipped. The same engine answers
+  `herdr-dash routing preview --project SLUG --mode coding [--thread t-0001] [--json]`
+  without a server (the server flags apply).
+- **Usage decides, carefully.** Claude and Codex candidates need a fresh
+  reading (newer than `usage.max_age_seconds`, default 900, not past its
+  reset or expiry) with every window under `usage.avoid_at_percent`
+  (default 90). Unknown or stale usage skips to the next candidate; if none
+  qualifies the thread would queue. opencode qualifies only as its
+  self-hosted default model: a metered provider (OpenRouter) or another
+  model is refused. Metered per-token providers (RefuseLess and the like)
+  are not valid providers at all.
+- **Not enforced**: Claude and Codex internal subagents; only helpers herdr
+  launches will be routed. Caps are reserved (`caps` tables are kept and
+  reported, not enforced).
+
+The file is hand-editable. Saves are atomic (lock file, revision check,
+temp file, fsync, rename, mode 0600); a save from a stale tab or after a
+hand edit is refused as a conflict, and an invalid file or an unknown
+`version` is never rewritten. A symlinked `routing.toml` is read but not
+replaced, and a directory others can write is refused. Comments are not
+kept when Dash saves. Writes share the guard of every other action
+(read-only mode, same-origin JSON, the write rate limit).
 
 ## Content search
 

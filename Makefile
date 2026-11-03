@@ -17,6 +17,7 @@ vet:
 	node --check static/system.js
 	node --check static/windows.js
 	node --check static/threadwin.js
+	node --check static/routing.js
 
 test:
 	go test ./...
