@@ -757,7 +757,10 @@
       [fmtKey(cfg.dict), `Dictate into the chat box (${cfg.dictMode === "hold" ? "hold to talk" : "press to start/stop"})`],
       ["?", "This help (not while typing)"],
       ["D", "Dock the panel right, left or bottom, in turn (not while typing)"],
-      ["Esc", "Close help, settings, a voice question, or the panel"],
+      ["Esc", "Close help, settings, a voice question, the focused window, or the panel"],
+      ["Alt+W", "Next window (with Shift: previous)"],
+      ["Alt+Shift+D", "Dock the focused window right, left, bottom, then float it again"],
+      ["Alt+] / Alt+[", "Next / previous tab in the focused window's dock"],
       ["Ctrl+Enter", "Send the chat box"],
     ];
     const cmds = [
