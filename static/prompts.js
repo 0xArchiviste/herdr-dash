@@ -182,6 +182,9 @@
       if (after === "toggled") setStatus("ok", `“${o.label}” ${o.checked ? "unchecked" : "checked"}.`);
       else {
         answered.set(key, { sig: p.sig, at: Date.now() });
+        // The same prompt asked again right away arrives looking stale and
+        // the snapshot stream only sends changes: look again once it is not.
+        setTimeout(() => syncWindows(state), STALE_MS + 100);
         setStatus("ok", after === "next" ? `Answered “${o.label}”: the prompt cleared; a new one is up.` : `Answered “${o.label}”: the prompt cleared ✓`);
         if (cur?.sig === p.sig) cur = null;
       }
