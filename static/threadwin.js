@@ -18,6 +18,7 @@ window.HDThreadWin = (() => {
   };
   const QUICK = [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["enter", "Enter"], ["esc", "Esc"], ["up", "↑"], ["down", "↓"], ["tab", "Tab"]];
   const enc = encodeURIComponent;
+  const LIVE = 3; // thread windows streaming their screens at once
   async function post(path, body) {
     try {
       const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -58,7 +59,7 @@ window.HDThreadWin = (() => {
     const P = paths(key);
     let es = null, blocked = false, ctl = null, screen = null;
     const w = HDWin.open(id, {
-      title: (key.startsWith("hub:") ? "" : key.split("/")[1] + " · ") + a.name, short: a.short, cls: "thread-win", width: 560,
+      title: (key.startsWith("hub:") ? "" : key.split("/")[1] + " · ") + a.name, short: a.short, cls: "thread-win", width: 560, persist: true,
       build(body, win) {
         const log = el("div", { class: "tw-log" });
         const msg = (text, kind) => { log.append(el("div", { class: "msg " + kind, text })); while (log.childElementCount > 6) log.firstElementChild.remove(); };
@@ -97,7 +98,10 @@ window.HDThreadWin = (() => {
           a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." }),
           log);
         ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
+        const paused = el("p", { class: "muted tw-paused", hidden: "", text: `Paused: only the ${LIVE} front-most windows stream. Click here to resume.` });
+        screen.el.before(paused);
         const start = () => {
+          paused.hidden = true;
           if (es || document.hidden || !(a.live || key.startsWith("hub:"))) return;
           es = new EventSource(P.screen);
           es.addEventListener("screen", (e) => {
@@ -110,14 +114,29 @@ window.HDThreadWin = (() => {
           });
         };
         const stop = () => { es?.close(); es = null; };
-        const vis = () => (document.hidden ? stop() : start());
+        // Streams only while it shows, and among the front-most few: each
+        // stream holds one of the browser's few connections to the server.
+        const vis = () => {
+          const front = HDWin.shown().filter((x) => x.startsWith("thread:")).slice(0, LIVE);
+          if (!document.hidden && front.includes(id)) return start();
+          stop();
+          paused.hidden = document.hidden || !(a.live || key.startsWith("hub:")) || !HDWin.shown().includes(id);
+        };
         document.addEventListener("visibilitychange", vis);
-        win.stop = () => { stop(); document.removeEventListener("visibilitychange", vis); };
-        start();
+        document.addEventListener("hdwin:change", vis);
+        win.stop = () => { stop(); document.removeEventListener("visibilitychange", vis); document.removeEventListener("hdwin:change", vis); };
       },
       onClose: (win) => win.stop?.(),
     });
     return w;
   }
+  // Thread windows open at the last visit come back once the state has
+  // arrived (their titles come from it); a few tries, then give up.
+  (function reopen(tries) {
+    const ids = window.HDWin?.saved().filter((id) => id.startsWith("thread:")) || [];
+    if (!ids.length) return;
+    if (!window.hd?.state().threads.length) { if (tries > 0) setTimeout(() => reopen(tries - 1), 250); return; }
+    for (const id of ids) open(id.slice(7));
+  })(120);
   return { open };
 })();
