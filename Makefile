@@ -14,6 +14,7 @@ vet:
 	node --check static/voice-stream.js
 	python3 -c "import ast, pathlib; ast.parse(pathlib.Path('voice/local_server.py').read_text())"
 	node --check static/prompts.js
+	node --check static/system.js
 	node --check static/windows.js
 	node --check static/threadwin.js
 

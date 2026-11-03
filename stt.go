@@ -338,6 +338,8 @@ func (s *STT) start(ctx context.Context) error {
 	}
 	cmd.WaitDelay = 3 * time.Second
 	cmd.Stderr = os.Stderr
+	// The System strip gives the sidecar (and its children) a row of its own.
+	cmd.Env = append(os.Environ(), dashRoleEnv+"=voice:"+strconv.Itoa(os.Getpid()))
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return fail(http.StatusBadGateway, "local engine: %s", err)
