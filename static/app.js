@@ -40,7 +40,47 @@
   let selected = null;
   let detailTimer = null;
   const filters = JSON.parse(localStorage.getItem("hd-filters") || "{}");
-  const saveFilters = () => localStorage.setItem("hd-filters", JSON.stringify(filters));
+  // Project focus: any number of projects; none focused shows them all. A
+  // URL focus (?focus=a,b) wins over the stored one, so a bookmark opens as
+  // saved. Slugs no project has (yet) are kept but never hide everything.
+  const focus = new Set(Array.isArray(filters.projects) ? filters.projects : filters.project ? [filters.project] : []);
+  delete filters.project;
+  const urlFocus = new URLSearchParams(location.search).get("focus");
+  if (urlFocus != null) {
+    focus.clear();
+    urlFocus.split(",").map((x) => x.trim()).filter(Boolean).forEach((x) => focus.add(x));
+    filters.projects = [...focus];
+    localStorage.setItem("hd-filters", JSON.stringify(filters));
+  }
+  let eff = new Set(); // focus ∩ known projects
+  function updateEff() {
+    const known = new Set(state.projects.map((p) => p.slug));
+    eff = new Set([...focus].filter((x) => known.has(x)));
+  }
+  const inFocus = (slug) => !eff.size || eff.has(slug);
+  function orderedFocus() {
+    const idx = new Map(state.projects.map((p, i) => [p.slug, i]));
+    return [...focus].sort((a, b) => (idx.get(a) ?? 1e9) - (idx.get(b) ?? 1e9));
+  }
+  function saveFilters() {
+    filters.projects = orderedFocus();
+    localStorage.setItem("hd-filters", JSON.stringify(filters));
+    const u = new URL(location.href);
+    if (focus.size) u.searchParams.set("focus", filters.projects.join(","));
+    else u.searchParams.delete("focus");
+    // Commas stay readable in a bookmark.
+    const next = u.pathname + u.search.replace(/%2C/gi, ",") + u.hash;
+    if (next !== location.pathname + location.search + location.hash) history.replaceState(history.state, "", next);
+  }
+  const anyFilter = () => !!(eff.size || filters.state || filters.window || filters.q);
+  // Clear what hides threads (keeping the search text unless asked).
+  function clearFilters(q = true, keepFocus = false) {
+    if (!keepFocus) focus.clear();
+    Object.assign(filters, { state: "", window: "" }, q ? { q: "" } : {});
+    syncFilterInputs();
+    saveFilters();
+    render();
+  }
 
   // ---------------------------------------------------------------- time
   function ago(iso) {
@@ -55,8 +95,13 @@
   const ageSec = (t) => (t.last_activity ? (Date.now() - Date.parse(t.last_activity)) / 1000 : 1e9);
 
   // ---------------------------------------------------------------- filters
+  // visible: in focus and matching the other filters. drawn: on the graph
+  // (in fade mode an unfocused project stays on it, faded).
   function visible(t) {
-    if (filters.project && t.project !== filters.project) return false;
+    return inFocus(t.project) && matches(t);
+  }
+  const drawn = (t) => (filters.fade || inFocus(t.project)) && matches(t);
+  function matches(t) {
     if (filters.state === "needs" ? !t.needs_you : filters.state && t.state !== filters.state) return false;
     if (filters.window && ageSec(t) > +filters.window) return false;
     if (filters.q && !dash.contentMode) {
@@ -69,12 +114,10 @@
 
   function initFilters() {
     $("#reset-filters").addEventListener("click", () => {
-      Object.assign(filters, { project: "", state: "", window: "", q: "" });
-      syncFilterInputs();
-      saveFilters();
+      clearFilters();
+      focusChanged();
       // Notify content search as well, cancelling pending requests and highlights.
       $("#f-search").dispatchEvent(new Event("input"));
-      render();
     });
     $("#fit-graph").addEventListener("click", () => { userZoomed = false; fit(true); });
     const bind = (id, key, ev = "change") => {
@@ -82,7 +125,7 @@
       if (filters[key]) e.value = filters[key];
       e.addEventListener(ev, () => { filters[key] = e.value; saveFilters(); render(); });
     };
-    bind("#f-project", "project");
+    initPicker();
     bind("#f-state", "state");
     bind("#f-window", "window");
     bind("#f-search", "q", "input");
@@ -244,9 +287,9 @@
   }
 
   function renderGraph(threads) {
-    const projects = state.projects.filter((p) => !filters.project || p.slug === filters.project);
+    const projects = state.projects.filter((p) => filters.fade || inFocus(p.slug));
     const hubColor = {};
-    state.projects.forEach((p, i) => (hubColor[p.slug] = HUB_COLORS[i % HUB_COLORS.length]));
+    state.projects.forEach((p) => (hubColor[p.slug] = projColor(p.slug)));
     const want = [];
     const links = [];
     const per = d3.group(threads, (t) => t.project);
@@ -254,7 +297,7 @@
       const id = "hub:" + p.slug;
       const n = nodes.get(id) || { id, x: Math.cos(i) * 200, y: Math.sin(i) * 200 };
       const ts = per.get(p.slug) || [];
-      Object.assign(n, { hub: true, p, size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => t.state !== "resolved").length });
+      Object.assign(n, { hub: true, p, faded: !inFocus(p.slug), size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => t.state !== "resolved").length });
       want.push(n);
     });
     const hubIds = new Set(want.map((n) => n.id));
@@ -262,20 +305,22 @@
       const id = t.key;
       const hub = nodes.get("hub:" + t.project);
       const n = nodes.get(id) || { id, x: (hub?.x || 0) + (Math.random() - 0.5) * 60, y: (hub?.y || 0) + (Math.random() - 0.5) * 60 };
-      Object.assign(n, { hub: false, t, r: threadRadius(t), color: STATES[t.state]?.color || "#baa67f" });
+      Object.assign(n, { hub: false, t, faded: !inFocus(t.project), r: threadRadius(t), color: STATES[t.state]?.color || "#baa67f" });
       want.push(n);
-      if (hubIds.has("hub:" + t.project)) links.push({ source: "hub:" + t.project, target: id, state: t.state });
+      if (hubIds.has("hub:" + t.project)) links.push({ source: "hub:" + t.project, target: id, state: t.state, faded: n.faded });
     }
     const keep = new Set(want.map((n) => n.id));
     // Reheat the layout only when it has something new to place: a node
     // added or gone, or one that grew or shrank. A state or title change
     // repaints in place, so a settled graph stays still (and idle).
-    let moved = keep.size !== nodes.size || want.some((n) => !nodes.has(n.id) || Math.abs((n.placedR ?? -1) - n.r) > 0.5);
+    // Only nodes gone (a project left the focus): a gentle re-settle.
+    const added = want.some((n) => !nodes.has(n.id) || Math.abs((n.placedR ?? -1) - n.r) > 0.5);
+    let moved = added || keep.size !== nodes.size;
     for (const k of nodes.keys()) if (!keep.has(k)) nodes.delete(k);
     want.forEach((n) => nodes.set(n.id, n));
 
     linkSel = linkG.selectAll("line").data(links, (l) => l.target + "").join("line")
-      .attr("class", (l) => "link" + (l.state === "resolved" ? " dim" : ""));
+      .attr("class", (l) => "link" + (l.state === "resolved" ? " dim" : "") + (l.faded ? " faded" : ""));
 
     nodeSel = nodeG.selectAll("g.node:not(.leaving)").data(want, (d) => d.id).join(
       (enter) => {
@@ -284,7 +329,13 @@
         g.append("circle").attr("class", "core").attr("r", 0);
         g.filter((d) => d.hub).append("text").attr("class", "count").attr("text-anchor", "middle").attr("dy", "0.35em");
         // Shift+click opens the thread (or coordinator) in a floating window.
-        g.on("click", (e, d) => { e.stopPropagation(); if (e.shiftKey && window.HDThreadWin) window.HDThreadWin.open(d.id); else d.hub ? hubClick(d) : select(d.id); })
+        // Ctrl/Cmd/Shift+click on a project adds it to the focus or takes it out.
+        g.on("click", (e, d) => {
+          e.stopPropagation();
+          if (d.hub && (e.ctrlKey || e.metaKey || e.shiftKey)) toggleFocus(d.p.slug);
+          else if (e.shiftKey && window.HDThreadWin) window.HDThreadWin.open(d.id);
+          else d.hub ? hubClick(d) : select(d.id);
+        })
           .on("mouseenter", (e, d) => { hovered = d.id; placeLabels(); showTip(e, d); }).on("mousemove", moveTip)
           .on("mouseleave", () => { hovered = null; placeLabels(); hideTip(); })
           .call(d3.drag().on("start", dragStart).on("drag", dragged).on("end", dragEnd));
@@ -296,7 +347,7 @@
     );
     nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
-    nodeSel.classed("hit", (d) => dash.hits.has(d.id));
+    nodeSel.classed("hit", (d) => dash.hits.has(d.id)).classed("faded", (d) => d.faded);
     svg.classed("searching", dash.hits.size > 0);
     // Animate only the nodes whose size or colour changed.
     nodeSel.filter((d) => d.drawn !== d.r + d.color).each((d) => (d.drawn = d.r + d.color))
@@ -309,17 +360,19 @@
       .join((enter) => enter.append("text").attr("class", "name").attr("text-anchor", "middle"))
       .attr("data-key", (d) => d.id)
       .each(function (d) { if (this.textContent !== d.p.name || d.lw == null) { this.textContent = d.p.name; d.lw = this.getComputedTextLength() / 2; moved = true; } });
+    hlabelSel.classed("faded", (d) => d.faded);
     tlabelSel = tlabelG.selectAll("text.label").data(want.filter((d) => !d.hub), (d) => d.id)
       .join((enter) => enter.append("text").attr("class", "label off").attr("text-anchor", "middle"))
       .attr("data-key", (d) => d.id)
       // Measuring text forces a layout: only for labels whose text changed.
+      .classed("faded", (d) => d.faded)
       .each(function (d) { const s = trunc(d.t.title, 34); if (this.textContent !== s || d.tw == null) { this.textContent = s; d.tw = this.getComputedTextLength(); } });
 
     if (!moved) { placeLabels(); return; }
     want.forEach((n) => (n.placedR = n.r));
     sim.nodes(want);
     sim.force("link").links(links);
-    sim.alpha(Math.max(sim.alpha(), 0.25)).restart();
+    sim.alpha(Math.max(sim.alpha(), added ? 0.25 : 0.12)).restart();
   }
 
   function tick() {
@@ -333,12 +386,24 @@
   function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
   function dragEnd(e, d) { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }
   function hubClick(d) { select(d.id); }
-  function toggleProjectFilter(slug) {
-    filters.project = filters.project === slug ? "" : slug;
-    $("#f-project").value = filters.project;
+  function setFocus(slugs) {
+    focus.clear();
+    slugs.forEach((x) => focus.add(x));
     saveFilters();
     render();
+    focusChanged();
   }
+  // Toggle one project. With everything shown, the first toggle focuses it.
+  function toggleFocus(slug) {
+    updateEff();
+    if (eff.has(slug)) focus.delete(slug);
+    else focus.add(slug);
+    // Keep stale (unknown) slugs from deciding what an empty focus means.
+    for (const x of [...focus]) if (!state.projects.some((p) => p.slug === x)) focus.delete(x);
+    setFocus([...focus]);
+  }
+  const focusChanged = () => document.dispatchEvent(new CustomEvent("hd-focus"));
+  const projColor = (slug) => HUB_COLORS[Math.max(0, state.projects.findIndex((p) => p.slug === slug)) % HUB_COLORS.length];
 
   const tip = $("#tip");
   function showTip(e, d) {
@@ -356,7 +421,7 @@
         el("div", { class: "sub", text: `${t.key} · ${t.agent || "?"} · ${ago(t.last_activity)}` }));
       if (t.prompt) tip.append(el("div", { class: "s-blocked", text: t.prompt.summary }));
     }
-    tip.append(el("div", { class: "sub hint", text: "Shift+click: open in a window" }));
+    tip.append(el("div", { class: "sub hint", text: d.hub ? "Ctrl/Shift+click: add to or remove from focus" : "Shift+click: open in a window" }));
     tip.hidden = false;
     moveTip(e);
   }
@@ -411,11 +476,11 @@
     const rank = (t) => ORDER.indexOf(t.state);
     // Coordinators that need you are never acked or snoozed: they show until answered.
     const coords = mode === "parked" ? [] : coordItems();
-    return state.threads.filter((t) => t.needs_you && (mode === "all" || (mode === "parked") === parked(t))).concat(coords)
+    return state.threads.filter((t) => t.needs_you && inFocus(t.project) && (mode === "all" || (mode === "parked") === parked(t))).concat(coords)
       .sort((a, b) => rank(a) - rank(b) || ageSec(a) - ageSec(b));
   }
   function coordItems() {
-    return state.projects.filter((p) => p.coordinator?.needs_you).map((p) => ({
+    return state.projects.filter((p) => p.coordinator?.needs_you && inFocus(p.slug)).map((p) => ({
       key: "hub:" + p.slug, project: p.slug, coord: true, needs_you: true, state: p.coordinator.state,
       title: "Coordinator" + (p.coordinator.activity ? " · " + p.coordinator.activity : ""), last_activity: p.coordinator.last_activity, prompt: p.coordinator.prompt,
     }));
@@ -423,7 +488,7 @@
 
   function renderNeeds() {
     const list = needsList();
-    const hidden = state.threads.filter((t) => t.needs_you).length + coordItems().length - list.length;
+    const hidden = state.threads.filter((t) => t.needs_you && inFocus(t.project)).length + coordItems().length - list.length;
     const names = Object.fromEntries(state.projects.map((p) => [p.slug, p.name]));
     $("#needs-n").textContent = (list.length || "") + (hidden > 0 && $("#needs-filter").value === "active" ? ` (+${hidden} parked)` : "");
     const by = d3.group(list, (t) => t.state);
@@ -446,7 +511,7 @@
             }
             if (t.coord) { select(t.key); return; }
             // Make sure the node is visible before selecting it.
-            if (!visible(t)) { Object.assign(filters, { project: "", state: "", window: "", q: "" }); syncFilterInputs(); saveFilters(); render(); }
+            if (!visible(t)) clearFilters(true, true);
             select(t.key);
           },
         }, el("span", { class: "dot", style: `background:${STATES[t.state].color}` }), el("span", { class: "proj", text: names[t.project] || t.project }), el("span", { class: "t", text: t.title }),
@@ -553,7 +618,7 @@
     $("#ack-all").addEventListener("click", async () => {
       const proj = el("select", { id: "ack-all-project" }, el("option", { value: "", text: "All projects" }), ...state.projects.map((p) => el("option", { value: p.slug, text: p.name })));
       const age = el("select", { id: "ack-all-age" }, ...[["0", "any age"], ["3600", "older than 1 hour"], ["86400", "older than 1 day"], ["259200", "older than 3 days"], ["604800", "older than 7 days"]].map(([v, l]) => el("option", { value: v, text: l })));
-      proj.value = filters.project || "";
+      proj.value = eff.size === 1 ? [...eff][0] : "";
       const targets = () => state.threads.filter((t) => t.state === "review" && !t.acked && (!proj.value || t.project === proj.value) && ageSec(t) >= +age.value);
       const upd = () => { $("#dlg-msg").textContent = `Ack ${targets().length} ready-for-review thread(s)? Acking records that you saw the report; a thread with an open PR stays in review.`; };
       proj.addEventListener("change", upd);
@@ -567,20 +632,121 @@
   }
 
   function syncFilterInputs() {
-    $("#f-project").value = filters.project || "";
     $("#f-state").value = filters.state || "";
     $("#f-window").value = filters.window || "";
     $("#f-search").value = filters.q || "";
   }
 
-  function renderProjectsSelect() {
-    const sel = $("#f-project");
-    const cur = filters.project || "";
-    const opts = [el("option", { value: "", text: "All projects" }), ...state.projects.map((p) => el("option", { value: p.slug, text: p.name }))];
-    if (sel.options.length !== opts.length || [...sel.options].some((o, i) => o.value !== opts[i].value)) {
-      sel.replaceChildren(...opts);
+  // ---------------------------------------------------------------- focus picker
+  // A checkbox list of projects (type to filter), All / None / Only this,
+  // and a fade-or-hide toggle. P opens it; on phones it is a bottom sheet.
+  const picker = $("#proj-picker");
+  const pickerOpen = () => !picker.hidden;
+  let rowsKey = "";
+  function renderFocus() {
+    const n = eff.size, total = state.projects.length;
+    const names = Object.fromEntries(state.projects.map((p) => [p.slug, p.name]));
+    const btn = $("#f-project");
+    const label = !n || n === total ? "All projects" : n === 1 ? names[[...eff][0]] : `${n} projects`;
+    if (btn.firstChild?.textContent !== label) btn.replaceChildren(el("span", { class: "fl", text: label }), el("span", { class: "caret", "aria-hidden": "true", text: "▾" }));
+    btn.classList.toggle("on", n > 0 && n < total);
+    btn.setAttribute("aria-label", "Project focus: " + (n && n < total ? [...eff].map((x) => names[x]).join(", ") : "all projects") + ". Press P");
+    // A chip per focused project, × removes it.
+    const want = n && n < total ? orderedFocus().filter((x) => eff.has(x)) : [];
+    const box = $("#focus-chips");
+    if (box.dataset.k !== want.join(",") + "|" + want.map((x) => names[x]).join(",")) {
+      box.dataset.k = want.join(",") + "|" + want.map((x) => names[x]).join(",");
+      box.replaceChildren(...want.map((x) => el("span", { class: "fchip", "data-slug": x, style: `--c:${projColor(x)}` },
+        el("span", { class: "dot" }), el("span", { class: "fn", text: names[x] }),
+        el("button", { type: "button", class: "fx", title: "Remove from focus", "aria-label": `Remove ${names[x]} from focus`, text: "×", onclick: () => toggleFocus(x) }))));
     }
-    sel.value = cur;
+    box.hidden = !want.length;
+    if (pickerOpen()) renderPicker();
+  }
+  function renderPicker() {
+    const key = state.projects.map((p) => p.slug + "\u0000" + p.name).join("\u0001");
+    const list = $("#pp-list");
+    if (key !== rowsKey) {
+      rowsKey = key;
+      list.replaceChildren(...state.projects.map((p) => el("div", { class: "prow", role: "checkbox", tabindex: "0", "data-slug": p.slug, "aria-checked": "false", style: `--c:${projColor(p.slug)}` },
+        el("span", { class: "box", "aria-hidden": "true" }), el("span", { class: "dot" }), el("span", { class: "pn", text: p.name }), el("span", { class: "pc" }),
+        el("button", { type: "button", class: "ponly", tabindex: "-1", title: "Focus on this project only", text: "Only" }))));
+      filterRows();
+    }
+    const counts = d3.rollup(state.threads, (v) => v.filter((t) => t.state !== "resolved").length, (t) => t.project);
+    for (const r of list.children) {
+      const on = eff.has(r.dataset.slug);
+      if (r.getAttribute("aria-checked") !== String(on)) r.setAttribute("aria-checked", String(on));
+      const c = String(counts.get(r.dataset.slug) || "");
+      const pc = r.querySelector(".pc");
+      if (pc.textContent !== c) { pc.textContent = c; pc.title = c ? c + " open threads" : ""; }
+    }
+    $("#pp-fade").checked = !!filters.fade;
+    $("#pp-note").textContent = eff.size ? `${eff.size} of ${state.projects.length} in focus` : "Nothing ticked: all projects show";
+  }
+  function filterRows() {
+    const q = $("#pp-filter").value.trim().toLowerCase();
+    for (const r of $("#pp-list").children) r.hidden = !!q && !(r.dataset.slug + " " + r.querySelector(".pn").textContent).toLowerCase().includes(q);
+  }
+  const shownRows = () => [...$("#pp-list").children].filter((r) => !r.hidden);
+  function openPicker(viaKey) {
+    if (pickerOpen()) return;
+    picker.hidden = false;
+    $("#f-project").setAttribute("aria-expanded", "true");
+    document.body.classList.add("picking");
+    $("#pp-filter").value = "";
+    renderPicker();
+    filterRows();
+    if (viaKey || !matchMedia("(pointer: coarse)").matches) $("#pp-filter").focus();
+  }
+  function closePicker(refocus) {
+    if (!pickerOpen()) return;
+    picker.hidden = true;
+    $("#f-project").setAttribute("aria-expanded", "false");
+    document.body.classList.remove("picking");
+    if (refocus || picker.contains(document.activeElement)) $("#f-project").focus({ preventScroll: true });
+  }
+  function initPicker() {
+    $("#f-project").addEventListener("click", () => (pickerOpen() ? closePicker() : openPicker(false)));
+    $("#pp-done").addEventListener("click", () => closePicker(true));
+    $("#pp-all").addEventListener("click", () => setFocus(state.projects.map((p) => p.slug)));
+    $("#pp-none").addEventListener("click", () => setFocus([]));
+    $("#pp-fade").addEventListener("change", (e) => { filters.fade = e.target.checked; saveFilters(); render(); });
+    const list = $("#pp-list");
+    list.addEventListener("click", (e) => {
+      const r = e.target.closest(".prow");
+      if (!r) return;
+      if (e.target.closest(".ponly")) setFocus([r.dataset.slug]);
+      else toggleFocus(r.dataset.slug);
+    });
+    list.addEventListener("keydown", (e) => {
+      const r = e.target.closest(".prow");
+      if (!r) return;
+      const rows = shownRows(), i = rows.indexOf(r);
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleFocus(r.dataset.slug); }
+      else if (e.key === "o" || e.key === "O") { e.preventDefault(); setFocus([r.dataset.slug]); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, i + 1)]?.focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); (i > 0 ? rows[i - 1] : $("#pp-filter")).focus(); }
+    });
+    const input = $("#pp-filter");
+    input.addEventListener("input", filterRows);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); const r = shownRows()[0]; if (r) toggleFocus(r.dataset.slug); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); shownRows()[0]?.focus(); }
+    });
+    // Escape closes the picker before anything else (panel, search box).
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && pickerOpen()) { e.preventDefault(); e.stopImmediatePropagation(); closePicker(true); }
+    }, true);
+    document.addEventListener("pointerdown", (e) => { if (pickerOpen() && !e.target.closest("#focus-box")) closePicker(); });
+    // P opens the picker (not while typing or with a dialog open).
+    document.addEventListener("keydown", (e) => {
+      if (e.key.toLowerCase() !== "p" || e.ctrlKey || e.altKey || e.metaKey || $("#dlg").open) return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+      if (document.querySelector("#voice-help:not([hidden]), #voice-settings:not([hidden])")) return;
+      e.preventDefault();
+      pickerOpen() ? closePicker(true) : openPicker(true);
+    });
   }
 
   function renderErrors() {
@@ -590,14 +756,15 @@
   }
 
   function render() {
+    updateEff();
     const threads = state.threads.filter(visible);
-    $("#reset-filters").hidden = !Object.values(filters).some(Boolean);
+    $("#reset-filters").hidden = !anyFilter();
     $("#graph-empty").hidden = threads.length > 0;
-    renderProjectsSelect();
+    renderFocus();
     renderLegend(threads);
     renderNeeds();
     renderErrors();
-    renderGraph(threads);
+    renderGraph(state.threads.filter(drawn));
     if (selected) isHub(selected) ? refreshCoordHeader() : refreshPanelHeader();
     window.HDPrompt?.onState(state);
   }
@@ -981,8 +1148,10 @@
       if (pg.percent && pg.percent < 100) head.append(el("div", { class: "bar" }, el("i", { style: `width:${pg.percent}%` })));
     }
     const acts = $("#p-actions");
-    const on = filters.project === slug;
-    acts.replaceChildren(el("button", { class: "tbtn" + (on ? " on" : ""), "data-act": "filter", text: on ? "Showing only this project" : "Show only this project", onclick: () => { toggleProjectFilter(slug); refreshCoordHeader(); } }));
+    const only = eff.size === 1 && eff.has(slug), has = eff.has(slug);
+    acts.replaceChildren(
+      el("button", { class: "tbtn" + (only ? " on" : ""), "data-act": "filter", text: only ? "Showing only this project" : "Show only this project", onclick: () => { setFocus(only ? [] : [slug]); refreshCoordHeader(); } }),
+      el("button", { class: "tbtn" + (has ? " on" : ""), "data-act": "focus", "aria-pressed": String(has), text: has ? "Remove from focus" : "Add to focus", onclick: () => { toggleFocus(slug); refreshCoordHeader(); } }));
     const st = (d && d.settings) || {};
     const rows = [
       ["Project", slug],
@@ -1254,10 +1423,11 @@
   // Open a thread or hub panel, clearing filters that hide its node.
   dash.open = (key) => {
     const t = state.threads.find((x) => x.key === key);
-    if (t && !visible(t)) { Object.assign(filters, { project: "", state: "", window: "" }); syncFilterInputs(); saveFilters(); render(); }
+    if (t && !drawn(t)) { clearFilters(false); focusChanged(); }
     select(key);
   };
   dash.render = () => render();
+  dash.inFocus = (slug) => inFocus(slug);
   dash.state = () => state;
   dash.STATES = STATES;
   // The page's hooks for static/voice.js (and other add-ons).
@@ -1267,6 +1437,9 @@
     select,
     needs: needsList,
     visible,
+    focus: () => [...eff],
+    setFocus,
+    clearFilters: () => { clearFilters(); focusChanged(); },
     ack: (key) => ackKeys([key]),
     resolve: (key) => resolveKey(key, true),
     dock: (pos) => { if (DOCKS.includes(pos)) { dock.pos = pos; saveDock(); applyDock(); } },
