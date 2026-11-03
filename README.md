@@ -162,6 +162,14 @@ Extra flags go in `~/.config/herdr-dash/env`, e.g.
 (`CLOUDFLARE_API_TOKEN=...`; keep the file mode 600, see [Voice](#voice)).
 The unit caps CPU at 25% and memory at 256M.
 
+### Desktop app
+
+`make desktop-linux` (or `desktop-windows`, `desktop-darwin`) builds a native
+window around the same dashboard. It connects to the running service, or
+embeds a server when none answers. It loads the local voice model at startup
+so the first command does not wait. On Windows it reaches the Dash in WSL at
+`http://127.0.0.1:8791`. See [desktop app](docs/desktop.md).
+
 ### Configuration
 
 | Flag | Env (a flag wins) | Default |

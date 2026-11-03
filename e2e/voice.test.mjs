@@ -512,6 +512,9 @@ test("no Web Speech: server transcription records, posts and acts", async () => 
     const n0 = cf.calls.length;
     await page.click("#voice-fab");
     await page.waitForSelector("#voice-fab.listening");
+    // Recording starts once the microphone opened, which can take a while on
+    // a loaded machine; a stop before that rightly records nothing.
+    await waitFor(async () => /listening… \(server\)/i.test(await hud(page)), 10000);
     await page.waitForTimeout(1200);
     await page.click("#voice-fab"); // stop: the clip is sent for transcription
     await waitFor(async () => (await title(page)) === "Alpha Project", 8000);

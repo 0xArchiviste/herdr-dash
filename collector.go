@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -293,8 +292,7 @@ func runIn(ctx context.Context, timeout time.Duration, stdin string, name string
 	// On timeout kill the whole process group, and stop waiting for output
 	// soon after: a grandchild (herdr under herdr-projects, sleep under sh)
 	// can hold the pipe open long after the command itself was killed.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	killGroupOnCancel(cmd)
 	cmd.WaitDelay = 500 * time.Millisecond
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
