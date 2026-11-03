@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Herdr Dash
+Comment=Progress across herdr projects and threads
+Exec=herdr-dash-desktop
+Icon=herdr-dash
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=herdr-dash

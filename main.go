@@ -15,14 +15,13 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -39,12 +38,26 @@ var (
 	md = goldmark.New(goldmark.WithExtensions(extension.GFM))
 )
 
-func main() {
+// serverOpts are the server's command-line settings (main.go and the
+// desktop app share them).
+type serverOpts struct {
+	addr      string
+	pprofAddr string
+	sttFetch  bool
+	cfg       Config
+	usage     *UsageConfig
+	home      string
+}
+
+// defineServerFlags registers the server flags on flag.CommandLine.
+func defineServerFlags() *serverOpts {
 	home, _ := os.UserHomeDir()
+	o := &serverOpts{home: home}
+	cfg := &o.cfg
 	// HERDR_DASH_BUILD_ID stands in for a new build in tests.
-	cfg := Config{Voice: voiceConfigFromEnv(), STT: sttConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
+	*cfg = Config{Voice: voiceConfigFromEnv(), STT: sttConfigFromEnv(), Build: env("HERDR_DASH_BUILD_ID", buildID())}
 	// Flags win over env; env wins over built-in defaults.
-	addr := flag.String("addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
+	flag.StringVar(&o.addr, "addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
 	flag.StringVar(&cfg.HerdrProjects, "herdr-projects", env("HERDR_DASH_HERDR_PROJECTS", ""), "herdr-projects binary, $HERDR_DASH_HERDR_PROJECTS (default: on PATH, else the installed herdr plugin)")
 	flag.StringVar(&cfg.Auth, "auth", env("HERDR_DASH_AUTH", "none"), "auth mode, $HERDR_DASH_AUTH; only \"none\" (trusted network) exists yet")
@@ -68,60 +81,86 @@ func main() {
 	flag.StringVar(&cfg.Memex, "memex", env("HERDR_DASH_MEMEX", "off"), "memex binary for transcript search, e.g. \"memex\" (on PATH), $HERDR_DASH_MEMEX; default off; disabled when not found")
 	flag.DurationVar(&cfg.MemexTimeout, "memex-timeout", 2*time.Second, "time limit of one memex search")
 	flag.IntVar(&cfg.MemexPerMin, "memex-per-min", 30, "memex searches allowed a minute")
-	sttFetch := flag.Bool("stt-fetch", false, "download and verify the local Parakeet TDT v3 model, then exit")
-	pprofAddr := flag.String("pprof-addr", env("HERDR_DASH_PPROF_ADDR", ""), "serve Go's profiler on this loopback address, e.g. 127.0.0.1:6060, $HERDR_DASH_PPROF_ADDR; default off")
-	usage := usageFlags(home)
-	flag.Parse()
-	if *sttFetch {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		if err := NewSTT(cfg.STT).fetchModel(ctx); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	cfg.Usage = *usage
+	flag.BoolVar(&o.sttFetch, "stt-fetch", false, "download and verify the local Parakeet TDT v3 model, then exit")
+	flag.StringVar(&o.pprofAddr, "pprof-addr", env("HERDR_DASH_PPROF_ADDR", ""), "serve Go's profiler on this loopback address, e.g. 127.0.0.1:6060, $HERDR_DASH_PPROF_ADDR; default off")
+	o.usage = usageFlags(home)
+	return o
+}
+
+// finish checks and completes the options after flag.Parse.
+func (o *serverOpts) finish() error {
+	cfg := &o.cfg
+	cfg.Usage = *o.usage
 	cfg.Usage.CodexDir = cfg.CodexDir
 	cfg.Memex = resolveMemex(cfg.Memex)
 	if cfg.HerdrProjects == "" {
-		cfg.HerdrProjects = defaultHerdrProjects(home)
+		cfg.HerdrProjects = defaultHerdrProjects(o.home)
 	}
 	if cfg.Auth != "none" {
-		log.Fatalf("--auth %q is not implemented; only \"none\" is (the network is trusted)", cfg.Auth)
+		return fmt.Errorf("--auth %q is not implemented; only \"none\" is (the network is trusted)", cfg.Auth)
 	}
 	pu, err := parsePublicURL(cfg.PublicURL)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	cfg.PublicURL = pu
 	if cfg.ThreadsEvery == 0 {
 		cfg.ThreadsEvery = max(3*cfg.Poll, 3*time.Second)
 	}
+	return nil
+}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+// fetchSTT is --stt-fetch: download and verify the model.
+func (o *serverOpts) fetchSTT() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return NewSTT(o.cfg.STT).fetchModel(ctx)
+}
+
+// dashServer is one running dashboard: collector, model sidecar, HTTP.
+type dashServer struct {
+	cfg Config
+	col *Collector
+	stt *STT
+	srv *http.Server
+}
+
+// newDashServer starts the collector (until ctx ends) and builds the HTTP
+// server; wrap, when given, wraps the handler (the desktop app logs its
+// window's page loads).
+func newDashServer(ctx context.Context, o *serverOpts, wrap func(http.Handler) http.Handler) (*dashServer, error) {
+	cfg := o.cfg
 	col := NewCollector(cfg)
 	go col.Run(ctx)
-	if *pprofAddr != "" {
-		if err := servePprof(*pprofAddr); err != nil {
-			log.Fatal(err)
+	if o.pprofAddr != "" {
+		if err := servePprof(o.pprofAddr); err != nil {
+			return nil, err
 		}
 	}
-
 	stt := NewSTT(cfg.STT)
-	srv := &http.Server{Addr: *addr, Handler: secureRedirect(cfg.PublicURL, newMux(col, cfg, stt)), ReadHeaderTimeout: 10 * time.Second}
-	defer stt.stopSidecar("shutdown")
+	var h http.Handler = secureRedirect(cfg.PublicURL, newMux(col, cfg, stt))
+	if wrap != nil {
+		h = wrap(h)
+	}
+	return &dashServer{cfg: cfg, col: col, stt: stt, srv: &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}}, nil
+}
+
+// serve answers on l until ctx ends, then shuts down and stops the sidecar.
+func (d *dashServer) serve(ctx context.Context, l net.Listener) error {
+	defer d.stt.stopSidecar("shutdown")
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		srv.Shutdown(sctx)
-		stt.stopSidecar("shutdown")
+		d.srv.Shutdown(sctx)
+		d.stt.stopSidecar("shutdown")
 	}()
-	log.Printf("herdr-dash listening on %s (public %q, herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v, stt local %v)", *addr, cfg.PublicURL, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT(), cfg.STT.Local())
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	cfg := d.cfg
+	log.Printf("herdr-dash listening on %s (public %q, herdr-projects %s, root %s, read-only %v, memex %q, voice intent %v, transcribe %v, stt local %v)", l.Addr(), cfg.PublicURL, cfg.HerdrProjects, cfg.Root, cfg.ReadOnly, cfg.Memex, cfg.Voice.Intent(), cfg.Voice.STT(), cfg.STT.Local())
+	if err := d.srv.Serve(l); err != nil && err != http.ErrServerClosed {
+		return err
 	}
+	return nil
 }
 
 // buildID is a short hash of the embedded frontend: it changes exactly when
