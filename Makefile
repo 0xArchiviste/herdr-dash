@@ -5,6 +5,7 @@ build:
 
 vet:
 	go vet ./...
+	GOOS=windows go vet -tags desktop,production .
 	node --check static/app.js
 	node --check static/search.js
 	node --check static/scrollback.js
@@ -13,7 +14,6 @@ vet:
 	node --check static/voice-stream.js
 	python3 -c "import ast, pathlib; ast.parse(pathlib.Path('voice/local_server.py').read_text())"
 	node --check static/prompts.js
-	GOOS=windows go vet -tags desktop,production .
 
 test:
 	go test ./...
