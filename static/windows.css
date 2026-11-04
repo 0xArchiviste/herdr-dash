@@ -16,6 +16,34 @@
 .hw-min, .hw-close { all: unset; cursor: pointer; flex: none; width: 28px; height: 26px; text-align: center; border-radius: 5px; font-size: 17px; line-height: 26px; color: var(--bblack); }
 .hw-min:hover, .hw-close:hover, .hw-min:focus-visible, .hw-close:focus-visible { background: var(--g3); color: var(--bwhite); }
 .hw-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 10px; }
+/* Resize handles: thin, mostly outside the window, so the title bar still
+   drags and the content's scrollbar stays clear. */
+.hw-rs { position: absolute; z-index: 3; touch-action: none; }
+.hw-rs[data-dir="n"], .hw-rs[data-dir="s"] { left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.hw-rs[data-dir="e"], .hw-rs[data-dir="w"] { top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.hw-rs[data-dir="n"] { top: -4px; }
+.hw-rs[data-dir="s"] { bottom: -4px; }
+.hw-rs[data-dir="e"] { right: -4px; }
+.hw-rs[data-dir="w"] { left: -4px; }
+.hw-rs[data-dir$="e"]:not([data-dir="e"]), .hw-rs[data-dir$="w"]:not([data-dir="w"]) { width: 10px; height: 10px; }
+.hw-rs[data-dir^="n"]:not([data-dir="n"]) { top: -4px; }
+.hw-rs[data-dir^="s"]:not([data-dir="s"]) { bottom: -4px; }
+.hw-rs[data-dir="ne"], .hw-rs[data-dir="se"] { right: -4px; }
+.hw-rs[data-dir="nw"], .hw-rs[data-dir="sw"] { left: -4px; }
+.hw-rs[data-dir="ne"], .hw-rs[data-dir="sw"] { cursor: nesw-resize; }
+.hw-rs[data-dir="nw"], .hw-rs[data-dir="se"] { cursor: nwse-resize; }
+.hwin.docked .hw-rs, #win-layer.sheet .hw-rs { display: none; }
+/* A resized window: its height is set, and the screen (or the Threads tab)
+   takes the room the rest leaves; the body scrolls only below the minimum. */
+.hwin.sized { max-height: none; }
+.hwin.maxed { border-radius: 0; }
+.hwin.maxed .hw-bar { border-radius: 0; }
+.hwin.sized .hw-body, .hwin.sized .tw-pane { display: flex; flex-direction: column; }
+.hwin.sized .hw-body > *, .hwin.sized .tw-pane > * { flex: none; }
+.hwin.sized .hw-body > .tw-pane { flex: 1 1 0; }
+.hwin.sized .screen-wrap { flex: 1 1 0; min-height: 80px; display: flex; flex-direction: column; }
+.hwin.sized .screen-wrap > .screen { flex: 1 1 0; min-height: 0; max-height: none; }
+.hwin.sized .screen-wrap > .screen-top { flex: none; }
 .pw-tools { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
 .thread-win .tw-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
 .thread-win .tw-name { flex: 1 1 60%; margin: 0; font-size: 15px; line-height: 1.3; color: var(--bwhite); }

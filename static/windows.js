@@ -22,6 +22,12 @@
 // empties the docks and hides registered panels (the side panel), keeping
 // the layout before in layout.hidden; "Restore all" puts it back. A drag reads
 // the layout once when it starts, then only writes styles each frame.
+//
+// A floating window resizes from its edges and corners (thin handles, mouse,
+// pen or touch), between MIN_W x MIN_H and the viewport, or by Alt+Shift+
+// arrows; a double-click on its title bar maximises or restores it. The size
+// is kept with its position; docks size their windows themselves, and a
+// window floated again takes its last floating size. Phones: sheets only.
 window.HDWin = (() => {
   "use strict";
   const POS_KEY = "hd-win-pos";
@@ -30,6 +36,10 @@ window.HDWin = (() => {
   const BAR = 36; // px of a window that always stays on screen
   const EDGE = 48; // px from the page's edge that docks a dragged window
   const SLOP = 5; // px a pointer moves before a press becomes a drag
+  const MIN_W = 220, MIN_H = 120; // px: a resized window's title bar and buttons stay usable
+  const KSTEP = 24; // px per Alt+Shift+arrow
+  const DIRS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+  const between = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const SIDES = ["right", "left", "bottom"];
   const TRAY_POS = ["tl", "t", "tr", "l", "r", "bl", "b", "br"];
   const el = (tag, attrs = {}, ...kids) => {
@@ -147,11 +157,28 @@ window.HDWin = (() => {
   if (work) { work.replaceWith(grid); grid.append(docks.left.el, work, docks.right.el, docks.bottom.el); }
 
   // ---------------------------------------------------------------- windows
-  function clamp(w, width) {
+  // size writes a floating window's size (w.w x w.h; 0: its natural size),
+  // capped by the viewport; a maximised one fills it. Docked windows and
+  // sheets size by CSS. Returns the width written, if any.
+  function size(w) {
+    const on = !!(w.w || w.max) && !w.dock && !phone();
+    w.el.classList.toggle("sized", on);
+    w.el.classList.toggle("maxed", on && !!w.max);
+    if (!on) { w.el.style.height = ""; w.el.style.width = w.baseW; return 0; }
+    if (w.max) Object.assign(w, { x: 0, y: 0, w: innerWidth, h: innerHeight });
+    const width = Math.min(w.w, innerWidth);
+    w.el.style.width = width + "px";
+    w.el.style.height = Math.min(w.h, innerHeight) + "px";
+    return width;
+  }
+  // clamp keeps a window's title bar on screen; full (the viewport changed):
+  // a resized window whole.
+  function clamp(w, width, full) {
+    if (width == null) width = size(w) || null;
     if (phone() || w.dock) return;
     if (width == null) width = w.el.getBoundingClientRect().width || w.el.offsetWidth;
     w.x = Math.round(Math.max(0, Math.min(w.x, innerWidth - width)));
-    w.y = Math.round(Math.max(0, Math.min(w.y, innerHeight - BAR)));
+    w.y = Math.round(Math.max(0, Math.min(w.y, innerHeight - (full && w.w ? Math.min(w.h, innerHeight) : BAR))));
     w.el.style.left = w.x + "px";
     w.el.style.top = w.y + "px";
   }
@@ -453,6 +480,7 @@ window.HDWin = (() => {
     w.el.classList.remove("min", "dragging");
     w.el.classList.add("docked");
     w.el.style.left = w.el.style.top = w.el.style.zIndex = "";
+    size(w);
     sheetActive = id;
     saveLayout();
     syncDockBtn(w);
@@ -472,7 +500,7 @@ window.HDWin = (() => {
     syncDockBtn(w);
     renderDocks();
     clamp(w);
-    store.put(w.id, { x: w.x, y: w.y });
+    save(w);
     front(w);
   }
   // Alt+Shift+D: floating -> right -> left -> bottom -> floating.
@@ -542,7 +570,11 @@ window.HDWin = (() => {
     }
     press(e, {
       start(x, y) {
-        if (!w.dock) { offx = x - w.x; offy = y - w.y; }
+        if (!w.dock) {
+          offx = x - w.x; offy = y - w.y;
+          // A maximised window leaves the maximum under the pointer.
+          if (w.max) { unmax(w); offx = Math.min(offx, Math.max(40, (w.w || 480) - 60)); size(w); }
+        }
         w.el.classList.add("dragging");
         measure();
       },
@@ -569,9 +601,69 @@ window.HDWin = (() => {
           const from = target.z ? target.z.ids.indexOf(w.id) : -1;
           if (from >= 0 && i > from) i--;
           dockWin(w.id, target.side, i);
-        } else if (!w.dock) store.put(w.id, { x: w.x, y: w.y });
+        } else if (!w.dock) save(w);
       },
     });
+  }
+
+  // ---------------------------------------------------------------- resize
+  const save = (w) => store.put(w.id, w.w ? { x: w.x, y: w.y, w: w.w, h: w.h, max: w.max || undefined, prev: w.max ? w.prev : undefined } : { x: w.x, y: w.y });
+  function unmax(w) {
+    w.max = false;
+    const p = w.prev || {};
+    w.w = p.w || 0; w.h = p.h || 0;
+    if (Number.isFinite(p.x)) { w.x = p.x; w.y = p.y; }
+    w.prev = null;
+  }
+  function toggleMax(id) {
+    const w = wins.get(id);
+    if (!w || w.dock || w.min || phone()) return;
+    if (w.max) unmax(w);
+    else { w.prev = { x: w.x, y: w.y, w: w.w, h: w.h }; w.max = true; }
+    clamp(w);
+    save(w);
+    front(w);
+  }
+  // An edge or corner handle: reads the window once, then each frame writes
+  // its place and size, kept between the minimum and the viewport.
+  function beginResize(e, id, dir) {
+    const w = wins.get(id);
+    if (!w || w.dock || phone() || e.button > 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let r0 = null;
+    press(e, {
+      start() {
+        const r = w.el.getBoundingClientRect();
+        r0 = { x: r.left, y: r.top, w: r.width, h: r.height };
+        w.max = false; w.prev = null;
+        w.el.classList.add("sized", "resizing");
+        w.el.classList.remove("maxed");
+      },
+      move(x, y, dx, dy) {
+        let { x: L, y: T, w: W, h: H } = r0;
+        const R = L + W, B = T + H;
+        if (dir.includes("e")) W = between(W + dx, MIN_W, innerWidth - L);
+        if (dir.includes("s")) H = between(H + dy, MIN_H, innerHeight - T);
+        if (dir.includes("w")) { L = between(L + dx, 0, R - MIN_W); W = R - L; }
+        if (dir.includes("n")) { T = between(T + dy, 0, B - MIN_H); H = B - T; }
+        Object.assign(w, { x: Math.round(L), y: Math.round(T), w: Math.round(W), h: Math.round(H) });
+        const s = w.el.style;
+        s.left = w.x + "px"; s.top = w.y + "px"; s.width = w.w + "px"; s.height = w.h + "px";
+      },
+      end() { w.el.classList.remove("resizing"); size(w); save(w); },
+    });
+  }
+  // Alt+Shift+arrows: the bottom-right corner moves (right/down grow).
+  function keyResize(w, key) {
+    const r = w.el.getBoundingClientRect();
+    if (w.max) unmax(w);
+    const dx = key === "ArrowRight" ? KSTEP : key === "ArrowLeft" ? -KSTEP : 0;
+    const dy = key === "ArrowDown" ? KSTEP : key === "ArrowUp" ? -KSTEP : 0;
+    w.w = Math.round(between(r.width + dx, MIN_W, innerWidth - w.x));
+    w.h = Math.round(between(r.height + dy, MIN_H, innerHeight - w.y));
+    clamp(w);
+    save(w);
   }
 
   // A split's gutter shares the room of the two panes beside it.
@@ -647,7 +739,9 @@ window.HDWin = (() => {
       el("button", { type: "button", class: "hw-close", title: "Close (Esc)", "aria-label": "Close", text: "×", onclick: () => close(id) }));
     const node = el("section", { class: "hwin " + (opts.cls || ""), "data-win": id, role: "dialog", "aria-label": opts.title || id, tabindex: "-1" }, bar, body);
     if (opts.width) node.style.width = `min(${opts.width}px, calc(100vw - 16px))`;
+    for (const dir of DIRS) node.append(el("div", { class: "hw-rs", "data-dir": dir, "aria-hidden": "true", onpointerdown: (e) => beginResize(e, id, dir) }));
     w = { id, el: node, body, title: opts.title || id, short: opts.short, onClose: opts.onClose, onEsc: opts.onEsc, min: false, at: 0, x: 0, y: 0, dock: null,
+      w: 0, h: 0, max: false, prev: null, baseW: node.style.width,
       setTitle(t, short) { w.title = t; if (short) w.short = short; title.textContent = t; node.setAttribute("aria-label", t); renderTray(); if (w.dock) renderDocks(); },
       setAttn(on) { w.attn = !!on; renderTray(); if (w.dock) renderDocks(); },
       close: () => close(id), focus: () => restore(id) };
@@ -656,12 +750,16 @@ window.HDWin = (() => {
     if (opts.persist && !layout.open.includes(id)) layout.open.push(id);
     layer.append(node);
     const saved = store.get()[id];
-    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) Object.assign(w, { x: saved.x, y: saved.y });
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      Object.assign(w, { x: saved.x, y: saved.y });
+      if (saved.w > 0 && saved.h > 0) Object.assign(w, { w: Math.max(MIN_W, saved.w), h: Math.max(MIN_H, saved.h), max: !!saved.max, prev: saved.prev && typeof saved.prev === "object" ? saved.prev : null });
+    }
     // New windows cascade over the graph, clear of the header and the strip.
     else { const k = cascade++ % 8; Object.assign(w, { x: Math.round(Math.max(16, innerWidth * 0.3)) + k * 34, y: Math.round(Math.max(150, innerHeight * 0.26)) + k * 34 }); }
     node.addEventListener("pointerdown", () => { if (activeWin() !== w) front(w); }, true);
     node.addEventListener("focusin", () => { if (activeWin() !== w) front(w); });
     bar.addEventListener("pointerdown", (e) => { if (!e.target.closest("button")) beginDrag(e, id); });
+    bar.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) toggleMax(id); });
     opts.build?.(body, w);
     w.dock = dockOf(id);
     if (w.dock) node.classList.add("docked");
@@ -726,6 +824,7 @@ window.HDWin = (() => {
         layer.append(w.el);
         w.el.style.left = w.x + "px";
         w.el.style.top = w.y + "px";
+        size(w);
         syncDockBtn(w);
       }
       w.min = true;
@@ -809,6 +908,15 @@ window.HDWin = (() => {
       e.preventDefault();
       e.stopImmediatePropagation();
       cycleDock(focusedWin());
+    } else if (e.shiftKey && /^Arrow(Left|Right|Up|Down)$/.test(e.key)) {
+      // Alt+Shift+arrows resize the focused floating window. On a Mac they
+      // also select words while typing: there they leave text fields alone.
+      const w = focusedWin();
+      if (!w || w.dock || w.min || phone()) return;
+      if (/Mac/.test(navigator.platform) && document.activeElement?.matches?.("input, textarea, [contenteditable]")) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      keyResize(w, e.key);
     } else if (e.code === "BracketRight" || e.code === "BracketLeft") {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -817,7 +925,7 @@ window.HDWin = (() => {
   }, true);
   addEventListener("resize", () => {
     if (phone() !== wasPhone) { wasPhone = phone(); renderDocks(); }
-    for (const w of wins.values()) clamp(w);
+    for (const w of wins.values()) clamp(w, null, true);
     renderTray();
   });
   wasPhone = phone();

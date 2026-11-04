@@ -766,6 +766,8 @@
       ["Alt+Shift+D", "Dock the focused window right, left, bottom, then float it again"],
       ["Alt+] / Alt+[", "Next / previous tab in the focused window's dock"],
       ["Alt+Shift+M", "Minimise all windows, docks and the panel; again to restore them"],
+      ["Alt+Shift+Arrows", "Resize the focused floating window (→ ↓ grow, ← ↑ shrink); or drag its edges and corners"],
+      ["Double-click a title bar", "Maximise a floating window, or restore it"],
       ["Ctrl+Enter", "Send the chat box"],
     ];
     const cmds = [

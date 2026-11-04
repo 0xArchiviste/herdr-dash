@@ -125,7 +125,9 @@ test("stages, chips with labels, summary strip (T1, T2, T3)", async () => {
   assert.equal(stages["t-0005"], "idle");
   assert.equal(stages["t-0004"], "done");
   const order = await page.$$eval("#panel .tv .tv-stage", (s) => s.map((x) => x.dataset.stage));
-  assert.deepEqual(order, ["needs", "review", "working", "queued", "idle", "done"]);
+  // Live work first, review last, done collapsed at the end.
+  assert.deepEqual(order, ["needs", "working", "queued", "idle", "review", "done"]);
+  assert.deepEqual(await page.$$eval("#panel .tv .tv-sum .tv-count", (b) => b.map((x) => x.dataset.stage)), ["needs", "working", "queued", "idle", "review", "done"]);
   // Done is a collapsed group.
   assert.equal(await page.$eval('#panel .tv .tv-stage[data-stage="done"]', (d) => d.open), false);
   // Every chip has a text label.
@@ -263,6 +265,7 @@ test("in the coordinator window and the thread side panel (T8)", async () => {
   await win.locator('.tw-tab[data-tab="threads"]').click();
   await win.locator(".tv .tv-card").first().waitFor();
   assert.ok(await win.locator(".tv .tv-card").count() >= 8);
+  assert.deepEqual(await win.locator(".tv .tv-stage").evaluateAll((s) => s.map((x) => x.dataset.stage)), ["needs", "working", "queued", "idle", "review", "done"]);
   await page.screenshot({ path: join(artifacts, "threads-window.png") });
   await win.locator(".hw-close").click();
   // The thread side panel: that thread's own timeline.
@@ -276,6 +279,7 @@ test("phone layout: sheet with the Threads view, no sideways scroll (T8)", async
   const page = await ctx.newPage();
   await openHub(page);
   await page.locator("#panel .tv").scrollIntoViewIfNeeded();
+  assert.deepEqual(await page.$$eval("#panel .tv .tv-stage", (s) => s.map((x) => x.dataset.stage)), ["needs", "working", "queued", "idle", "review", "done"]);
   const over = await page.evaluate(() => [...document.querySelectorAll("#panel .tv, #panel .tv *")].filter((e) => e.getBoundingClientRect().right > innerWidth + 1 && e.offsetParent).map((e) => e.className).slice(0, 5));
   assert.deepEqual(over, [], "elements past the right edge");
   assert.ok(await page.evaluate(() => document.querySelector("#panel").scrollWidth <= document.querySelector("#panel").clientWidth + 1));
