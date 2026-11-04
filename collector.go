@@ -53,6 +53,7 @@ type Config struct {
 
 // RawThread is one row of `herdr-projects thread list <slug> --json`.
 type RawThread struct {
+	liveAtFetch      string   // the pane's agent status when herdr-projects grouped it
 	ID               string   `json:"id"`
 	Title            string   `json:"title"`
 	Status           string   `json:"status"`
@@ -540,6 +541,9 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 			p.sig = 0 // try again next tick
 		} else {
 			p.listError = ""
+			for i := range rows {
+				rows[i].liveAtFetch = c.panes[rows[i].PaneID].AgentStatus
+			}
 			p.threads = rows
 			// The new rows may name new panes: hash those, so the next tick
 			// compares like with like.
@@ -676,7 +680,7 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	case pane.Agent == "":
 		co.State, co.AgentExited = "exited", true
 		co.Resumable = resumable(p.record, c.projectProfile(p.Slug, "coordinator"))
-	case pane.AgentStatus == "blocked":
+	case c.showsPrompt(pane):
 		co.State = "blocked"
 	case strings.HasPrefix(sub, "needs you"):
 		co.State = "waiting"
@@ -864,6 +868,17 @@ func dashState(t RawThread, live string) string {
 		if live == "blocked" || t.Error != "" {
 			return "blocked"
 		}
+		// Grouped while its pane showed a prompt, answered since (in the pane
+		// or elsewhere): herdr-projects regroups it on its next list, the
+		// strip need not wait for that. Its rule: an agent at work is not
+		// waiting, whatever it last reported.
+		selfWaiting := strings.EqualFold(t.Activity, "Waiting for you")
+		if t.liveAtFetch == "blocked" && (live == "working" || (live == "idle" || live == "done") && !selfWaiting) {
+			if live == "working" {
+				return "working"
+			}
+			return "idle"
+		}
 		return "waiting"
 	case "ready-for-review":
 		return "review"
@@ -949,7 +964,7 @@ func (c *Collector) rebuild() {
 			}
 			th.Launch = launchOf(t, alive && pane.AgentStatus != "")
 			th.AgentExited = alive && pane.Agent == "" && t.Status == "open" && th.Launch == nil
-			if live == "blocked" {
+			if alive && c.showsPrompt(pane) {
 				th.Prompt = c.prompts[t.PaneID]
 			}
 			// A prompt on screen needs the user, whatever group herdr-projects
@@ -1301,15 +1316,24 @@ func (c *Collector) cachedHit(m map[string]screenHit, pane string, maxAge time.D
 	return h, ok && time.Since(h.at) < maxAge
 }
 
+// showsPrompt: herdr says the pane is blocked, or it showed a prompt at the
+// last reading and is not at work. With text typed into a question's field
+// herdr reports Claude Code as done, not blocked (seen live): the prompt is
+// still there. It goes on the first reading that finds none. Called with
+// c.mu held.
+func (c *Collector) showsPrompt(pn Pane) bool {
+	return pn.AgentStatus == "blocked" || c.prompts[pn.PaneID] != nil && pn.AgentStatus != "working" && pn.AgentStatus != ""
+}
+
 // promptPanes are the panes worth parsing: blocked thread panes and
-// blocked coordinator panes. Nothing else is read for prompts.
+// blocked coordinator panes (see showsPrompt). Nothing else is read.
 func (c *Collector) promptPanes() map[string]string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	want := map[string]string{}
 	for _, p := range c.projects {
 		for _, t := range p.threads {
-			if pn, ok := c.panes[t.PaneID]; ok && t.Status != "resolved" && pn.AgentStatus == "blocked" {
+			if pn, ok := c.panes[t.PaneID]; ok && t.Status != "resolved" && c.showsPrompt(pn) {
 				want[t.PaneID] = pn.Agent
 			}
 		}
@@ -1327,7 +1351,7 @@ func (c *Collector) refreshPrompts(ctx context.Context) {
 	got := map[string]*Prompt{}
 	for pane, agent := range want {
 		_, raw := c.Screen(ctx, pane, max(time.Second, c.cfg.Poll/2))
-		if p := ParsePrompt(raw, agent); p != nil {
+		if p := c.longPrompt(ctx, pane, agent, ParsePrompt(raw, agent)); p != nil {
 			got[pane] = p
 		}
 	}
@@ -1342,7 +1366,23 @@ func (c *Collector) FreshPrompt(ctx context.Context, pane, agent string) *Prompt
 	defer c.lockPane(pane)()
 	raw := c.readPaneANSI(ctx, pane, liveLines)
 	c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
-	return ParsePrompt(raw, agent)
+	return c.longPrompt(ctx, pane, agent, ParsePrompt(raw, agent))
+}
+
+// planLines is how far up a plan approval is read: the plan sits above
+// the menu and runs longer than the live read.
+const planLines = 200
+
+// longPrompt re-reads a plan approval with its whole plan. The poll and the
+// check before an answer both go through here, so their sigs agree.
+func (c *Collector) longPrompt(ctx context.Context, pane, agent string, p *Prompt) *Prompt {
+	if p == nil || p.Kind != "plan" {
+		return p
+	}
+	if q := ParsePrompt(c.readPaneANSI(ctx, pane, planLines), agent); q != nil && q.Kind == "plan" {
+		return q
+	}
+	return p
 }
 
 func (c *Collector) paneSession(pane string) string {

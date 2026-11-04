@@ -69,13 +69,31 @@ always through `herdr-projects` and its safety checks.
   (nothing is resent). Claude Code, Codex (also on its alternate screen) and
   opencode screens are read, including commands and labels the agent wrapped
   over several lines; anything else falls back to the quick replies.
+  Claude Code's richer menus work as in the pane: question tabs (←/→ between
+  questions), option previews with notes (`n`), plan approval with the plan
+  shown and a field for "Tell Claude what to change", and "Tab to amend"
+  ("No, and tell Claude what to do differently", "Yes, and tell Claude what
+  to do next"). A "Type something" row is a field: the text, over several
+  lines for Claude Code (Shift+Enter), is typed literally after the row is
+  picked, then Enter; in a multi-select it is typed without Enter (Enter would
+  untick it) and Submit sends the set. Text already typed in the pane shows
+  read-only and is never typed over; while a field in the pane has the
+  keyboard, options are reached with arrows instead of digits.
+- **Prompts clear on the next reading**: a prompt window and its Needs-you
+  entry go as soon as the pane no longer shows the prompt (answered in the
+  pane, from another tab, or the agent moved on), the pane closes or the
+  agent exits, also after an answer timed out or a hidden tab comes back.
 - **Dialog windows**: each agent waiting on a permission or a question gets
   its own floating window with the card, opened by itself for a new prompt
   (⚙ → "Open a window for each new prompt" turns that off). Several can be
   open at once; they have no backdrop, so the graph stays usable. Click to
   bring one to front, drag it by its title bar (mouse or touch), `–`
-  minimises it to the tray at the bottom, `×` or `Esc` closes it, `Alt+W`
-  cycles through them, and digits `1`–`9` pick an option of the focused one.
+  minimises it to the tray at the bottom, `×` closes it, `Alt+W` cycles
+  through them. The focused one takes the pane's menu keys: `↑` `↓` move its
+  highlight (which follows the pane's when that moves), `Enter` picks, digits
+  `1`–`9` pick directly, `Space` ticks a multi-select row, `Tab` adds text
+  to Yes/No, `n` adds notes to a preview, and `Esc` is the pane's Esc (deny
+  or cancel; it closes windows whose prompt has none).
   Positions are kept per window. A thread's or coordinator's screen and chat
   open in the same kind of window (Shift+click its node, `⧉` on its strip
   chip or in the panel), so several can be watched side by side; they come
@@ -579,7 +597,10 @@ that the demo names nothing real (no home paths, emails, IPs, real orgs or
 real project names). `go test` runs the prompt parser on screens taken
 from real Claude Code, Codex and opencode panes (`testdata/prompts/`);
 `e2e/prompts.test.mjs` drives the cards, the exact keys, the prompt-cleared
-check and the coordinator path; `e2e/windows.test.mjs` drives the dialog and
+check and the coordinator path; `e2e/prompt-keys.test.mjs` drives the
+window's keyboard, typed answers, multi-select, tabs, amend, plan approval
+and previews on screens taken live from Claude Code; `e2e/prompt-stale.test.mjs`
+checks that answered or vanished prompts leave the windows and the strip; `e2e/windows.test.mjs` drives the dialog and
 thread windows (several at once, drag, tray, Esc, Alt+W, reload, phone
 sheets) and the answer confirmation on 76-column Claude Code and Codex
 screens. `e2e/voice.test.mjs` drives voice with a mocked
