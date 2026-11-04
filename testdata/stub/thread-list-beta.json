@@ -63,7 +63,8 @@
     "agent_name": "hp-beta-t-0002",
     "resolved_reason": "",
     "repo": "/fixture/repos/beta",
-    "cwd": "/fixture/wt/beta-t-0002"
+    "cwd": "/fixture/wt/beta-t-0002",
+    "thread_dir": "/fixture/wt/beta-t-0002/.herdr-project/beta-t-0002"
   },
   {
     "id": "t-0003",

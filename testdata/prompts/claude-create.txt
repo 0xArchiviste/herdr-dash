@@ -1,0 +1,18 @@
+
+● Write(README.md)
+
+─────────────────────────────────────────────────────────────────────────────
+ Create file
+ README.md
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1 Poster demo ✓
+  2 A small demo of the poster page.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create README.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common
+      file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+─────────────────────────────────────────────────────────── add-readme-file ─

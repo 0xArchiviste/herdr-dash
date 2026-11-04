@@ -765,6 +765,7 @@
       ["Alt+W", "Next window (with Shift: previous)"],
       ["Alt+Shift+D", "Dock the focused window right, left, bottom, then float it again"],
       ["Alt+] / Alt+[", "Next / previous tab in the focused window's dock"],
+      ["Alt+Shift+M", "Minimise all windows, docks and the panel; again to restore them"],
       ["Ctrl+Enter", "Send the chat box"],
     ];
     const cmds = [
