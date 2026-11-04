@@ -1,6 +1,6 @@
 // herdr-dash Threads view: how each of a project's threads is progressing,
 // organised instead of one stream of text. One card per thread, grouped by
-// stage (Needs you, Review / PR open, Working, Queued, Idle, Done), each
+// stage (Needs you, Working, Queued, Idle, Review / PR open, Done), each
 // with a labelled state chip, its reported progress, and a colour-coded
 // timeline collapsed to the latest event. A summary strip counts the
 // stages, filters by them, and names what is blocked on you.
@@ -28,13 +28,14 @@ window.HDThreads = (() => {
   const enc = encodeURIComponent;
   const st = () => window.hd?.state() || { threads: [], projects: [] };
 
-  // Stages, in the order they are read: what needs you first.
+  // Stages, in the order they are read: what needs you, then live work,
+  // review last before the folded Done.
   const STAGES = [
     { id: "needs", label: "Needs you", ico: "!" },
-    { id: "review", label: "Review · PR open", ico: "⇡" },
     { id: "working", label: "Working", ico: "▸" },
     { id: "queued", label: "Queued · starting", ico: "◷" },
     { id: "idle", label: "Idle", ico: "◌" },
+    { id: "review", label: "Review · PR open", ico: "⇡" },
     { id: "done", label: "Done", ico: "✓" },
   ];
   const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]));
