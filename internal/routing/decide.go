@@ -37,9 +37,12 @@ type Signal struct {
 
 // Profile is a herdr-projects profile as its config defines it.
 type Profile struct {
-	Name  string `json:"name"`
-	Agent string `json:"agent"`
-	Model string `json:"model,omitempty"`
+	Name        string `json:"name"`
+	Agent       string `json:"agent"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	Description string `json:"description,omitempty"`
+	Label       string `json:"label,omitempty"` // a readable name for the picker
 }
 
 // Input is everything one preview depends on; Decide reads nothing else.

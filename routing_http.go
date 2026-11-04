@@ -85,6 +85,7 @@ type routingState struct {
 	Modes         []routing.Mode        `json:"modes"`
 	Providers     []routingProvider     `json:"providers"`
 	Profiles      []routing.Profile     `json:"profiles"`
+	Catalog       []routing.Harness     `json:"catalog"`
 	ProfilesKnown bool                  `json:"profiles_known"`
 	Projects      []routingProject      `json:"projects"`
 	Enforcement   map[string]string     `json:"enforcement"`
@@ -128,6 +129,8 @@ func (rt *Routing) state(snap routing.Snapshot) routingState {
 		st.Profiles = append(st.Profiles, p)
 	}
 	sort.Slice(st.Profiles, func(i, j int) bool { return st.Profiles[i].Name < st.Profiles[j].Name })
+	st.Catalog = rt.catalog(cat)
+	st.Enforcement["settings"] = "Reasoning and context are saved and shown in the preview; each applies when the launch hook lands."
 	st.Projects = rt.projects()
 	return st
 }
@@ -154,9 +157,77 @@ func (rt *Routing) profiles() (map[string]routing.Profile, bool) {
 	}
 	out := map[string]routing.Profile{}
 	for name, p := range cfg.Profiles {
-		out[name] = routing.Profile{Name: name, Agent: p.Agent, Model: p.Model}
+		out[name] = routing.Profile{Name: name, Agent: p.Agent, Model: p.Model, Effort: p.Effort, Description: p.Description, Label: profileLabel(p.Agent, p.Model)}
 	}
 	return out, true
+}
+
+// profileLabel names what a profile runs: its model, else the harness default.
+func profileLabel(agent, model string) string {
+	if model != "" {
+		return routing.ModelLabel(agent, model)
+	}
+	for _, p := range routing.Providers {
+		if p.Agent == agent {
+			return p.Label + " default model"
+		}
+	}
+	return agent + " (not routable)"
+}
+
+// catalog is what the picker offers: built-in models, profile models, and
+// the models each harness's own config names (Codex config.toml, opencode
+// providers) with the context sizes they state.
+func (rt *Routing) catalog(profiles map[string]routing.Profile) []routing.Harness {
+	extra := map[string][]routing.Model{}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(rt.cfg.CodexDir), "config.toml")); err == nil {
+		var c codexConfig
+		if tomlDecode(b, &c) == nil && c.Model != "" {
+			m := routing.Model{ID: c.Model, Source: "config"}
+			if c.Window > 0 {
+				m.Contexts = []int64{c.Window}
+			}
+			extra["codex"] = append(extra["codex"], m)
+		}
+	}
+	for _, name := range []string{"opencode.jsonc", "opencode.json", "config.json"} {
+		b, err := os.ReadFile(filepath.Join(rt.cfg.Usage.OpencodeConfig, name))
+		if err != nil {
+			continue
+		}
+		var c opencodeConfig
+		if json.Unmarshal(jsonc(b), &c) != nil {
+			continue
+		}
+		var ids []string
+		for prov, p := range c.Providers {
+			for id := range p.Models {
+				ids = append(ids, prov+"/"+id)
+			}
+		}
+		sort.Strings(ids)
+		for _, full := range ids {
+			prov, id, _ := strings.Cut(full, "/")
+			pm := c.Providers[prov].Models[id]
+			m := routing.Model{ID: full, Source: "config"}
+			if pm.Name != "" {
+				pn := c.Providers[prov].Name
+				if pn == "" {
+					pn = prov
+				}
+				m.Label = pm.Name + " via opencode (" + pn + ")"
+			}
+			if pm.Limit.Context > 0 {
+				m.Contexts = []int64{pm.Limit.Context}
+			}
+			extra["opencode"] = append(extra["opencode"], m)
+		}
+		if c.Model != "" {
+			extra["opencode"] = append(extra["opencode"], routing.Model{ID: c.Model, Source: "config"})
+		}
+		break
+	}
+	return routing.Catalog(profiles, extra)
 }
 
 // legacyProfile is what a launch uses without routing: PROJECT.md
@@ -311,7 +382,7 @@ func (rt *Routing) save(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusBadRequest, routingErr{Error: "expected_revision is required (\"none\" for a new file)"})
 		return
 	}
-	if fe := rt.checkProfiles(req.Ops); len(fe) > 0 {
+	if fe := rt.checkCandidates(req.Ops); len(fe) > 0 {
 		refuse(http.StatusUnprocessableEntity, routingErr{Error: fe.Error(), Code: "invalid", Fields: fe})
 		return
 	}
@@ -334,21 +405,43 @@ func (rt *Routing) save(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// checkProfiles refuses candidates naming a profile herdr-projects does not
-// define (the built-in claude, codex and opencode always exist).
-func (rt *Routing) checkProfiles(ops []routing.Op) routing.FieldErrors {
+// checkCandidates refuses, field by field, what the policy check cannot
+// know alone: a profile herdr-projects does not define (the built-in
+// claude, codex and opencode always exist), and a context size the model
+// (the candidate's, else its profile's) does not offer. Model and effort
+// are checked here too, so every error names the op's field.
+func (rt *Routing) checkCandidates(ops []routing.Op) routing.FieldErrors {
 	cat, known := rt.profiles()
-	if !known {
-		return nil
-	}
+	catalog := rt.catalog(cat)
 	var fe routing.FieldErrors
 	for i, op := range ops {
 		for j, c := range op.Candidates {
+			f := fmt.Sprintf("ops[%d].candidates[%d].", i, j)
+			bad := func(field, msg string) { fe = append(fe, routing.FieldError{Field: f + field, Message: msg}) }
 			if !knownProvider(c.Provider) {
 				continue // the schema check names it
 			}
-			if _, ok := cat[c.Profile]; !ok && c.Profile != c.Provider {
-				fe = append(fe, routing.FieldError{Field: fmt.Sprintf("ops[%d].candidates[%d].profile", i, j), Message: fmt.Sprintf("herdr-projects has no profile %q", c.Profile)})
+			p, ok := cat[c.Profile]
+			if known && !ok && c.Profile != c.Provider {
+				bad("profile", fmt.Sprintf("herdr-projects has no profile %q", c.Profile))
+			}
+			if c.Model != "" && !routing.ModelRe.MatchString(c.Model) {
+				bad("model", "must be a model id of at most 128 characters, without spaces")
+				continue
+			}
+			if c.Effort != "" {
+				if msg := routing.CheckEffort(c.Provider, c.Effort); msg != "" {
+					bad("effort", msg)
+				}
+			}
+			if c.Context != 0 {
+				model := c.Model
+				if model == "" {
+					model = p.Model
+				}
+				if msg := routing.CheckContext(catalog, c.Provider, model, c.Context); msg != "" {
+					bad("context", msg)
+				}
 			}
 		}
 	}
@@ -431,8 +524,26 @@ func routingMain(args []string) int {
 	fmt.Printf("%s in %s: %s\n%s\n", who, d.Project, d.Outcome, d.Reason)
 	tw := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
 	for i, c := range d.Candidates {
-		fmt.Fprintf(tw, "%d.\t%s/%s\t%s\t%s\n", i+1, c.Provider, c.Profile, c.Status, c.Reason)
+		fmt.Fprintf(tw, "%d.\t%s/%s%s\t%s\t%s\n", i+1, c.Provider, c.Profile, settingsText(c.Candidate), c.Status, c.Reason)
 	}
 	tw.Flush()
 	return 0
+}
+
+// settingsText is " (model, effort high, context 1M)" for the CLI table.
+func settingsText(c routing.Candidate) string {
+	var parts []string
+	if c.Model != "" {
+		parts = append(parts, c.Model)
+	}
+	if c.Effort != "" {
+		parts = append(parts, "effort "+c.Effort)
+	}
+	if c.Context != 0 {
+		parts = append(parts, "context "+routing.ContextLabel(c.Context))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

@@ -30,6 +30,7 @@ import (
 const (
 	maxPromptBytes = 8000
 	maxKeysText    = 500
+	maxAnswerText  = 2000 // free text typed into a prompt's field
 	maxKeys        = 8
 	maxBulk        = 200
 	maxScreenSubs  = 16
@@ -45,7 +46,7 @@ var allowedKeys = map[string]bool{
 }
 
 // codeRe pulls the machine-readable refusal out of a herdr-projects error.
-var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked)\b`)
+var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|draft_in_field|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked)\b`)
 
 type Actions struct {
 	cfg     Config
@@ -109,8 +110,14 @@ func (a *Actions) register(mux *http.ServeMux) {
 			"public_url": a.cfg.PublicURL,
 			"voice":      map[string]bool{"intent": a.cfg.Voice.Intent(), "transcribe": a.cfg.Voice.STT(), "local": a.cfg.STT.Local()}})
 	})
-	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guard(a.threadAction))
-	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guard(a.coordinator))
+	// A prompt may carry images (images.go); other thread actions stay small.
+	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guardN(func(r *http.Request) int64 {
+		if r.PathValue("action") == "prompt" {
+			return maxMessageBody
+		}
+		return 64 << 10
+	}, a.threadAction))
+	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guardN(func(*http.Request) int64 { return maxMessageBody }, a.coordinator))
 	mux.HandleFunc("POST /api/project/{slug}/answer", a.guard(a.coordAnswer))
 	mux.HandleFunc("POST /api/project/{slug}/keys", a.guard(a.coordKeys))
 	mux.HandleFunc("POST /api/ack", a.guard(a.bulkAck))
@@ -131,14 +138,23 @@ func (a *Actions) register(mux *http.ServeMux) {
 // (an HTML form cannot send one cross-site without a preflight) and a
 // same-origin Origin when the browser sends one.
 func (a *Actions) guard(h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
+	return a.guardN(func(*http.Request) int64 { return 64 << 10 }, h)
+}
+
+// guardN is guard with a body of up to limit(r) bytes; a longer one is refused.
+func (a *Actions) guardN(limitOf func(*http.Request) int64, h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		limit := limitOf(r)
 		target := strings.TrimPrefix(r.URL.Path, "/api/")
 		err := a.precheck(r)
 		var out any
 		if err == nil {
 			var body []byte
-			body, err = io.ReadAll(io.LimitReader(r.Body, 64<<10))
+			body, err = io.ReadAll(io.LimitReader(r.Body, limit+1))
+			if err == nil && int64(len(body)) > limit {
+				err = fail(http.StatusRequestEntityTooLarge, "the message is too large")
+			}
 			if err == nil {
 				out, err = h(r, body)
 			}
@@ -271,17 +287,18 @@ func (a *Actions) threadAction(r *http.Request, body []byte) (any, error) {
 	var out string
 	switch r.PathValue("action") {
 	case "prompt":
-		var req struct{ Text string }
+		var req messageReq
 		if err := decode(body, &req); err != nil {
 			return nil, err
 		}
-		text, err := cleanText(req.Text, maxPromptBytes, true)
+		text, stored, err := req.message(threadImageTarget(slug, t))
 		if err != nil {
 			return nil, err
 		}
 		out, err = a.hp(2*time.Minute, text, "thread", "prompt", slug, id, "--text-file", "-")
 		a.col.Burst(t.PaneID)
 		if err != nil {
+			unsent(stored, err)
 			return nil, err
 		}
 	case "keys":
@@ -371,24 +388,61 @@ func (a *Actions) coordinator(r *http.Request, body []byte) (any, error) {
 	if !a.col.hasProject(slug) {
 		return nil, fail(http.StatusNotFound, "no project %s", slug)
 	}
-	var req struct{ Text string }
+	var req messageReq
 	if err := decode(body, &req); err != nil {
 		return nil, err
 	}
-	text, err := cleanText(req.Text, maxPromptBytes, true)
+	co, live := a.col.coordPane(slug)
+	if len(req.Images) > 0 && !live {
+		return nil, fail(http.StatusConflict, "images not sent: no coordinator pane of %s is live", slug)
+	}
+	text, stored, err := req.message(coordImageTarget(a.cfg.Root, slug, co.Agent))
 	if err != nil {
 		return nil, err
 	}
 	out, err := a.hp(time.Minute, text, "coordinator", "prompt", slug, "--text-file", "-")
-	if co, ok := a.col.coordPane(slug); ok {
+	if live {
 		a.col.Burst(co.PaneID)
 	}
 	if err != nil {
+		unsent(stored, err)
 		return nil, err
 	}
 	a.col.Kick()
 	return actionResult{OK: true, Output: out}, nil
 }
+
+// messageReq is a prompt from a chat box: text, images, or both.
+type messageReq struct {
+	Text   string    `json:"text"`
+	Images []imageIn `json:"images"`
+}
+
+// message checks the text, stores the images in it and returns the
+// text to send, naming them. With images the text may be empty.
+func (m messageReq) message(it imageTarget) (string, []string, error) {
+	text := m.Text
+	if len(m.Images) == 0 || strings.TrimSpace(text) != "" {
+		var err error
+		if text, err = cleanText(text, maxPromptBytes, true); err != nil {
+			return "", nil, err
+		}
+	}
+	return storeImages(it, text, m.Images)
+}
+
+// unsent removes the images of a message refused before anything was typed
+// into the pane (rate limit, a blocked agent, a draft in the box). After any
+// other failure the text may sit in the pane, so its images stay until the
+// sweep (images.go).
+func unsent(paths []string, err error) {
+	var he httpErr
+	if len(paths) > 0 && (errors.As(err, &he) || refusedBeforeTyping.MatchString(err.Error())) {
+		removeAll(paths)
+	}
+}
+
+var refusedBeforeTyping = regexp.MustCompile(`\b(agent_blocked|draft_in_box)\b`)
 
 type bulkResult struct {
 	Key   string `json:"key"`
@@ -601,6 +655,7 @@ type answerReq struct {
 	Sig    string `json:"sig"`
 	Option int    `json:"option"`
 	Text   string `json:"text"`
+	Action string `json:"action"` // instead of an option: cancel (Esc), prev, next (question tabs)
 }
 
 type keyStep struct {
@@ -608,10 +663,27 @@ type keyStep struct {
 	text string
 }
 
+// answerText checks free text for a prompt's field: typed literally (herdr
+// sends it without bracketed paste), so no Tab, Esc or other control
+// character that the agent would take as a key. A newline is a line break
+// in Claude Code's fields (LF; Enter is CR) and nowhere else.
+func answerText(s, harness string) (string, error) {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.TrimRight(s, " \n")
+	if strings.ContainsAny(s, "\t\r") {
+		return "", fail(http.StatusBadRequest, "text holds a tab or carriage return, which the agent would take as a key")
+	}
+	if strings.Contains(s, "\n") && harness != "claude" {
+		return "", fail(http.StatusBadRequest, "only Claude Code takes text over several lines; use one line")
+	}
+	return cleanText(s, maxAnswerText, true)
+}
+
 // answerSteps re-reads pane right now, checks it still shows the prompt the
 // page answered (same sig), and returns the key presses for the chosen
-// option: its keys, then for an option that takes text, the text and Enter.
-// The keys come from the server's own parse, never from the page.
+// option: its keys or, with text, the keys that open its field, the text
+// and what follows it. The keys come from the server's own parse, never
+// from the page.
 func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, error) {
 	if req.Sig == "" || len(req.Sig) > 64 {
 		return nil, nil, fail(http.StatusBadRequest, "sig missing")
@@ -628,31 +700,51 @@ func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, e
 	if p.Sig != req.Sig {
 		return nil, nil, httpErr{http.StatusConflict, "prompt_changed: the pane shows another prompt now; check it and answer again"}
 	}
-	if req.Option < 0 || req.Option >= len(p.Options) {
-		return nil, nil, fail(http.StatusBadRequest, "no option %d", req.Option)
-	}
-	o := p.Options[req.Option]
-	log.Printf("answer pane %s: %s %q", pane, p.Kind, o.Label)
-	if len(o.Keys) == 0 {
-		return nil, nil, fail(http.StatusConflict, "%q cannot be picked with keys from here (the highlight is not visible); use the keys below the screen", o.Label)
-	}
-	for _, k := range o.Keys {
-		if !allowedKeys[k] {
-			return nil, nil, fail(http.StatusBadRequest, "key %q is not allowed", k)
+	var steps []keyStep
+	if req.Action != "" {
+		keys := map[string][]string{"cancel": p.Cancel, "prev": p.Prev, "next": p.Next}[req.Action]
+		log.Printf("answer pane %s: %s %s", pane, p.Kind, req.Action)
+		if len(keys) == 0 {
+			return nil, nil, fail(http.StatusConflict, "%s is not possible on this prompt right now", req.Action)
+		}
+		steps = []keyStep{{keys: keys}}
+	} else {
+		if req.Option < 0 || req.Option >= len(p.Options) {
+			return nil, nil, fail(http.StatusBadRequest, "no option %d", req.Option)
+		}
+		o := p.Options[req.Option]
+		log.Printf("answer pane %s: %s %q", pane, p.Kind, o.Label)
+		switch {
+		case req.Text == "" && o.Text == "required" && o.Draft == "":
+			return nil, nil, fail(http.StatusBadRequest, "%q needs text", o.Label)
+		case req.Text == "":
+			if len(o.Keys) == 0 {
+				return nil, nil, fail(http.StatusConflict, "%q cannot be picked with keys from here (the highlight is not visible); use the keys below the screen", o.Label)
+			}
+			steps = []keyStep{{keys: o.Keys}}
+		case o.Text == "":
+			return nil, nil, fail(http.StatusBadRequest, "%q takes no text", o.Label)
+		case o.Draft != "":
+			return nil, nil, httpErr{http.StatusConflict, "draft_in_field: text is already typed into this field in the pane; send it as it is, or clear it there first"}
+		case o.TextKeys == nil:
+			return nil, nil, fail(http.StatusConflict, "text for %q cannot be typed from here now (another field in the pane has the keyboard); use the screen", o.Label)
+		default:
+			text, err := answerText(req.Text, p.Harness)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(o.TextKeys) > 0 {
+				steps = append(steps, keyStep{keys: o.TextKeys})
+			}
+			steps = append(steps, keyStep{keys: o.TextThen, text: text})
 		}
 	}
-	steps := []keyStep{{keys: o.Keys}}
-	switch {
-	case o.Text == "" && req.Text != "":
-		return nil, nil, fail(http.StatusBadRequest, "%q takes no text", o.Label)
-	case o.Text == "required" && strings.TrimSpace(req.Text) == "":
-		return nil, nil, fail(http.StatusBadRequest, "%q needs text", o.Label)
-	case o.Text != "" && req.Text != "":
-		text, err := cleanText(req.Text, maxKeysText, false)
-		if err != nil {
-			return nil, nil, err
+	for _, st := range steps {
+		for _, k := range st.keys {
+			if !allowedKeys[k] {
+				return nil, nil, fail(http.StatusBadRequest, "key %q is not allowed", k)
+			}
 		}
-		steps = append(steps, keyStep{keys: []string{"enter"}, text: text})
 	}
 	return steps, p, nil
 }
@@ -660,7 +752,7 @@ func (a *Actions) answerSteps(pane string, req answerReq) ([]keyStep, *Prompt, e
 type answerResult struct {
 	OK     bool   `json:"ok"`
 	Output string `json:"output,omitempty"`
-	After  string `json:"after"` // cleared, next (another prompt is up), toggled (multi-select)
+	After  string `json:"after"` // cleared, next (another prompt is up), toggled (multi-select), typed (text left in a field)
 	Label  string `json:"label"`
 }
 
@@ -681,7 +773,10 @@ func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req ans
 	if !a.bucket.take() {
 		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
 	}
-	o := p.Options[req.Option]
+	label := req.Action
+	if label == "" {
+		label = p.Options[req.Option].Label
+	}
 	a.mu.Lock()
 	var outs []string
 	for i, st := range steps {
@@ -698,36 +793,51 @@ func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req ans
 	}
 	a.mu.Unlock()
 	a.col.Burst(pane)
-	after := a.confirm(pane, p, req.Option)
+	after := a.confirm(pane, p, req, steps[len(steps)-1])
 	a.kickSoon()
-	log.Printf("answer pane %s: %q -> %s", pane, o.Label, after)
+	log.Printf("answer pane %s: %q -> %s", pane, label, after)
 	if after == "" {
+		var pressed []string
+		for _, st := range steps {
+			if st.text != "" {
+				pressed = append(pressed, "the text")
+			}
+			pressed = append(pressed, st.keys...)
+		}
 		return nil, httpErr{http.StatusConflict, fmt.Sprintf("prompt_stuck: pressed %s for “%s” but the pane still shows the same prompt after %s; check the screen (nothing was sent again)",
-			strings.Join(steps[0].keys, " "), o.Label, confirmWait)}
+			strings.Join(pressed, " "), label, confirmWait)}
 	}
-	return answerResult{OK: true, Output: strings.Join(outs, "\n"), After: after, Label: o.Label}, nil
+	return answerResult{OK: true, Output: strings.Join(outs, "\n"), After: after, Label: label}, nil
 }
 
 // confirmWait bounds how long an answer waits to see the prompt leave.
 var confirmWait = 3 * time.Second
 
 // confirm re-reads pane until the prompt p is gone ("cleared"), another
-// one is up ("next") or, for a multi-select toggle, the option's check
-// flipped ("toggled"). "" when none of that happened in confirmWait.
-func (a *Actions) confirm(pane string, p *Prompt, opt int) string {
+// one is up ("next"), for a multi-select toggle the option's check flipped
+// ("toggled"), or text typed with no Enter after it shows in its field
+// ("typed"). "" when none of that happened in confirmWait.
+func (a *Actions) confirm(pane string, p *Prompt, req answerReq, last keyStep) string {
 	agent := a.col.paneAgent(pane)
-	was := p.Options[opt].Checked
+	var was *bool
+	if req.Action == "" && last.text == "" {
+		was = p.Options[req.Option].Checked
+	}
+	typed := last.text != "" && len(last.keys) == 0
 	end := time.Now().Add(confirmWait)
 	for {
 		time.Sleep(250 * time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		q := a.col.FreshPrompt(ctx, pane, agent)
 		cancel()
+		opt := req.Option
 		switch {
 		case q == nil:
 			return "cleared"
 		case q.Sig != p.Sig:
 			return "next"
+		case typed && opt < len(q.Options) && sameText(q.Options[opt].Draft, last.text):
+			return "typed"
 		case was != nil && opt < len(q.Options) && q.Options[opt].Checked != nil && *q.Options[opt].Checked != *was:
 			return "toggled"
 		}
@@ -735,6 +845,11 @@ func (a *Actions) confirm(pane string, p *Prompt, opt int) string {
 			return ""
 		}
 	}
+}
+
+// sameText compares typed text with what a pane shows of it (rewrapped).
+func sameText(a, b string) bool {
+	return a != "" && strings.Join(strings.Fields(a), " ") == strings.Join(strings.Fields(b), " ")
 }
 
 // kickSoon refreshes the snapshot now and once more shortly after, when the
@@ -775,7 +890,7 @@ func (a *Actions) coordVerified(r *http.Request) (string, Coordinator, error) {
 	if got.PaneID != co.PaneID || got.Agent != co.Agent || got.session() != a.col.paneSession(co.PaneID) {
 		return "", Coordinator{}, fail(http.StatusConflict, "the coordinator pane changed; reload and try again")
 	}
-	if got.AgentStatus != "blocked" {
+	if got.AgentStatus != "blocked" && (got.AgentStatus == "working" || a.col.promptOf(co.PaneID) == nil) {
 		return "", Coordinator{}, httpErr{http.StatusConflict, "agent_not_blocked: the coordinator is not waiting on a prompt (it is " + got.AgentStatus + "); send it a message instead"}
 	}
 	return slug, co, nil

@@ -759,10 +759,13 @@
       ["D", "Dock the panel right, left or bottom, in turn (not while typing)"],
       ["P", "Project focus: pick any number of projects, type to filter (Space ticks, O only this)"],
       ["Ctrl/Shift+click", "A project on the map: add it to the focus or take it out"],
+      ["Focus chips", "Click: go to the project on the map (again: open its coordinator). Tab to a chip, then ← → move, Enter goes, Delete/Backspace remove. Phone: tap goes, long-press removes"],
+      ["G", "In the project picker: go to the project on the map"],
       ["Esc", "Close help, settings, a voice question, the focused window, or the panel"],
       ["Alt+W", "Next window (with Shift: previous)"],
       ["Alt+Shift+D", "Dock the focused window right, left, bottom, then float it again"],
       ["Alt+] / Alt+[", "Next / previous tab in the focused window's dock"],
+      ["Alt+Shift+M", "Minimise all windows, docks and the panel; again to restore them"],
       ["Ctrl+Enter", "Send the chat box"],
     ];
     const cmds = [

@@ -48,6 +48,13 @@ always through `herdr-projects` and its safety checks.
   results and the System strip's agents, queue and processes follow it
   live; unfocused projects hide, or fade with **Fade others**. The focus
   survives reloads and lives in the URL (`?focus=a,b`) for bookmarks.
+- **Go to a project**: click a focus chip to pan and zoom the map to that
+  project and pulse its nodes (click again to open its coordinator); hover
+  lights it and dims the rest. Chips take Tab, ←/→, Enter and
+  Delete/Backspace; on a phone tap goes and long-press removes. **Fit all**
+  frames every focused project. The picker's **Go** (or **G**), a System
+  strip agents row and hovering a Needs-you item do the same. Only the view
+  moves; the layout is not reheated.
 - **Content search** finds threads by what was said or done in them, not
   just their titles (see [Content search](#content-search)).
 
@@ -69,13 +76,31 @@ always through `herdr-projects` and its safety checks.
   (nothing is resent). Claude Code, Codex (also on its alternate screen) and
   opencode screens are read, including commands and labels the agent wrapped
   over several lines; anything else falls back to the quick replies.
+  Claude Code's richer menus work as in the pane: question tabs (←/→ between
+  questions), option previews with notes (`n`), plan approval with the plan
+  shown and a field for "Tell Claude what to change", and "Tab to amend"
+  ("No, and tell Claude what to do differently", "Yes, and tell Claude what
+  to do next"). A "Type something" row is a field: the text, over several
+  lines for Claude Code (Shift+Enter), is typed literally after the row is
+  picked, then Enter; in a multi-select it is typed without Enter (Enter would
+  untick it) and Submit sends the set. Text already typed in the pane shows
+  read-only and is never typed over; while a field in the pane has the
+  keyboard, options are reached with arrows instead of digits.
+- **Prompts clear on the next reading**: a prompt window and its Needs-you
+  entry go as soon as the pane no longer shows the prompt (answered in the
+  pane, from another tab, or the agent moved on), the pane closes or the
+  agent exits, also after an answer timed out or a hidden tab comes back.
 - **Dialog windows**: each agent waiting on a permission or a question gets
   its own floating window with the card, opened by itself for a new prompt
   (⚙ → "Open a window for each new prompt" turns that off). Several can be
   open at once; they have no backdrop, so the graph stays usable. Click to
   bring one to front, drag it by its title bar (mouse or touch), `–`
-  minimises it to the tray at the bottom, `×` or `Esc` closes it, `Alt+W`
-  cycles through them, and digits `1`–`9` pick an option of the focused one.
+  minimises it to the tray at the bottom, `×` closes it, `Alt+W` cycles
+  through them. The focused one takes the pane's menu keys: `↑` `↓` move its
+  highlight (which follows the pane's when that moves), `Enter` picks, digits
+  `1`–`9` pick directly, `Space` ticks a multi-select row, `Tab` adds text
+  to Yes/No, `n` adds notes to a preview, and `Esc` is the pane's Esc (deny
+  or cancel; it closes windows whose prompt has none).
   Positions are kept per window. A thread's or coordinator's screen and chat
   open in the same kind of window (Shift+click its node, `⧉` on its strip
   chip or in the panel), so several can be watched side by side; they come
@@ -88,10 +113,14 @@ always through `herdr-projects` and its safety checks.
   tab or pane to reorder it, out to float it, or into another dock;
   `Alt+]` / `Alt+[` step through tabs. Order, docks and the tray's place are
   kept across reloads. On a phone windows are full-width sheets, one at a
-  time; docked ones are tabs of one sheet.
+  time; docked ones are tabs of one sheet. **Minimise all** in the tray (or
+  its list, or `Alt+Shift+M`) hides every window, dock and the side panel
+  so the graph gets the whole screen; **Restore all** brings back the same
+  layout, also after a reload. New permission prompts still pop up.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
   is blocked. Or type an answer.
-- **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
+- **Chat**: send a follow-up prompt, with images if you like (see
+  [Images](#images-in-a-message)). **Next**: forward one of the thread's
   own suggested next steps with one click.
 - Task, latest report (sanitized markdown), PR and branch links, and
   copyable jump commands (`herdr agent focus …`) to reach the pane in your
@@ -295,6 +324,33 @@ screens) still apply.
   logged. Trust screens stay the user's to answer in the pane.
 - Snooze is per browser (localStorage) and changes nothing on disk.
 
+### Images in a message
+
+Paste (Ctrl/Cmd+V), drop, or attach (📎; a phone offers the camera and
+photos) images in a thread's or coordinator's chat box, in the panel or a
+window. Thumbnails show until sent; × takes one out. Up to 6 a message,
+10 MB each, PNG, JPEG, GIF or WebP.
+
+Agents run in terminal panes and cannot take a clipboard image, so Dash
+stores each image as a file the agent can read and names it in the
+message: `Images: @/abs/path (attached in Dash)` for Claude Code (attached
+on submit, no tool permission), a plain absolute path for Codex (its image
+viewer) and opencode (its Read tool; only a model that accepts images sees
+it, so the box says so). Any other harness, or a thread on another machine,
+gets a disabled 📎 and a reason, never a useless path.
+
+- **Where:** a thread's own folder, `.herdr-project/<slug>-<id>/uploads/`,
+  inside the folder the agent works in (no "read outside the project"
+  prompt; herdr-projects keeps `.herdr-project/` out of git and removes it
+  with the worktree). A coordinator's go in the project's `uploads/`.
+- **Checks:** the same write guard as other writes (same origin, JSON,
+  `--read-only`); the type comes from the bytes, never the name, so SVG or
+  HTML is refused; random names (`dash-img-<32 hex>.<ext>`), mode 0600, a
+  0700 folder when Dash makes it; nothing is served back (thumbnails are the
+  page's own copies).
+- **Cleanup:** at start and hourly, Dash removes its uploads older than 7
+  days, and all of a resolved thread's. It only ever deletes files it named.
+
 ## Voice
 
 Dictation into every chat box and voice navigation, both optional
@@ -456,8 +512,9 @@ the strip says the numbers are unavailable; agents and the queue still show.
 The **Routing** button (filter bar) opens a window that edits which agent a
 new thread would get, per mode: **Planning**, **Coding** and **Crawl +
 summary**. Each mode has an ordered list of candidates (a provider, a
-herdr-projects profile, optionally a model). Nothing is built in: the lists
-are yours, and `docs/routing.example.toml` is only an example.
+herdr-projects profile, optionally a model, a reasoning effort and a
+context size). Nothing is built in: the lists are yours, and
+`docs/routing.example.toml` is only an example.
 
 This is stage 1: **preview only**. herdr-projects does not ask Dash before
 a launch yet, so saving changes no launch and never touches a running
@@ -469,6 +526,21 @@ agent. Saving writes `routing.toml` and nothing else.
   read-only, with *Override here*; *Reset to inherited* drops an override.
   `enabled` inherits on its own, project then global, default off. No file,
   or routing off, means legacy launches: PROJECT.md `thread_profile`.
+- **Add** picks from a searchable list (type to filter, ↑ ↓ and Enter,
+  Escape; a bottom sheet on a phone): a herdr-projects profile, or a
+  provider's model. The models are the ones whose sizes Dash knows (Claude
+  Opus, Sonnet, Haiku and Fable), the models your profiles name, the Codex
+  `config.toml` model and the opencode config's provider models, each with
+  a readable name and its raw id. *Other…* takes any other model id by
+  hand, checked before it is added.
+- **Reasoning and context** are set per card: only the effort levels the
+  harness accepts (Claude low to max, Codex minimal to xhigh, none for
+  opencode), defaulting to the profile's own effort, and a context size
+  where the model offers more than one (Claude 200k or 1M), else the size
+  is shown. They are saved (`effort`, `context` in tokens) and shown in the
+  preview; they apply when the herdr-projects launch hook lands. The server
+  refuses an effort or a size the harness or model does not offer and names
+  the field.
 - **Reorder** by dragging a card or with its ↑ ↓ buttons (keyboard
   friendly). Edits stay a draft until *Save*.
 - **Why this choice?** asks the server which candidate a new (or a given)
@@ -568,10 +640,13 @@ that the demo names nothing real (no home paths, emails, IPs, real orgs or
 real project names). `go test` runs the prompt parser on screens taken
 from real Claude Code, Codex and opencode panes (`testdata/prompts/`);
 `e2e/prompts.test.mjs` drives the cards, the exact keys, the prompt-cleared
-check and the coordinator path; `e2e/windows.test.mjs` drives the dialog and
+check and the coordinator path; `e2e/prompt-keys.test.mjs` drives the
+window's keyboard, typed answers, multi-select, tabs, amend, plan approval
+and previews on screens taken live from Claude Code; `e2e/prompt-stale.test.mjs`
+checks that answered or vanished prompts leave the windows and the strip; `e2e/windows.test.mjs` drives the dialog and
 thread windows (several at once, drag, tray, Esc, Alt+W, reload, phone
 sheets) and the answer confirmation on 76-column Claude Code and Codex
-screens. `e2e/voice.test.mjs` drives voice with a mocked
+screens; `e2e/minall.test.mjs` drives Minimise all / Restore all. `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
 token never reaches the page. `e2e/usage.test.mjs` runs the usage strip

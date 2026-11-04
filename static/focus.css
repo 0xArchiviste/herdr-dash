@@ -34,9 +34,29 @@
 
 #focus-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 #focus-chips[hidden] { display: none; }
-.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 2px 2px 9px; border-radius: 999px; background: var(--g2);
-  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); font-size: 13px; max-width: 200px; }
+.fchip { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 999px; background: var(--g2);
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); font-size: 13px; max-width: 220px; }
+.fchip .fgo { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 26px;
+  padding: 0 4px 0 7px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.fchip .fgo:hover, .fchip .fgo:focus-visible { background: var(--g4); color: var(--bwhite); }
+.fchip .fgo:focus-visible { outline: 2px solid var(--c); outline-offset: 1px; }
 .fchip .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fitall { min-height: 30px; padding: 2px 10px; font: inherit; font-size: 12px; border-radius: 999px; background: transparent; color: var(--white);
+  border: 1px dashed var(--g5); cursor: pointer; }
+.fitall:hover, .fitall:focus-visible { background: var(--g3); color: var(--bwhite); }
+.prow .pgo { flex: none; padding: 2px 8px; font-size: 12px; border-radius: 4px; background: var(--g3); color: var(--white); border: 0; cursor: pointer; opacity: 0; }
+.prow:hover .pgo, .prow:focus-within .pgo, .prow .pgo:focus-visible { opacity: 1; }
+@media (hover: none) { .prow .pgo { opacity: 1; } }
+
+/* Go to a project: its nodes pulse once there. Hovering a chip, a picker
+   row or a Needs-you item lights its project and dims the rest. */
+#graph .node.pulse .core { stroke: var(--bwhite); animation: go-pulse .6s ease-in-out 3; }
+@keyframes go-pulse { 50% { stroke-width: 7; } }
+#graph.spotlit .node:not(.lit) > * { opacity: .16; transition: opacity .2s; }
+#graph.spotlit .link { opacity: .2; }
+#graph.spotlit .labels text:not(.lit) { opacity: .15; }
+#graph.spotlit .node.lit .core { stroke: var(--bwhite); }
+@media (prefers-reduced-motion: reduce) { #graph .node.pulse .core { animation: none; } #graph.spotlit .node > * { transition: none; } }
 .fchip .fx { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 0; background: transparent; color: var(--white); font-size: 16px; line-height: 1; cursor: pointer; }
 .fchip .fx:hover, .fchip .fx:focus-visible { background: var(--g4); color: var(--bwhite); }
 

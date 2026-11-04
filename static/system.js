@@ -196,7 +196,9 @@
     if (!a.rows.length) body.push(el("div", { class: "snote", text: "No open threads." }));
     else body.push(el("div", { class: "sprojs" }, ...a.rows.map((p) =>
       el("div", { class: "sproj", "data-slug": p.slug },
-        el("span", { class: "spn", text: p.name, title: p.slug }),
+        el("button", { type: "button", class: "spn", text: p.name, title: `Go to ${p.name} on the map`,
+          onclick: () => { close(); window.dash.goProject?.(p.slug); },
+          onmouseenter: () => window.dash.light?.(p.slug), onmouseleave: () => window.dash.light?.(null) }),
         el("span", { class: "sc", "data-k": "working", title: "working", text: String(p.working) }),
         el("span", { class: "sc", "data-k": "waiting", title: "waiting on you", text: String(p.waiting) }),
         el("span", { class: "sc", "data-k": "idle", title: "idle", text: String(p.idle) }),
@@ -278,6 +280,7 @@
   }
   function close() {
     pop.hidden = true;
+    window.dash?.light?.(null);
     openID = null;
     renderStrip();
   }
