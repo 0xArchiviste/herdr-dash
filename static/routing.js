@@ -1,7 +1,12 @@
 // herdr-dash routing: the Routing window (an HDWin window). It edits the
 // agent routing policy in routing.toml: per scope (global, a project, a
-// thread) and per mode, an ordered list of candidates (provider + profile,
-// optionally a model), reordered by drag or by the move buttons. A scope
+// thread) and per mode, an ordered list of candidates, reordered by drag or
+// by the move buttons. A candidate is picked from a searchable list (a
+// herdr-projects profile, or provider → model from the catalog, or
+// "Other…" for an id the catalog does not know), then given a reasoning
+// (effort) level and a context size from what that harness and model
+// offer; both are stored and previewed, and apply when the launch hook
+// lands. A scope
 // without its own list shows the inherited one, read-only, with "Override
 // here"; an override can be reset to inherited. Edits stay a local draft
 // until Save, which sends a typed patch with the revision it started from;
@@ -82,7 +87,7 @@
       const sc = e.scope.kind === "global" ? {} : e.scope.kind === "project" ? { project: e.scope.project } : { project: e.scope.project, thread: e.scope.thread };
       for (const [mode, list] of Object.entries(e.modes)) {
         if (JSON.stringify(list) === JSON.stringify(serverList(e.scope, mode))) continue;
-        out.push(list ? { op: "set_mode", scope: sc, mode, candidates: list.map(({ provider, profile, model }) => (model ? { provider, profile, model } : { provider, profile })) }
+        out.push(list ? { op: "set_mode", scope: sc, mode, candidates: list.map(wire) }
           : { op: "reset_mode", scope: sc, mode });
       }
       if ("enabled" in e && e.enabled !== serverEnabled(e.scope)) out.push({ op: "set_enabled", scope: sc, enabled: e.enabled });
@@ -90,6 +95,33 @@
     return out;
   }
   const editable = () => st && st.valid && !st.read_only && !st.write_block;
+  // wire is a candidate as the server stores it: unset fields left out.
+  function wire({ provider, profile, model, effort, context }) {
+    const c = { provider, profile };
+    if (model) c.model = model;
+    if (effort) c.effort = effort;
+    if (context) c.context = context;
+    return c;
+  }
+
+  // ---------------------------------------------------------------- catalog
+  const ckey = (c) => `${c.profile}|${c.model || ""}`;
+  const harness = (id) => (st?.catalog || []).find((h) => h.id === id);
+  const profileOf = (name) => (st?.profiles || []).find((p) => p.name === name);
+  const providerOfAgent = (agent) => (st?.providers || []).find((p) => p.agent === agent)?.id || "";
+  const ctxLabel = (n) => n >= 1e6 ? (n % 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${n / 1e6}M`) : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+  const modelInfo = (provider, id) => (id ? harness(provider)?.models.find((m) => m.id === id) : null) || null;
+  const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
+  // What a candidate runs: its own model, else its profile's.
+  function describe(c) {
+    const p = profileOf(c.profile);
+    const id = c.model || p?.model || "";
+    const m = modelInfo(c.provider, id);
+    const label = m?.label || id || `${PROVIDER_LABEL[c.provider] || c.provider} default model`;
+    const raw = c.model ? `${c.profile} · ${c.model}` : `profile ${c.profile}${p?.model ? ` · ${p.model}` : ""}`;
+    return { id, model: m, label, raw, profile: p, efforts: harness(c.provider)?.efforts || [] };
+  }
+  const settingsText = (c) => [c.effort ? `reasoning ${c.effort}` : "", c.context ? `${ctxLabel(c.context)} context` : ""].filter(Boolean).join(" · ");
 
   // ---------------------------------------------------------------- usage
   const ago = (iso) => {
@@ -136,43 +168,79 @@
   const live = el("div", { class: "rt-live", "aria-live": "polite" });
   const say = (t) => { live.textContent = t; };
 
+  // settings: the reasoning and context controls (or, read-only, text).
+  function settings(c, i, list, mode, canEdit) {
+    const d = describe(c);
+    const set = (patch) => {
+      const next = list.slice();
+      next[i] = { ...c, ...patch };
+      for (const k of Object.keys(patch)) if (!patch[k]) delete next[i][k];
+      focusKey = Object.keys(patch)[0] === "effort" ? `effort:${mode}:${ckey(c)}` : `context:${mode}:${ckey(c)}`;
+      setList(scope, mode, next);
+    };
+    const defEffort = d.profile?.effort || "";
+    let effort;
+    if (!d.efforts.length) effort = el("span", { class: "rt-effort-na", text: "No reasoning setting" });
+    else if (!canEdit) effort = el("span", { class: "rt-effort-ro", text: `Reasoning: ${c.effort || (defEffort ? `${defEffort} (profile)` : "default")}` });
+    else {
+      effort = el("select", { class: "rt-effort", "data-focus": `effort:${mode}:${ckey(c)}`, "aria-label": `Reasoning for ${d.label}`, title: "Reasoning (effort). Applies when the launch hook lands." },
+        el("option", { value: "", text: defEffort ? `Profile default (${defEffort})` : "Harness default" }),
+        ...d.efforts.map((l) => el("option", { value: l, text: l, selected: l === c.effort })));
+      effort.addEventListener("change", () => set({ effort: effort.value }));
+    }
+    const sizes = d.model?.contexts || [];
+    let ctx;
+    if (sizes.length > 1 && canEdit) {
+      ctx = el("select", { class: "rt-context", "data-focus": `context:${mode}:${ckey(c)}`, "aria-label": `Context window for ${d.label}`, title: "Context window. Applies when the launch hook lands." },
+        el("option", { value: "", text: `Default context (${ctxLabel(sizes[0])})` }),
+        ...sizes.map((n) => el("option", { value: String(n), text: `${ctxLabel(n)} context`, selected: n === c.context })));
+      ctx.addEventListener("change", () => set({ context: Number(ctx.value) || 0 }));
+    } else {
+      const n = c.context || sizes[0];
+      ctx = el("span", { class: "rt-ctx-fixed", text: n ? `${ctxLabel(n)} context${sizes.length > 1 && !c.context ? " (default)" : ""}` : "Context unknown" });
+    }
+    return el("div", { class: "rt-settings" }, effort, ctx);
+  }
+
   function card(c, i, list, mode, canEdit) {
     const u = usage(c);
+    const d = describe(c);
     const move = (to, key) => {
       const next = list.slice();
       const [x] = next.splice(i, 1);
       next.splice(to, 0, x);
       focusKey = to === 0 || to === next.length - 1 ? null : key;
       // At an edge the pressed button turns off: focus its sibling.
-      if (to === 0) focusKey = `down:${mode}:${c.profile}`;
-      if (to === next.length - 1) focusKey = `up:${mode}:${c.profile}`;
-      if (next.length === 1) focusKey = `del:${mode}:${c.profile}`;
+      if (to === 0) focusKey = `down:${mode}:${ckey(c)}`;
+      if (to === next.length - 1) focusKey = `up:${mode}:${ckey(c)}`;
+      if (next.length === 1) focusKey = `del:${mode}:${ckey(c)}`;
       setList(scope, mode, next);
-      say(`${c.profile} moved to position ${to + 1}`);
+      say(`${d.label} moved to position ${to + 1}`);
     };
     const acts = canEdit ? el("div", { class: "rt-acts" },
-      el("button", { type: "button", class: "rt-up", "data-focus": `up:${mode}:${c.profile}`, "aria-label": `Move ${c.profile} up`, title: "Move up", text: "↑", disabled: i === 0, onclick: () => move(i - 1, `up:${mode}:${c.profile}`) }),
-      el("button", { type: "button", class: "rt-down", "data-focus": `down:${mode}:${c.profile}`, "aria-label": `Move ${c.profile} down`, title: "Move down", text: "↓", disabled: i === list.length - 1, onclick: () => move(i + 1, `down:${mode}:${c.profile}`) }),
-      el("button", { type: "button", class: "rt-del", "data-focus": `del:${mode}:${c.profile}`, "aria-label": `Remove ${c.profile}`, title: "Remove", text: "×", onclick: () => {
-        focusKey = `id:rt-add-profile-${mode}`;
+      el("button", { type: "button", class: "rt-up", "data-focus": `up:${mode}:${ckey(c)}`, "aria-label": `Move ${d.label} (${c.profile}) up`, title: "Move up", text: "↑", disabled: i === 0, onclick: () => move(i - 1, `up:${mode}:${ckey(c)}`) }),
+      el("button", { type: "button", class: "rt-down", "data-focus": `down:${mode}:${ckey(c)}`, "aria-label": `Move ${d.label} (${c.profile}) down`, title: "Move down", text: "↓", disabled: i === list.length - 1, onclick: () => move(i + 1, `down:${mode}:${ckey(c)}`) }),
+      el("button", { type: "button", class: "rt-del", "data-focus": `del:${mode}:${ckey(c)}`, "aria-label": `Remove ${d.label} (${c.profile})`, title: "Remove", text: "×", onclick: () => {
+        focusKey = `add:${mode}`;
         setList(scope, mode, list.filter((_, j) => j !== i));
-        say(`${c.profile} removed`);
+        say(`${d.label} removed`);
       } })) : null;
-    const li = el("li", { class: "rt-card" + (canEdit ? "" : " inherited"), "data-profile": c.profile, "data-provider": c.provider, draggable: canEdit ? "true" : null },
+    const li = el("li", { class: "rt-card" + (canEdit ? "" : " inherited"), "data-profile": c.profile, "data-model": c.model || "", "data-key": ckey(c), "data-provider": c.provider, draggable: canEdit ? "true" : null },
       canEdit ? el("span", { class: "rt-grip", "aria-hidden": "true", text: "⠿" }) : null,
       el("span", { class: "rt-pos", text: String(i + 1) }),
       el("div", { class: "rt-main" },
         el("div", { class: "rt-name" },
           el("span", { class: "rt-prov", "data-provider": c.provider, text: PROVIDER_LABEL[c.provider] || c.provider }),
-          el("span", { class: "rt-prof mono", text: c.profile }),
-          c.model ? el("span", { class: "rt-model mono", text: c.model }) : null),
+          el("span", { class: "rt-label", text: d.label })),
+        el("div", { class: "rt-raw mono", text: d.raw }),
+        settings(c, i, list, mode, canEdit),
         el("div", { class: "rt-usage", "data-level": u.level, text: u.text })),
       acts);
     if (canEdit) {
       li.addEventListener("dragstart", (e) => {
-        dragging = { mode, profile: c.profile };
+        dragging = { mode, key: ckey(c) };
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", c.profile);
+        e.dataTransfer.setData("text/plain", ckey(c));
         li.classList.add("dragging");
       });
       li.addEventListener("dragend", () => { dragging = null; li.classList.remove("dragging"); });
@@ -190,48 +258,217 @@
         e.preventDefault();
         const r = li.getBoundingClientRect();
         const before = e.clientY < r.top + r.height / 2;
-        const from = list.findIndex((x) => x.profile === dragging.profile);
+        const from = list.findIndex((x) => ckey(x) === dragging.key);
         if (from < 0) return;
         const next = list.slice();
         const [x] = next.splice(from, 1);
-        let to = next.findIndex((y) => y.profile === c.profile);
+        let to = next.findIndex((y) => ckey(y) === ckey(c));
         if (!before) to++;
         next.splice(to, 0, x);
         dragging = null;
         setList(scope, mode, next);
-        say(`${x.profile} moved to position ${to + 1}`);
+        say(`${describe(x).label} moved to position ${to + 1}`);
       });
     }
     return li;
   }
 
   function addRow(mode, list) {
-    const prov = el("select", { class: "rt-add-provider", "aria-label": "Provider" },
-      ...(st.providers || []).map((p) => el("option", { value: p.id, text: p.label })));
-    const dl = `rt-profiles-${mode}`;
-    const prof = el("input", { class: "rt-add-profile", id: `rt-add-profile-${mode}`, "data-focus": `id:rt-add-profile-${mode}`, list: dl, placeholder: "profile", "aria-label": "Profile", autocomplete: "off", spellcheck: "false" });
-    const model = el("input", { class: "rt-add-model", placeholder: "model (optional)", "aria-label": "Model (optional)", autocomplete: "off", spellcheck: "false" });
-    const msg = el("span", { class: "rt-add-msg", role: "status" });
-    const options = () => {
-      const agent = prov.value;
-      const names = new Set([agent, ...(st.profiles || []).filter((p) => !p.agent || p.agent === agent).map((p) => p.name)]);
-      return [...names].map((n) => el("option", { value: n }));
-    };
-    const datalist = el("datalist", { id: dl }, ...options());
-    prov.addEventListener("change", () => datalist.replaceChildren(...options()));
-    const add = () => {
-      const c = { provider: prov.value, profile: prof.value.trim() };
-      if (model.value.trim()) c.model = model.value.trim();
-      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(c.profile)) { msg.textContent = "Enter a profile name"; prof.focus(); return; }
-      if (list.some((x) => x.profile === c.profile)) { msg.textContent = `${c.profile} is already in the list`; prof.focus(); return; }
-      focusKey = `id:rt-add-profile-${mode}`;
-      setList(scope, mode, [...list, c]);
-      say(`${c.profile} added at position ${list.length + 1}`);
-    };
-    prof.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
-    return el("div", { class: "rt-add" }, prov, prof, datalist, model,
-      el("button", { type: "button", class: "tbtn rt-add-btn", text: "Add", onclick: add }), msg);
+    const b = el("button", { type: "button", class: "tbtn rt-add-btn", id: `rt-add-${mode}`, "data-focus": `add:${mode}`, "aria-haspopup": "dialog",
+      text: "+ Add candidate", onclick: () => openPicker(mode, list, b) });
+    return el("div", { class: "rt-add" }, b);
   }
+
+  // ---------------------------------------------------------------- picker
+  // A searchable list: profiles first, then each harness's models, then
+  // "Other…" per harness. A popover by its Add button; a sheet on a phone.
+  let pick = null; // { mode, list, opener, root, q, ul, opts, active }
+  function pickOptions(list) {
+    const have = new Set(list.map(ckey));
+    const opts = [];
+    const routable = (st.profiles || []).filter((p) => providerOfAgent(p.agent));
+    const odd = (st.profiles || []).filter((p) => !providerOfAgent(p.agent));
+    if (routable.length || odd.length) opts.push({ group: "Profiles" });
+    for (const p of [...routable, ...odd]) {
+      const provider = providerOfAgent(p.agent);
+      const c = { provider, profile: p.name };
+      const why = !provider ? `${p.agent} is not routable` : have.has(ckey(c)) ? "in this list" : "";
+      opts.push({ pick: `profile:${p.name}`, cand: provider ? c : null, why,
+        label: p.label || p.name, raw: `profile ${p.name}${p.model ? ` · ${p.model}` : ""}${p.effort ? ` · ${p.effort}` : ""}`, sub: p.description || "",
+        text: `${p.name} ${p.model || ""} ${p.label || ""} ${p.description || ""} ${p.agent}` });
+    }
+    for (const h of st.catalog || []) {
+      opts.push({ group: h.label });
+      const base = { provider: h.id, profile: h.id };
+      opts.push({ pick: `model:${h.id}:`, cand: base, why: have.has(ckey(base)) ? "in this list" : "",
+        label: `${h.label} default model`, raw: `profile ${h.id}`, text: `${h.id} ${h.label} default` });
+      for (const m of h.models) {
+        const c = { provider: h.id, profile: h.id, model: m.id };
+        const ctx = m.contexts.length ? m.contexts.map(ctxLabel).join(" / ") : "context unknown";
+        opts.push({ pick: `model:${h.id}:${m.id}`, cand: c, why: have.has(ckey(c)) ? "in this list" : "",
+          label: m.label, raw: `${m.id} · ${ctx}`, text: `${h.id} ${h.label} ${m.id} ${m.label}` });
+      }
+      opts.push({ pick: `other:${h.id}`, other: h.id, label: `Other ${h.label} model…`, raw: "type a model id the list does not have", text: `other ${h.id} ${h.label}` });
+    }
+    return opts;
+  }
+
+  function openPicker(mode, list, opener) {
+    closePicker(false);
+    const label = (st.modes.find((m) => m.id === mode) || {}).label || mode;
+    const sheet = innerWidth <= 700;
+    const q = el("input", { id: "rt-pick-q", type: "search", role: "combobox", "aria-expanded": "true", "aria-controls": "rt-pick-list", "aria-autocomplete": "list",
+      placeholder: "Search models and profiles", "aria-label": "Search models and profiles", autocomplete: "off", spellcheck: "false" });
+    const ul = el("ul", { id: "rt-pick-list", role: "listbox", "aria-label": `Candidates for ${label}` });
+    const opts = pickOptions(list);
+    let n = 0;
+    for (const o of opts) {
+      if (o.group) { o.node = el("li", { class: "rt-pick-group", role: "presentation", text: o.group }); ul.append(o.node); continue; }
+      o.node = el("li", { class: "rt-opt", role: "option", id: `rt-opt-${n++}`, "data-pick": o.pick, "aria-disabled": o.why ? "true" : null, "aria-selected": "false",
+        onclick: () => choose(o) },
+        el("span", { class: "rt-opt-label", text: o.label }),
+        el("span", { class: "rt-opt-id mono", text: o.raw + (o.why ? ` · ${o.why}` : "") }),
+        o.sub ? el("span", { class: "rt-opt-sub", text: o.sub }) : null);
+      o.node.addEventListener("pointerdown", (e) => e.preventDefault()); // keep focus in the search box
+      o.text = `${o.text} ${o.label} ${o.raw}`.toLowerCase();
+      ul.append(o.node);
+    }
+    const other = el("form", { id: "rt-other", hidden: true, novalidate: true });
+    const root = el("div", { id: "rt-pick", class: "rt-pick" + (sheet ? " sheet" : ""), role: "dialog", "aria-modal": "true", "aria-label": `Add a ${label} candidate` },
+      el("div", { class: "rt-pick-head" },
+        el("strong", { text: `Add to ${label}` }),
+        el("button", { type: "button", class: "rt-pick-x", "aria-label": "Close", text: "×", onclick: () => closePicker(true) })),
+      q, ul, other,
+      el("p", { class: "rt-hint", text: "Reasoning and context are set on the card after you pick; they apply when the launch hook lands." }));
+    const back = el("div", { class: "rt-pick-back" + (sheet ? " sheet" : ""), onclick: () => closePicker(true) });
+    document.body.append(back, root);
+    pick = { mode, list, opener, root, back, q, ul, opts, other, active: null };
+    q.addEventListener("input", filter);
+    q.addEventListener("keydown", pickKey);
+    root.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePicker(true); } });
+    filter();
+    place();
+    q.focus();
+  }
+
+  function place() {
+    if (!pick) return;
+    const r = pick.root;
+    if (r.classList.contains("sheet")) return;
+    const a = pick.opener.getBoundingClientRect();
+    const w = Math.min(420, innerWidth - 16);
+    r.style.width = w + "px";
+    r.style.left = Math.max(8, Math.min(a.left, innerWidth - w - 8)) + "px";
+    const below = innerHeight - a.bottom - 12, above = a.top - 12;
+    // Below the button when there is room for a useful list, else above.
+    const down = below >= 300 || below >= above;
+    const h = Math.min(460, down ? below : above);
+    r.style.maxHeight = h + "px";
+    r.style.top = (down ? a.bottom + 4 : Math.max(8, a.top - 4 - Math.min(h, r.offsetHeight))) + "px";
+  }
+
+  const visible = () => pick.opts.filter((o) => o.pick && !o.node.hidden);
+  const usable = () => visible().filter((o) => !o.why);
+  function setActive(o) {
+    if (!pick) return;
+    if (pick.active) { pick.active.node.classList.remove("active"); pick.active.node.setAttribute("aria-selected", "false"); }
+    pick.active = o || null;
+    if (o) {
+      o.node.classList.add("active");
+      o.node.setAttribute("aria-selected", "true");
+      pick.q.setAttribute("aria-activedescendant", o.node.id);
+      o.node.scrollIntoView({ block: "nearest" });
+    } else pick.q.removeAttribute("aria-activedescendant");
+  }
+  function filter() {
+    const terms = pick.q.value.toLowerCase().split(/\s+/).filter(Boolean);
+    for (const o of pick.opts) if (o.pick) o.node.hidden = !terms.every((t) => o.text.includes(t));
+    // Nothing matches: every "Other…" stays, so what was typed is not lost.
+    if (!pick.opts.some((o) => o.pick && !o.other && !o.node.hidden)) for (const o of pick.opts) if (o.other) o.node.hidden = false;
+    let group = null, shown = 0;
+    for (const o of pick.opts) {
+      if (o.group) {
+        if (group) group.node.hidden = !shown;
+        group = o; shown = 0;
+      } else if (!o.node.hidden) shown++;
+    }
+    if (group) group.node.hidden = !shown;
+    setActive(usable()[0]);
+  }
+  function pickKey(e) {
+    const list = usable();
+    const i = list.indexOf(pick.active);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!list.length) return;
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setActive(list[(i + step + list.length) % list.length] || list[0]);
+    } else if (e.key === "Home" && e.ctrlKey) { e.preventDefault(); setActive(list[0]); }
+    else if (e.key === "End" && e.ctrlKey) { e.preventDefault(); setActive(list[list.length - 1]); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (pick.active) choose(pick.active);
+    }
+  }
+
+  function addCand(c) {
+    const { mode, list } = pick;
+    if (list.some((x) => ckey(x) === ckey(c))) return `${describe(c).label} (${c.profile}) is already in the list`;
+    closePicker(false);
+    focusKey = `effort:${mode}:${ckey(c)}`;
+    setList(scope, mode, [...list, c]);
+    // No effort control (opencode): focus the Add button again instead.
+    if (!win.body.querySelector(`[data-focus="${CSS.escape(`effort:${mode}:${ckey(c)}`)}"]`)) win.body.querySelector(`[data-focus="add:${mode}"]`)?.focus();
+    say(`${describe(c).label} added at position ${list.length + 1}`);
+    return "";
+  }
+  function choose(o) {
+    if (o.why) return;
+    if (o.other) return otherForm(o.other);
+    addCand({ ...o.cand });
+  }
+
+  // otherForm: a model id typed by hand for one harness, with the profile
+  // to run it under picked from a list. Checked here and by the server.
+  function otherForm(provider) {
+    const h = harness(provider);
+    const agent = (st.providers || []).find((p) => p.id === provider)?.agent || provider;
+    const profiles = [provider, ...(st.profiles || []).filter((p) => p.agent === agent && p.name !== provider).map((p) => p.name)];
+    const model = el("input", { id: "rt-other-model", placeholder: provider === "opencode" ? "provider/model" : "model id", "aria-label": `${h.label} model id`, autocomplete: "off", spellcheck: "false",
+      value: pick.q.value.trim() });
+    const prof = el("select", { id: "rt-other-profile", "aria-label": "Run it under profile" }, ...profiles.map((n) => el("option", { value: n, text: n })));
+    const msg = el("p", { id: "rt-other-msg", class: "rt-add-msg", role: "status" });
+    const f = pick.other;
+    f.replaceChildren(
+      el("p", { class: "rt-other-head", text: `Other ${h.label} model` }),
+      el("label", {}, el("span", { text: "Model id" }), model),
+      el("label", {}, el("span", { text: "Profile" }), prof),
+      el("div", { class: "rt-other-acts" },
+        el("button", { type: "button", class: "tbtn", text: "Back", onclick: () => { f.hidden = true; pick.ul.hidden = false; pick.q.hidden = false; pick.q.focus(); } }),
+        el("button", { type: "submit", id: "rt-other-add", class: "tbtn primary", text: "Add" })),
+      msg);
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const id = model.value.trim();
+      if (!MODEL_RE.test(id)) { msg.textContent = "Enter a model id: letters, digits and . _ : / @ + -, no spaces, at most 128 characters."; model.focus(); return; }
+      const err = addCand({ provider, profile: prof.value, model: id });
+      if (err) { msg.textContent = err; model.focus(); }
+    };
+    pick.ul.hidden = true;
+    pick.q.hidden = true;
+    f.hidden = false;
+    model.focus();
+  }
+
+  function closePicker(refocus) {
+    if (!pick) return;
+    const { root, back, opener, mode } = pick;
+    root.remove();
+    back.remove();
+    pick = null;
+    if (refocus) (opener.isConnected ? opener : win?.body.querySelector(`[data-focus="add:${mode}"]`))?.focus();
+  }
+  addEventListener("resize", () => place());
 
   const FROM = { global: "global", project: "project", thread: "thread" };
   function modeSection(m) {
@@ -259,7 +496,8 @@
     return el("section", { class: "rt-mode", "data-mode": m.id },
       el("div", { class: "rt-mode-head" }, el("h3", { text: m.label }), el("span", { class: "rt-src", "data-own": own ? "1" : "0", text: src }), ...tools),
       eff.list.length ? ol : null,
-      can && (own || eff.from === "none") ? addRow(m.id, own ? eff.list : []) : null);
+      can && (own || eff.from === "none") ? addRow(m.id, own ? eff.list : []) : null,
+      eff.list.some((c) => c.effort || c.context) || (can && own) ? el("p", { class: "rt-hint rt-applies", text: "Reasoning and context are saved and shown in the preview; each applies when the launch hook lands." }) : null);
   }
 
   function enabledRow() {
@@ -330,7 +568,7 @@
     const d = pv.result;
     if (d) {
       const head = {
-        select: `Would choose ${d.selected?.provider}/${d.selected?.profile}`,
+        select: `Would choose ${d.selected?.provider}/${d.selected?.profile}${d.selected && settingsText(d.selected) ? ` (${settingsText(d.selected)})` : ""}`,
         queue: "Would wait: nothing qualifies",
         legacy: `Legacy launch: ${d.legacy_profile || "the project's default profile"}`,
         invalid: "Blocked: routing.toml is invalid",
@@ -343,8 +581,10 @@
       if (d.candidates.length) {
         out.append(el("ol", { class: "rt-pv-list" }, ...d.candidates.map((c) => el("li", { class: "rt-pv-cand", "data-profile": c.profile, "data-status": c.status },
           el("span", { class: "rt-chip", "data-status": c.status, text: c.status.replace("_", " ") }),
-          el("span", { class: "mono", text: `${c.provider}/${c.profile}` }),
+          el("span", { class: "mono", text: `${c.provider}/${c.profile}${c.model ? ` · ${c.model}` : ""}` }),
+          settingsText(c) ? el("span", { class: "rt-pv-set", text: settingsText(c) }) : null,
           el("span", { class: "rt-pv-why", text: c.reason })))));
+        if (d.candidates.some((c) => c.effort || c.context)) out.append(el("p", { class: "rt-hint", text: "Reasoning and context: saved, not applied yet; each applies when the launch hook lands." }));
       }
     }
     return el("section", { class: "rt-preview" },
@@ -399,7 +639,8 @@
       el("button", { type: "button", id: "rt-save", class: "tbtn primary", "data-focus": "id:rt-save", text: saving ? "Saving…" : "Save", disabled: !can || !pending.length || saving, onclick: save }),
       el("button", { type: "button", id: "rt-discard", class: "tbtn", "data-focus": "id:rt-discard", text: "Discard", disabled: !pending.length || saving, onclick: () => { edits = {}; status = "Changes discarded"; alert = null; render(); } }),
       el("span", { id: "rt-status", class: "rt-status", role: "status", "data-dirty": pending.length ? "1" : "0", text: statusText }));
-    body.replaceChildren(
+    // replaceChildren would print a null as text: drop the absent parts.
+    body.replaceChildren(...[
       el("p", { class: "rt-file" }, "Policy ", el("code", { text: st.path }), st.exists ? ` · ${st.revision}` : " · not created yet (legacy launches)"),
       el("p", { class: "rt-note", text: st.enforcement?.threads || "" }),
       errs,
@@ -410,13 +651,14 @@
       foot,
       previewBox(),
       el("p", { class: "rt-hint rt-foot-note", text: `${st.enforcement?.helpers || ""} ${st.enforcement?.subagents || ""}`.trim() }),
-      live);
+      live].filter((x) => x != null));
     body.scrollTop = scrollTop;
     if (focusKey) {
       const target = body.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`);
       if (target && !target.disabled) target.focus({ preventScroll: true });
       focusKey = null;
     }
+    fit(); // added cards make it taller: keep the foot on screen
   }
 
   async function load() {
@@ -468,7 +710,7 @@
     const existed = HDWin.has("routing");
     win = HDWin.open("routing", { title: "Agent routing", short: "Routing", cls: "rt-win", width: 620, persist: true,
       build: (body) => body.append(el("p", { class: "rt-hint", text: "Loading…" })),
-      onClose: () => { win = null; } });
+      onClose: () => { closePicker(false); win = null; } });
     if (existed && st) return;
     try {
       // A fresh open shows the file as it is now; a draft survives only
@@ -485,7 +727,8 @@
     fit();
   }
 
-  // A tall window opened low would hang off the screen: lift it to fit.
+  // A window grown taller than the room below it would hang off the
+  // screen: lift it to fit.
   function fit() {
     const w = HDWin.get("routing");
     if (!w || w.dock || innerWidth <= 700) return;

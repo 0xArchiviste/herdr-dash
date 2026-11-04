@@ -501,8 +501,9 @@ the strip says the numbers are unavailable; agents and the queue still show.
 The **Routing** button (filter bar) opens a window that edits which agent a
 new thread would get, per mode: **Planning**, **Coding** and **Crawl +
 summary**. Each mode has an ordered list of candidates (a provider, a
-herdr-projects profile, optionally a model). Nothing is built in: the lists
-are yours, and `docs/routing.example.toml` is only an example.
+herdr-projects profile, optionally a model, a reasoning effort and a
+context size). Nothing is built in: the lists are yours, and
+`docs/routing.example.toml` is only an example.
 
 This is stage 1: **preview only**. herdr-projects does not ask Dash before
 a launch yet, so saving changes no launch and never touches a running
@@ -514,6 +515,21 @@ agent. Saving writes `routing.toml` and nothing else.
   read-only, with *Override here*; *Reset to inherited* drops an override.
   `enabled` inherits on its own, project then global, default off. No file,
   or routing off, means legacy launches: PROJECT.md `thread_profile`.
+- **Add** picks from a searchable list (type to filter, ↑ ↓ and Enter,
+  Escape; a bottom sheet on a phone): a herdr-projects profile, or a
+  provider's model. The models are the ones whose sizes Dash knows (Claude
+  Opus, Sonnet, Haiku and Fable), the models your profiles name, the Codex
+  `config.toml` model and the opencode config's provider models, each with
+  a readable name and its raw id. *Other…* takes any other model id by
+  hand, checked before it is added.
+- **Reasoning and context** are set per card: only the effort levels the
+  harness accepts (Claude low to max, Codex minimal to xhigh, none for
+  opencode), defaulting to the profile's own effort, and a context size
+  where the model offers more than one (Claude 200k or 1M), else the size
+  is shown. They are saved (`effort`, `context` in tokens) and shown in the
+  preview; they apply when the herdr-projects launch hook lands. The server
+  refuses an effort or a size the harness or model does not offer and names
+  the field.
 - **Reorder** by dragging a card or with its ↑ ↓ buttons (keyboard
   friendly). Edits stay a draft until *Save*.
 - **Why this choice?** asks the server which candidate a new (or a given)
