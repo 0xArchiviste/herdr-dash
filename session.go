@@ -324,7 +324,7 @@ func (c *Collector) projectProfile(slug, kind string) string {
 }
 
 type profileConfig struct {
-	Profiles map[string]struct{ Agent, Model, Effort string }
+	Profiles map[string]struct{ Agent, Model, Effort, Description string }
 	Defaults map[string]any
 }
 
@@ -343,7 +343,9 @@ type claudeSettings struct {
 type opencodeConfig struct {
 	Model     string `json:"model"`
 	Providers map[string]struct {
+		Name   string `json:"name"`
 		Models map[string]struct {
+			Name  string `json:"name"`
 			Limit struct {
 				Context int64 `json:"context"`
 			} `json:"limit"`

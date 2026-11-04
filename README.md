@@ -48,6 +48,13 @@ always through `herdr-projects` and its safety checks.
   results and the System strip's agents, queue and processes follow it
   live; unfocused projects hide, or fade with **Fade others**. The focus
   survives reloads and lives in the URL (`?focus=a,b`) for bookmarks.
+- **Go to a project**: click a focus chip to pan and zoom the map to that
+  project and pulse its nodes (click again to open its coordinator); hover
+  lights it and dims the rest. Chips take Tab, ←/→, Enter and
+  Delete/Backspace; on a phone tap goes and long-press removes. **Fit all**
+  frames every focused project. The picker's **Go** (or **G**), a System
+  strip agents row and hovering a Needs-you item do the same. Only the view
+  moves; the layout is not reheated.
 - **Content search** finds threads by what was said or done in them, not
   just their titles (see [Content search](#content-search)).
 
@@ -147,6 +154,17 @@ Use **Fit graph** to bring the visible projects back into view after panning or 
 
 <img src="docs/screenshots/triage.png" alt="Needs-you queue in select mode with three review threads picked, Ack selected and Snooze buttons">
 
+- **Threads view** in each coordinator's panel (and a *Threads* tab in its
+  window): one card per thread, grouped Needs you → Review · PR open →
+  Working → Queued → Idle → Done, with a labelled colour chip, reported
+  progress, profile/model, age and PR. Each card shows its latest event
+  (report, PR opened/updated/failing/merged, idle, waiting, resolved,
+  progress) and expands to a colour-coded timeline, newest first. A summary
+  strip counts and filters the stages, shows overall progress and what is
+  blocked on you; search covers titles and events; new events since you
+  last looked are marked. *Report* opens the rendered report in a window.
+  Built from the inbox items herdr-projects already writes: no extra
+  commands.
 - **Needs-you queue** grouped by severity (blocked, waiting, review,
   landing), with counts and collapsible groups. The queue scrolls vertically beside
   the map on desktop and above it on smaller screens. Blocked or "needs you"
@@ -516,8 +534,9 @@ the strip says the numbers are unavailable; agents and the queue still show.
 The **Routing** button (filter bar) opens a window that edits which agent a
 new thread would get, per mode: **Planning**, **Coding** and **Crawl +
 summary**. Each mode has an ordered list of candidates (a provider, a
-herdr-projects profile, optionally a model). Nothing is built in: the lists
-are yours, and `docs/routing.example.toml` is only an example.
+herdr-projects profile, optionally a model, a reasoning effort and a
+context size). Nothing is built in: the lists are yours, and
+`docs/routing.example.toml` is only an example.
 
 This is stage 1: **preview only**. herdr-projects does not ask Dash before
 a launch yet, so saving changes no launch and never touches a running
@@ -529,6 +548,21 @@ agent. Saving writes `routing.toml` and nothing else.
   read-only, with *Override here*; *Reset to inherited* drops an override.
   `enabled` inherits on its own, project then global, default off. No file,
   or routing off, means legacy launches: PROJECT.md `thread_profile`.
+- **Add** picks from a searchable list (type to filter, ↑ ↓ and Enter,
+  Escape; a bottom sheet on a phone): a herdr-projects profile, or a
+  provider's model. The models are the ones whose sizes Dash knows (Claude
+  Opus, Sonnet, Haiku and Fable), the models your profiles name, the Codex
+  `config.toml` model and the opencode config's provider models, each with
+  a readable name and its raw id. *Other…* takes any other model id by
+  hand, checked before it is added.
+- **Reasoning and context** are set per card: only the effort levels the
+  harness accepts (Claude low to max, Codex minimal to xhigh, none for
+  opencode), defaulting to the profile's own effort, and a context size
+  where the model offers more than one (Claude 200k or 1M), else the size
+  is shown. They are saved (`effort`, `context` in tokens) and shown in the
+  preview; they apply when the herdr-projects launch hook lands. The server
+  refuses an effort or a size the harness or model does not offer and names
+  the field.
 - **Reorder** by dragging a card or with its ↑ ↓ buttons (keyboard
   friendly). Edits stay a draft until *Save*.
 - **Why this choice?** asks the server which candidate a new (or a given)

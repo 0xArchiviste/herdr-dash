@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -82,6 +81,10 @@ type Candidate struct {
 	Provider string `json:"provider"`
 	Profile  string `json:"profile"`
 	Model    string `json:"model,omitempty"`
+	// Effort and Context are stored and previewed; herdr-projects applies
+	// them once its launch hook asks Dash. Empty/0: the profile's own.
+	Effort  string `json:"effort,omitempty"`
+	Context int64  `json:"context,omitempty"`
 }
 
 // Scope is the policy at one level. Enabled is nil when the level does not
@@ -408,15 +411,24 @@ func (v *validator) candidates(field string, x any) ([]Candidate, bool) {
 		var c Candidate
 		for _, k := range sortedKeys(t) {
 			kf := join(f, k)
+			if k == "context" {
+				n, ok := t[k].(int64)
+				if !ok || n < MinContext || n > MaxContext {
+					v.err(kf, "must be a whole number of tokens from %d to %d", MinContext, MaxContext)
+					continue
+				}
+				c.Context = n
+				continue
+			}
 			s, isStr := t[k].(string)
 			switch k {
-			case "provider", "profile", "model":
+			case "provider", "profile", "model", "effort":
 				if !isStr {
 					v.err(kf, "must be a string")
 					continue
 				}
 			default:
-				v.err(kf, "unknown field; a candidate has provider, profile, model")
+				v.err(kf, "unknown field; a candidate has provider, profile, model, effort, context")
 				continue
 			}
 			switch k {
@@ -433,11 +445,19 @@ func (v *validator) candidates(field string, x any) ([]Candidate, bool) {
 				}
 				c.Profile = s
 			case "model":
-				if len(s) > 128 || strings.TrimSpace(s) == "" || strings.ContainsFunc(s, unicode.IsControl) {
-					v.err(kf, "must be a model name of at most 128 printable characters")
+				if !ModelRe.MatchString(s) {
+					v.err(kf, "must be a model id of at most 128 characters, without spaces")
 					continue
 				}
 				c.Model = s
+			case "effort":
+				c.Effort = s
+			}
+		}
+		if c.Effort != "" && c.Provider != "" {
+			if msg := CheckEffort(c.Provider, c.Effort); msg != "" {
+				v.err(join(f, "effort"), "%s", msg)
+				c.Effort = ""
 			}
 		}
 		if _, ok := t["provider"]; !ok {
@@ -447,10 +467,15 @@ func (v *validator) candidates(field string, x any) ([]Candidate, bool) {
 			v.err(join(f, "profile"), "missing")
 		}
 		if c.Profile != "" {
-			if seen[c.Profile] {
-				v.err(join(f, "profile"), "profile %q is already in this list", c.Profile)
+			k := c.Profile + "|" + c.Model
+			if seen[k] {
+				what := fmt.Sprintf("profile %q", c.Profile)
+				if c.Model != "" {
+					what += fmt.Sprintf(" with model %q", c.Model)
+				}
+				v.err(join(f, "profile"), "%s is already in this list", what)
 			}
-			seen[c.Profile] = true
+			seen[k] = true
 		}
 		out = append(out, c)
 	}

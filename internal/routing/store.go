@@ -317,6 +317,12 @@ func apply(m map[string]any, op Op) error {
 			if c.Model != "" {
 				e["model"] = c.Model
 			}
+			if c.Effort != "" {
+				e["effort"] = c.Effort
+			}
+			if c.Context != 0 {
+				e["context"] = c.Context
+			}
 			list = append(list, e)
 		}
 		modes[op.Mode] = list

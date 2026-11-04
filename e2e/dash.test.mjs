@@ -740,8 +740,8 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   // blocked one: prompts.test.mjs).
   assert.equal(await page.locator("#p-chat .quick").isVisible(), false);
   assert.match(await page.locator("#p-chat .note").innerText(), /herdr-projects/i);
-  // Open threads: 6 not resolved.
-  assert.equal(await page.locator("#p-threads li").count(), 6);
+  // Threads view: 6 not resolved, 1 done (static/threads.js, threads.test.mjs).
+  assert.equal(await page.locator('#p-tv .tv-card:not([data-stage="done"])').count(), 6);
   await page.screenshot({ path: join(artifacts, "coordinator.png") });
 
   // 28: send through stdin; then the screen stream reads fast.
@@ -773,7 +773,7 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Alpha Project", 3000);
 
   // 30: an open thread opens its panel.
-  await page.locator('#p-threads li[data-key="alpha/t-0002"] button').click();
+  await page.locator('#p-tv .tv-card[data-key="alpha/t-0002"] .tv-open').click();
   await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Needs approval", 3000);
 
   // 28: beta is blocked: the refusal is shown with the note, nothing resent.
@@ -1023,7 +1023,7 @@ test("phone: coordinator panel fits", async () => {
   const box = await page.locator("#panel").boundingBox();
   assert.ok(box.width <= 390 && box.y > 100, "bottom sheet like the thread panel");
   await page.screenshot({ path: join(artifacts, "phone-coordinator.png") });
-  await page.locator("#p-threads").scrollIntoViewIfNeeded();
+  await page.locator("#p-tv").scrollIntoViewIfNeeded();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth || document.querySelector("#panel").scrollWidth > document.querySelector("#panel").clientWidth);
   assert.equal(overflow, false);
   await page.screenshot({ path: join(artifacts, "phone-coordinator-threads.png") });

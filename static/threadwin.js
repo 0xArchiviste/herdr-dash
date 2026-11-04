@@ -104,15 +104,32 @@ window.HDThreadWin = (() => {
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
         screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
-        const chat = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
+        const chatRow = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
         // A pane whose agent exited: a command line and the way back (static/terminal.js).
-        const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chat.hidden = x; } }) : null;
-        body.append(
-          el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
-            el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) })),
-          card, screen.el, quick,
+        const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chatRow.hidden = x; } }) : null;
+        const head = el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
+          el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }));
+        const chat = [card, screen.el, quick,
           a.live || key.startsWith("hub:") ? att?.tray : null,
-          chat, term?.el, log);
+          chatRow, term?.el, log];
+        if (key.startsWith("hub:") && window.HDThreads) {
+          // A coordinator window: its screen and chat, or its project's
+          // threads, organised by stage (static/threads.js).
+          const coordPane = el("div", { class: "tw-pane", "data-pane": "coord", role: "tabpanel" }, ...chat.filter(Boolean));
+          const tvPane = el("div", { class: "tw-pane", "data-pane": "threads", role: "tabpanel", hidden: "" });
+          let tv = null;
+          const tabs = el("div", { class: "tw-tabs", role: "tablist", "aria-label": "Coordinator or threads" });
+          const show = (which) => {
+            for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.tab === which));
+            coordPane.hidden = which !== "coord";
+            tvPane.hidden = which !== "threads";
+            if (which === "threads" && !tv) tv = window.HDThreads.mount(tvPane, key.slice(4), { compact: true });
+          };
+          tabs.append(
+            el("button", { type: "button", class: "tw-tab", role: "tab", "data-tab": "coord", "aria-selected": "true", text: "Coordinator", onclick: () => show("coord") }),
+            el("button", { type: "button", class: "tw-tab", role: "tab", "data-tab": "threads", "aria-selected": "false", text: "Threads", onclick: () => show("threads") }));
+          body.append(head, tabs, coordPane, tvPane);
+        } else body.append(head, ...chat.filter(Boolean));
         ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
         const paused = el("p", { class: "muted tw-paused", hidden: "", text: `Paused: only the ${LIVE} front-most windows stream. Click here to resume.` });
         screen.el.before(paused);
