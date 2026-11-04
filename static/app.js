@@ -119,13 +119,14 @@
       // Notify content search as well, cancelling pending requests and highlights.
       $("#f-search").dispatchEvent(new Event("input"));
     });
-    $("#fit-graph").addEventListener("click", () => { userZoomed = false; fit(true); });
+    $("#fit-graph").addEventListener("click", () => { userZoomed = false; lastGo = null; fit(true); });
     const bind = (id, key, ev = "change") => {
       const e = $(id);
       if (filters[key]) e.value = filters[key];
       e.addEventListener(ev, () => { filters[key] = e.value; saveFilters(); render(); });
     };
     initPicker();
+    initNeedsLight();
     bind("#f-state", "state");
     bind("#f-window", "window");
     bind("#f-search", "q", "input");
@@ -142,7 +143,7 @@
   let hovered = null;
   let userZoomed = false;
   const zoom = d3.zoom().scaleExtent([0.15, 4]).on("zoom", (e) => {
-    if (e.sourceEvent) userZoomed = true;
+    if (e.sourceEvent) { userZoomed = true; lastGo = null; }
     root.attr("transform", e.transform);
   });
   svg.call(zoom).on("dblclick.zoom", null);
@@ -159,7 +160,10 @@
     .force("y", d3.forceY().strength(0.06))
     .alphaDecay(0.035)
     .on("tick", tick)
-    .on("end", () => fit(true));
+    .on("end", () => {
+      // A project just added to the focus by "go": frame it where it settled.
+      if (pendingGo) { const s = pendingGo; pendingGo = null; goToProject(s); } else fit(true);
+    });
 
   // Fit the whole graph in view until the user pans or zooms themselves.
   let fitted = 0;
@@ -179,6 +183,60 @@
     const k = Math.min(2.2, r.width / (x1 - x0), r.height / (y1 - y0));
     const t = d3.zoomIdentity.scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
     (animate ? svg.transition().duration(motionMs(700)) : svg).call(zoom.transform, t);
+  }
+
+  // ---------------------------------------------------------------- go to a project
+  // Pan and zoom to one project's hub and threads, then pulse them briefly.
+  // Only the view transform changes: the layout is never reheated for this.
+  let lastGo = null, pendingGo = null, pulseSlug = null, pulseTimer = null, litSlug = null;
+  const projOf = (d) => (d.hub ? d.p.slug : d.t.project);
+  const own = (slug) => [...nodes.values()].filter((d) => projOf(d) === slug && !d.faded);
+  function frame(ns, maxK) {
+    const half = (d) => Math.max(d.r, (d.hub && d.lw) || 0);
+    const pad = 50;
+    const x0 = d3.min(ns, (d) => d.x - half(d)) - pad, x1 = d3.max(ns, (d) => d.x + half(d)) + pad;
+    const y0 = d3.min(ns, (d) => d.y - d.r) - pad, y1 = d3.max(ns, (d) => d.y + d.r + 18) + pad;
+    const r = svg.node().getBoundingClientRect();
+    const k = Math.max(0.15, Math.min(maxK, r.width / (x1 - x0), r.height / (y1 - y0)));
+    return d3.zoomIdentity.scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+  }
+  function viewTo(t) {
+    svg.interrupt();
+    const ms = motionMs(700);
+    (ms ? svg.transition().duration(ms).ease(d3.easeCubicInOut) : svg).call(zoom.transform, t);
+  }
+  function goToProject(slug) {
+    if (!state.projects.some((p) => p.slug === slug)) return;
+    // Out of focus: bring it in first, then frame it again once it settles.
+    if (!inFocus(slug)) { toggleFocus(slug); pendingGo = slug; }
+    const ns = own(slug);
+    if (!ns.length) return;
+    userZoomed = true;
+    lastGo = slug;
+    viewTo(frame(ns, 2.2));
+    pulseSlug = slug;
+    clearTimeout(pulseTimer);
+    pulseTimer = setTimeout(() => { pulseSlug = null; marks(); }, 2000);
+    marks();
+  }
+  // Fit every focused project (all of them with no focus), faded ones aside.
+  function fitFocus() {
+    const ns = [...nodes.values()].filter((d) => !d.faded);
+    if (!ns.length) return;
+    lastGo = null;
+    userZoomed = !!filters.fade; // fade mode keeps faded projects out of auto-fit
+    viewTo(frame(ns, 2.2));
+  }
+  // Light one project on the map (null: none), dimming the rest.
+  function light(slug) {
+    if (litSlug === slug) return;
+    litSlug = slug;
+    marks();
+  }
+  function marks() {
+    nodeSel.classed("pulse", (d) => projOf(d) === pulseSlug).classed("lit", (d) => projOf(d) === litSlug);
+    hlabelSel.classed("lit", (d) => projOf(d) === litSlug);
+    svg.classed("spotlit", !!litSlug && nodeSel.filter((d) => projOf(d) === litSlug).size() > 0);
   }
 
   function size() {
@@ -348,6 +406,7 @@
     nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
     nodeSel.classed("hit", (d) => dash.hits.has(d.id)).classed("faded", (d) => d.faded);
+    marks();
     svg.classed("searching", dash.hits.size > 0);
     // Animate only the nodes whose size or colour changed.
     nodeSel.filter((d) => d.drawn !== d.r + d.color).each((d) => (d.drawn = d.r + d.color))
@@ -651,14 +710,19 @@
     if (btn.firstChild?.textContent !== label) btn.replaceChildren(el("span", { class: "fl", text: label }), el("span", { class: "caret", "aria-hidden": "true", text: "▾" }));
     btn.classList.toggle("on", n > 0 && n < total);
     btn.setAttribute("aria-label", "Project focus: " + (n && n < total ? [...eff].map((x) => names[x]).join(", ") : "all projects") + ". Press P");
-    // A chip per focused project, × removes it.
+    // A chip per focused project: the name goes there on the map (again:
+    // opens its coordinator), × removes it. Fit all frames them all.
     const want = n && n < total ? orderedFocus().filter((x) => eff.has(x)) : [];
     const box = $("#focus-chips");
     if (box.dataset.k !== want.join(",") + "|" + want.map((x) => names[x]).join(",")) {
       box.dataset.k = want.join(",") + "|" + want.map((x) => names[x]).join(",");
+      if (litSlug) light(null); // a chip under the pointer may be gone
       box.replaceChildren(...want.map((x) => el("span", { class: "fchip", "data-slug": x, style: `--c:${projColor(x)}` },
-        el("span", { class: "dot" }), el("span", { class: "fn", text: names[x] }),
-        el("button", { type: "button", class: "fx", title: "Remove from focus", "aria-label": `Remove ${names[x]} from focus`, text: "×", onclick: () => toggleFocus(x) }))));
+        el("button", { type: "button", class: "fgo", title: `Go to ${names[x]} on the map (click again: open its coordinator)`,
+          "aria-label": `Go to ${names[x]} on the map. Again: open its coordinator. Delete: remove from focus` },
+        el("span", { class: "dot" }), el("span", { class: "fn", text: names[x] })),
+        el("button", { type: "button", class: "fx", tabindex: "-1", title: "Remove from focus", "aria-label": `Remove ${names[x]} from focus`, text: "×", onclick: () => toggleFocus(x) }))),
+      el("button", { type: "button", id: "fit-focus", class: "fitall", title: "Fit every focused project in view", text: "Fit all" }));
     }
     box.hidden = !want.length;
     if (pickerOpen()) renderPicker();
@@ -670,7 +734,8 @@
       rowsKey = key;
       list.replaceChildren(...state.projects.map((p) => el("div", { class: "prow", role: "checkbox", tabindex: "0", "data-slug": p.slug, "aria-checked": "false", style: `--c:${projColor(p.slug)}` },
         el("span", { class: "box", "aria-hidden": "true" }), el("span", { class: "dot" }), el("span", { class: "pn", text: p.name }), el("span", { class: "pc" }),
-        el("button", { type: "button", class: "ponly", tabindex: "-1", title: "Focus on this project only", text: "Only" }))));
+        el("button", { type: "button", class: "ponly", tabindex: "-1", title: "Focus on this project only", text: "Only" }),
+        el("button", { type: "button", class: "pgo", tabindex: "-1", title: "Go to this project on the map (G)", "aria-label": "Go to " + p.name, text: "Go" }))));
       filterRows();
     }
     const counts = d3.rollup(state.threads, (v) => v.filter((t) => t.state !== "resolved").length, (t) => t.project);
@@ -702,9 +767,59 @@
   function closePicker(refocus) {
     if (!pickerOpen()) return;
     picker.hidden = true;
+    light(null);
     $("#f-project").setAttribute("aria-expanded", "false");
     document.body.classList.remove("picking");
     if (refocus || picker.contains(document.activeElement)) $("#f-project").focus({ preventScroll: true });
+  }
+  // Chips: click goes (again: opens the coordinator), hover/focus lights,
+  // Delete/Backspace remove, arrows move; on touch a long-press removes.
+  function initChips() {
+    const box = $("#focus-chips");
+    const gos = () => [...box.querySelectorAll(".fgo")];
+    const slugOf = (e) => e.target.closest?.(".fgo") && e.target.closest(".fchip").dataset.slug;
+    let press = null, swallow = 0;
+    function remove(slug, refocus) {
+      const g = gos(), i = g.findIndex((b) => b.closest(".fchip").dataset.slug === slug);
+      const next = (g[i + 1] || g[i - 1])?.closest(".fchip").dataset.slug;
+      toggleFocus(slug);
+      if (refocus) (box.querySelector(`.fchip[data-slug="${CSS.escape(next || "")}"] .fgo`) || $("#f-project")).focus({ preventScroll: true });
+    }
+    box.addEventListener("click", (e) => {
+      if (e.target.closest("#fit-focus")) return fitFocus();
+      const slug = slugOf(e);
+      if (!slug) return;
+      if (Date.now() < swallow) return; // the click that ends a long-press
+      if (lastGo === slug) { lastGo = null; select("hub:" + slug); } else goToProject(slug);
+    });
+    box.addEventListener("keydown", (e) => {
+      const slug = slugOf(e);
+      if (!slug) return;
+      const g = gos(), i = g.indexOf(e.target.closest(".fgo"));
+      if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); remove(slug, true); }
+      else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); g[Math.min(g.length - 1, i + 1)].focus(); }
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); g[Math.max(0, i - 1)].focus(); }
+    });
+    box.addEventListener("mouseover", (e) => light(slugOf(e) || null));
+    box.addEventListener("mouseleave", () => light(null));
+    box.addEventListener("focusin", (e) => light(slugOf(e) || null));
+    box.addEventListener("focusout", (e) => { if (!box.contains(e.relatedTarget)) light(null); });
+    box.addEventListener("pointerdown", (e) => {
+      const slug = slugOf(e);
+      if (!slug || e.pointerType === "mouse") return;
+      clearTimeout(press?.t);
+      press = { x: e.clientX, y: e.clientY, t: setTimeout(() => { press = null; swallow = Date.now() + 800; navigator.vibrate?.(15); remove(slug, false); }, 550) };
+    });
+    const cancel = () => { clearTimeout(press?.t); press = null; };
+    box.addEventListener("pointerup", cancel);
+    box.addEventListener("pointercancel", cancel);
+    box.addEventListener("pointermove", (e) => { if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) cancel(); });
+    box.addEventListener("contextmenu", (e) => { if (slugOf(e)) e.preventDefault(); });
+  }
+  function initNeedsLight() {
+    const box = $("#needs");
+    box.addEventListener("mouseover", (e) => { const k = e.target.closest?.("[data-key]")?.dataset.key; light(k ? k.replace(/^hub:/, "").split("/")[0] : null); });
+    box.addEventListener("mouseleave", () => light(null));
   }
   function initPicker() {
     $("#f-project").addEventListener("click", () => (pickerOpen() ? closePicker() : openPicker(false)));
@@ -716,7 +831,8 @@
     list.addEventListener("click", (e) => {
       const r = e.target.closest(".prow");
       if (!r) return;
-      if (e.target.closest(".ponly")) setFocus([r.dataset.slug]);
+      if (e.target.closest(".pgo")) { closePicker(); goToProject(r.dataset.slug); }
+      else if (e.target.closest(".ponly")) setFocus([r.dataset.slug]);
       else toggleFocus(r.dataset.slug);
     });
     list.addEventListener("keydown", (e) => {
@@ -725,9 +841,17 @@
       const rows = shownRows(), i = rows.indexOf(r);
       if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleFocus(r.dataset.slug); }
       else if (e.key === "o" || e.key === "O") { e.preventDefault(); setFocus([r.dataset.slug]); }
+      else if (e.key === "g" || e.key === "G") { e.preventDefault(); closePicker(); goToProject(r.dataset.slug); }
       else if (e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, i + 1)]?.focus(); }
       else if (e.key === "ArrowUp") { e.preventDefault(); (i > 0 ? rows[i - 1] : $("#pp-filter")).focus(); }
     });
+    // Hovering or focusing a row lights its project on the map.
+    const rowLight = (e) => light(e.target.closest?.(".prow")?.dataset.slug || null);
+    list.addEventListener("mouseover", rowLight);
+    list.addEventListener("focusin", rowLight);
+    list.addEventListener("mouseleave", () => light(null));
+    list.addEventListener("focusout", (e) => { if (!list.contains(e.relatedTarget)) light(null); });
+    initChips();
     const input = $("#pp-filter");
     input.addEventListener("input", filterRows);
     input.addEventListener("keydown", (e) => {
@@ -1430,6 +1554,8 @@
   };
   dash.render = () => render();
   dash.inFocus = (slug) => inFocus(slug);
+  dash.goProject = (slug) => goToProject(slug);
+  dash.light = (slug) => light(slug || null);
   dash.state = () => state;
   dash.STATES = STATES;
   // The page's hooks for static/voice.js (and other add-ons).
