@@ -104,16 +104,18 @@ window.HDThreadWin = (() => {
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
         screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
+        const chatRow = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
+        // A pane whose agent exited: a command line and the way back (static/terminal.js).
+        const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chatRow.hidden = x; } }) : null;
         const head = el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
           el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }));
         const chat = [card, screen.el, quick,
           a.live || key.startsWith("hub:") ? att?.tray : null,
-          a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." }),
-          log];
+          chatRow, term?.el, log];
         if (key.startsWith("hub:") && window.HDThreads) {
           // A coordinator window: its screen and chat, or its project's
           // threads, organised by stage (static/threads.js).
-          const coordPane = el("div", { class: "tw-pane", "data-pane": "coord", role: "tabpanel" }, ...chat);
+          const coordPane = el("div", { class: "tw-pane", "data-pane": "coord", role: "tabpanel" }, ...chat.filter(Boolean));
           const tvPane = el("div", { class: "tw-pane", "data-pane": "threads", role: "tabpanel", hidden: "" });
           let tv = null;
           const tabs = el("div", { class: "tw-tabs", role: "tablist", "aria-label": "Coordinator or threads" });
@@ -141,6 +143,7 @@ window.HDThreadWin = (() => {
             blocked = d.live_status === "blocked";
             quick.hidden = !blocked;
             ctl?.update(blocked ? d.prompt : null);
+            term?.update(d);
             input.placeholder = blocked && !key.startsWith("hub:") ? "Type an answer: typed into the prompt, then Enter" : "Follow-up prompt… (Ctrl+Enter sends)";
           });
         };

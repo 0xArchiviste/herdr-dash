@@ -6,7 +6,16 @@
 # STUB_SCREENS/<pane>.alt makes the pane an alternate-screen TUI (Codex):
 # `--source recent` reads blank, `--source detection` reads the screen.
 D="$(cd "$(dirname "$0")" && pwd)"
-echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
+# STUB_SCREENS/<pane>.noagent: the agent in that pane exited; herdr lists the
+# pane with no agent and status unknown, and a shell in the foreground.
+# STUB_SCREENS/<pane>.fg names another foreground program (vim, sleep).
+if [ "$1 $2" = "pane send-text" ] && [[ "$4" =~ [[:cntrl:]] ]]; then
+  # Control bytes (paste brackets, Enter, Ctrl+C) are logged quoted, on one line.
+  echo "herdr pane send-text $3 $(printf '%q' "$4")" >> "${STUB_LOG:-/dev/null}"
+else
+  echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
+fi
+noagent() { sed -E '/"pane_id":"'"$1"'"/{s/"agent":"[a-z]*",//;s/"agent_session":\{[^}]*\},//;s/"agent_status":"[a-z]*"/"agent_status":"unknown"/}'; }
 case "$1 $2" in
   "pane list")
     # STUB_SCREENS/<pane>.status overrides a pane's agent_status.
@@ -15,6 +24,11 @@ case "$1 $2" in
       [ -f "$f" ] || continue
       p="$(basename "$f" .status)"; p="${p/_/:}"
       out="$(printf '%s\n' "$out" | sed "/\"pane_id\":\"$p\"/s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$f")\"/")"
+    done
+    for f in "${STUB_SCREENS:-/nonexistent}"/*.noagent; do
+      [ -f "$f" ] || continue
+      p="$(basename "$f" .noagent)"; p="${p/_/:}"
+      out="$(printf '%s\n' "$out" | noagent "$p")"
     done
     printf '%s\n' "$out" ;;
   "pane read")
@@ -59,12 +73,24 @@ case "$1 $2" in
     if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${3/:/_}.status" ]; then
       row="$(printf '%s' "$row" | sed "s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$STUB_SCREENS/${3/:/_}.status")\"/")"
     fi
+    if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${3/:/_}.noagent" ]; then row="$(printf '%s' "$row" | noagent "$3")"; fi
     printf '{"id":"cli:pane:get","result":{"pane":%s,"type":"pane_info"}}\n' "$row" ;;
+  "pane process-info")
+    pane="$4"; f="${STUB_SCREENS:-/nonexistent}/${pane/:/_}"
+    grep -qF "\"pane_id\":\"$pane\"" "$D/panes.json" || { echo "error: no pane $pane" >&2; exit 1; }
+    if [ -f "$f.fg" ]; then fg="$(cat "$f.fg")"; pg=4243
+    elif [ -f "$f.noagent" ]; then fg=bash; pg=4242
+    else fg="$(grep -F "\"pane_id\":\"$pane\"" "$D/panes.json" | sed -E 's/.*"agent":"([a-z]*)".*/\1/')"; pg=4243; fi
+    printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":%s,"foreground_processes":[{"argv":["%s"],"name":"%s","pid":%s}],"pane_id":"%s","shell_pid":4242},"type":"pane_process_info"}}\n' "$pg" "$fg" "$fg" "$pg" "$pane" ;;
   "pane send-keys"|"pane send-text")
     # STUB_SCREENS/<pane>.onkeys: after a key press the pane shows that file
     # (an agent moving on); the marker is used up.
     f="${STUB_SCREENS:-/nonexistent}/${3/:/_}"
     if [ "$1 $2" = "pane send-keys" ] && [ -f "$f.onkeys" ]; then mv "$f.onkeys" "$f"; fi
+    # Text typed into a pane whose agent exited shows on its screen, like a shell echoing it.
+    if [ "$1 $2" = "pane send-text" ] && [ -f "$f.noagent" ]; then
+      printf '%s\n' "$4" | tr -d '\000-\010\013-\037' | sed 's/\[20[01]~//g' | sed 's/^/$ /' >> "$f"
+    fi
     echo "ok" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

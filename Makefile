@@ -17,6 +17,7 @@ vet:
 	node --check static/system.js
 	node --check static/windows.js
 	node --check static/threadwin.js
+	node --check static/terminal.js
 	node --check static/threads.js
 	node --check static/routing.js
 	node --check static/attach.js
