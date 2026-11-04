@@ -22,6 +22,11 @@ profile = "astra"
 [[global.modes.coding]]
 provider = "claude"
 profile = "claude"
+model = "claude-opus-5-5"   # optional: else the profile's own model
+effort = "high"             # optional: low, medium, high, xhigh, max (Codex:
+                            # minimal to xhigh; opencode has none)
+context = 1000000           # optional: a size the model offers, in tokens.
+                            # effort and context apply when the launch hook lands
 
 [[global.modes.coding]]
 provider = "codex"
