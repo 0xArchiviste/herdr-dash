@@ -175,6 +175,9 @@ type Project struct {
 	// warns past it; it does not hold threads back).
 	MaxParallel int    `json:"max_parallel"`
 	Error       string `json:"error,omitempty"`
+	// EventsSig changes when the project's thread timelines may have
+	// (timeline.go): pages refetch /api/project/{slug}/timeline then.
+	EventsSig string `json:"events_sig"`
 
 	Coordinator Coordinator `json:"coordinator"`
 }
@@ -230,6 +233,7 @@ type projectRaw struct {
 	sig       uint64 // files and panes as of the last good thread list
 	coords    []liveCoord
 	record    coordRecord
+	inboxSig  string // inbox/ and inbox/done/ as of the last tick (timeline.go)
 }
 
 type Collector struct {
@@ -260,6 +264,14 @@ type Collector struct {
 	listSig    uint64    // root files and panes as of the last `list`
 	listAt     time.Time // when `list` last ran
 	listOut    []byte
+
+	// Thread timelines (timeline.go): progress changes seen between thread
+	// lists, the count per project (part of EventsSig), built answers.
+	progress  map[string][]TLEvent
+	progressN map[string]int
+	timelines map[string]tlAnswer
+	tlMu      sync.Mutex        // parsing inbox items, outside c.mu
+	tlFiles   map[string]tlFile // inbox item path -> parsed (tlMu)
 }
 
 type transcriptHit struct {
@@ -291,6 +303,7 @@ func NewCollector(cfg Config) *Collector {
 		paneLocks:    map[string]*sync.Mutex{},
 		burst:        map[string]time.Time{},
 		prompts:      map[string]*Prompt{},
+		progressN:    map[string]int{},
 		kick:         make(chan struct{}, 1),
 		snap:         Snapshot{Projects: []Project{}, Threads: []Thread{}, Errors: []string{}},
 	}
@@ -429,6 +442,7 @@ func (c *Collector) refreshPanes(ctx context.Context) {
 	for _, slug := range c.order {
 		if p := c.projects[slug]; p != nil {
 			p.coords, p.record, p.Inbox = readCoordState(filepath.Join(c.cfg.Root, slug))
+			p.inboxSig = eventsSig(filepath.Join(c.cfg.Root, slug), 0)
 		}
 	}
 }
@@ -443,6 +457,7 @@ var countRe = regexp.MustCompile(`([A-Za-z ]+): (\d+)`)
 func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 	now := time.Now()
 	files := map[string]uint64{}
+	inboxSigs := map[string]string{}
 	rootSig := fnv.New64a()
 	ents, _ := os.ReadDir(c.cfg.Root)
 	for _, e := range ents {
@@ -450,6 +465,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 			dir := filepath.Join(c.cfg.Root, e.Name())
 			files[e.Name()] = statSig(filepath.Join(dir, "PROJECT.md"), filepath.Join(dir, "threads"), filepath.Join(dir, ".state"), filepath.Join(dir, "inbox"))
 			fmt.Fprintf(rootSig, "%s %x\n", e.Name(), files[e.Name()])
+			inboxSigs[e.Name()] = eventsSig(dir, 0)
 		}
 	}
 	c.mu.Lock()
@@ -498,6 +514,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 		p.Slug, p.Status, p.Summary, p.Counts = slug, f[1], summary, counts
 		p.Name, p.Goal, p.MaxParallel = readProjectMeta(filepath.Join(c.cfg.Root, slug, "PROJECT.md"))
 		p.coords, p.record, p.Inbox = readCoordState(filepath.Join(c.cfg.Root, slug))
+		p.inboxSig = inboxSigs[slug]
 		if p.Name == "" {
 			p.Name = slug
 		}
@@ -532,6 +549,9 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 			p.sig = 0 // try again next tick
 		} else {
 			p.listError = ""
+			if !p.fetched.IsZero() && p.threads != nil {
+				c.recordProgress(slug, p.threads, rows, now)
+			}
 			p.threads = rows
 			// The new rows may name new panes: hash those, so the next tick
 			// compares like with like.
@@ -886,6 +906,7 @@ func (c *Collector) rebuild() {
 		pr := p.Project
 		pr.Error = p.listError
 		pr.Coordinator = c.coordinator(p)
+		pr.EventsSig = fmt.Sprintf("%s.%d", p.inboxSig, c.progressN[slug])
 		if p.listError != "" {
 			snap.Errors = append(snap.Errors, p.listError)
 		}

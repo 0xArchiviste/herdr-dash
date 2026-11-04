@@ -1,0 +1,150 @@
+/* Threads view (static/threads.js). One hue per meaning, always with a
+   text label beside it: stage tokens point at the Srcery primitives in
+   style.css; components use only these tokens. */
+.tv {
+  --tv-needs: var(--yellow); --tv-blocked: var(--bred); --tv-review: var(--bblue); --tv-landing: var(--bcyan);
+  --tv-working: var(--bgreen); --tv-queued: var(--bmagenta); --tv-idle: var(--white); --tv-done: var(--bblack);
+  --tv-new: var(--borange); --tv-card: var(--black); --tv-line: var(--g3);
+  container-type: inline-size; display: flex; flex-direction: column; gap: 16px; min-width: 0; font-size: 13px;
+}
+.tv .s-needs, .tv .s-waiting { --c: var(--tv-needs); }
+.tv .s-blocked { --c: var(--tv-blocked); }
+.tv .s-review { --c: var(--tv-review); }
+.tv .s-landing { --c: var(--tv-landing); }
+.tv .s-working { --c: var(--tv-working); }
+.tv .s-queued { --c: var(--tv-queued); }
+.tv .s-idle { --c: var(--tv-idle); }
+.tv .s-done, .tv .s-resolved { --c: var(--tv-done); }
+.tv-stage[data-stage="needs"] { --c: var(--tv-needs); }
+.tv-stage[data-stage="review"] { --c: var(--tv-review); }
+.tv-stage[data-stage="working"] { --c: var(--tv-working); }
+.tv-stage[data-stage="queued"] { --c: var(--tv-queued); }
+.tv-stage[data-stage="idle"] { --c: var(--tv-idle); }
+.tv-stage[data-stage="done"] { --c: var(--tv-done); }
+.tv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+
+/* Summary strip: counts that filter, overall progress, blocked on you. */
+.tv-sum { display: flex; flex-direction: column; gap: 8px; }
+.tv-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.tv-count { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 10px;
+  border-radius: 999px; border: 1px solid var(--g4); background: var(--g1); color: var(--bwhite); font-size: 12px; white-space: nowrap;
+  transition: background-color .12s, border-color .12s; }
+.tv-count .n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tv-count:hover { background: var(--g2); }
+.tv-count:focus-visible { outline: 2px solid var(--bblue); outline-offset: 1px; }
+.tv-count[aria-pressed="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 22%, var(--g1)); }
+.tv-count[aria-pressed="true"]::after { content: "✓"; color: var(--c); font-weight: 700; }
+.tv-sumrow { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.tv-overall { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.tv-ov-label { font-weight: 600; color: var(--bwhite); }
+.tv-blocked { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-radius: 8px;
+  background: color-mix(in srgb, var(--tv-needs) 10%, var(--black)); border: 1px solid color-mix(in srgb, var(--tv-needs) 40%, var(--black)); }
+.tv-blocked[hidden] { display: none; }
+.tv-bl-label { font-weight: 600; color: var(--byellow); font-size: 12px; }
+.tv-bl { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+.tv-tools { display: flex; gap: 8px; }
+.tv-search { flex: 1; min-width: 0; background: var(--hard-black); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 13px; }
+.tv-search:focus-visible { outline: none; border-color: var(--bblue); }
+.tv-status[hidden] { display: none; }
+
+/* Stage sections. */
+.tv-stage { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tv-stage[hidden] { display: none; }
+details.tv-stage[open] > .tv-list { margin-top: 8px; }
+.tv-sh { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12px; font-weight: 600; color: var(--white); letter-spacing: .02em; }
+summary.tv-sh { cursor: pointer; list-style: none; min-height: 28px; }
+summary.tv-sh::-webkit-details-marker { display: none; }
+summary.tv-sh::before { content: "▸"; color: var(--bblack); }
+details[open] > summary.tv-sh::before { content: "▾"; }
+summary.tv-sh:focus-visible { outline: 2px solid var(--bblue); outline-offset: 2px; border-radius: 4px; }
+.tv-sh-n { color: var(--bblack); font-weight: 400; font-variant-numeric: tabular-nums; }
+.tv-list { display: flex; flex-direction: column; gap: 8px; }
+
+/* A thread card: stage accent on the leading edge. */
+.tv-card { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px 8px;
+  background: var(--tv-card); border: 1px solid var(--g2); border-inline-start: 3px solid var(--c, var(--g4)); border-radius: 8px; }
+.tv-card[data-stage="needs"] { --c: var(--tv-needs); }
+.tv-card[data-stage="review"] { --c: var(--tv-review); }
+.tv-card[data-stage="working"] { --c: var(--tv-working); }
+.tv-card[data-stage="queued"] { --c: var(--tv-queued); }
+.tv-card[data-stage="idle"] { --c: var(--tv-idle); }
+.tv-card[data-stage="done"] { --c: var(--tv-done); opacity: .85; }
+.tv-card.unread { border-color: color-mix(in srgb, var(--tv-new) 55%, var(--g2)); border-inline-start-color: var(--c); }
+.tv-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tv-chip { --c: var(--g5); display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  white-space: nowrap; color: var(--c); background: color-mix(in srgb, var(--c) 16%, var(--hard-black)); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+.tv-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.tv-chip.s-resolved { color: var(--bblack); }
+.tv-unread { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--hard-black); background: var(--tv-new); font-variant-numeric: tabular-nums; }
+.tv-id { flex: none; color: var(--bblack); font-size: 12px; font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+.tv-title { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; color: var(--bwhite); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tv-acts { display: flex; gap: 6px; flex: none; }
+.tv-acts .tbtn { padding: 3px 9px; }
+.tv-progress { display: grid; grid-template-columns: minmax(60px, 1fr) auto; grid-template-areas: "bar pct" "act act"; align-items: center; gap: 2px 8px; min-width: 0; }
+.tv-progress .tv-bar { grid-area: bar; }
+.tv-pct { grid-area: pct; font-size: 12px; font-weight: 600; color: var(--bwhite); font-variant-numeric: tabular-nums; }
+.tv-act { grid-area: act; font-size: 12px; color: var(--white); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-bar { display: block; height: 6px; border-radius: 3px; background: var(--g2); overflow: hidden; min-width: 60px; }
+.tv-bar > i { display: block; height: 100%; background: var(--c, var(--tv-working)); border-radius: inherit; }
+.tv-bar.wide { flex: 1 1 120px; max-width: 260px; --c: var(--tv-working); }
+.tv-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--bblack); font-variant-numeric: tabular-nums; }
+.tv-pr { color: var(--bblue); }
+
+/* The latest event, the button that expands the timeline. */
+.tv-expand { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 32px; margin: 0 -6px; padding: 4px 6px;
+  border-radius: 6px; font-size: 12px; min-width: 0; transition: background-color .12s; }
+.tv-expand:hover { background: var(--g1); }
+.tv-expand:focus-visible { outline: 2px solid var(--bblue); outline-offset: 0; }
+.tv-caret { color: var(--bblack); flex: none; width: 10px; }
+.tv-latest { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+.tv-latest .tv-ev-text { overflow: hidden; text-overflow: ellipsis; color: var(--white); }
+.tv-more { flex: none; color: var(--bblack); }
+.tv-ev-time { flex: none; color: var(--bblack); font-variant-numeric: tabular-nums; font-size: 12px; }
+
+/* Event colours: one meaning each, icon and label always beside them. */
+.ev-start { --e: var(--tv-queued); }
+.ev-work { --e: var(--tv-working); }
+.ev-info { --e: var(--tv-review); }
+.ev-good { --e: var(--tv-landing); }
+.ev-bad { --e: var(--tv-blocked); }
+.ev-attn { --e: var(--tv-needs); }
+.ev-mute { --e: var(--bblack); }
+.tv-ico { flex: none; width: 16px; text-align: center; color: var(--e); font-weight: 700; }
+.tv-ev-label { flex: none; color: var(--e); font-weight: 600; }
+
+.tv-events { list-style: none; margin: 0; padding: 0 0 2px; padding-inline-start: 16px; display: flex; flex-direction: column; gap: 0;
+  border-inline-start: 1px solid var(--tv-line); margin-inline-start: 4px; }
+.tv-ev { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: baseline; gap: 0 8px; padding: 4px 0; font-size: 12px; line-height: 1.45; }
+.tv-ev .tv-ev-text { color: var(--white); overflow-wrap: anywhere; }
+.tv-thread .tv-events { margin-inline-start: 0; }
+.tv-thread { gap: 10px; }
+.tv-thread > .tbtn { align-self: flex-start; }
+
+.tv-empty { padding: 16px; border: 1px dashed var(--g4); border-radius: 8px; color: var(--white); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.tv-empty[hidden] { display: none; }
+.tv-empty p { margin: 0; }
+
+/* The coordinator window's Coordinator / Threads tabs. */
+.tw-tabs { display: flex; gap: 4px; margin: 6px 0 8px; border-bottom: 1px solid var(--g3); }
+.tw-tab { all: unset; cursor: pointer; padding: 6px 12px; font-size: 12px; color: var(--bblack); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tw-tab[aria-selected="true"] { color: var(--bwhite); border-bottom-color: var(--borange); font-weight: 600; }
+.tw-tab:focus-visible { outline: 2px solid var(--bblue); outline-offset: -2px; }
+.tw-pane[hidden] { display: none !important; }
+.report-win .md { max-height: 70vh; overflow: auto; }
+
+/* Narrow: a side panel or a phone. Buttons wrap under the title. */
+@container (max-width: 520px) {
+  .tv-top { flex-wrap: wrap; }
+  .tv-title { flex-basis: 100%; order: 3; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .tv-acts { order: 2; margin-inline-start: auto; }
+  .tv-count .lbl { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 700px) {
+  .tv-search { font-size: 16px; }
+  .tv-count, .tv-acts .tbtn { min-height: 36px; display: inline-flex; align-items: center; }
+  .tv-expand { min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tv-count, .tv-expand { transition: none; }
+}

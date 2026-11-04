@@ -91,12 +91,29 @@ window.HDThreadWin = (() => {
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
         screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
-        body.append(
-          el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
-            el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) })),
-          card, screen.el, quick,
+        const head = el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
+          el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }));
+        const chat = [card, screen.el, quick,
           a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." }),
-          log);
+          log];
+        if (key.startsWith("hub:") && window.HDThreads) {
+          // A coordinator window: its screen and chat, or its project's
+          // threads, organised by stage (static/threads.js).
+          const coordPane = el("div", { class: "tw-pane", "data-pane": "coord", role: "tabpanel" }, ...chat);
+          const tvPane = el("div", { class: "tw-pane", "data-pane": "threads", role: "tabpanel", hidden: "" });
+          let tv = null;
+          const tabs = el("div", { class: "tw-tabs", role: "tablist", "aria-label": "Coordinator or threads" });
+          const show = (which) => {
+            for (const b of tabs.children) b.setAttribute("aria-selected", String(b.dataset.tab === which));
+            coordPane.hidden = which !== "coord";
+            tvPane.hidden = which !== "threads";
+            if (which === "threads" && !tv) tv = window.HDThreads.mount(tvPane, key.slice(4), { compact: true });
+          };
+          tabs.append(
+            el("button", { type: "button", class: "tw-tab", role: "tab", "data-tab": "coord", "aria-selected": "true", text: "Coordinator", onclick: () => show("coord") }),
+            el("button", { type: "button", class: "tw-tab", role: "tab", "data-tab": "threads", "aria-selected": "false", text: "Threads", onclick: () => show("threads") }));
+          body.append(head, tabs, coordPane, tvPane);
+        } else body.append(head, ...chat);
         ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
         const paused = el("p", { class: "muted tw-paused", hidden: "", text: `Paused: only the ${LIVE} front-most windows stream. Click here to resume.` });
         screen.el.before(paused);

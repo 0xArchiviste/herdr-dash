@@ -181,7 +181,7 @@ test("demo page: blocked thread shows its prompt and quick replies, hub opens th
   await page.waitForSelector("#p-chat .screen:not(:empty)");
   await page.waitForSelector("#p-tasks li");
   await page.waitForSelector("#p-reports details");
-  assert.ok(await page.locator("#p-threads li").count() >= 3, "coordinator lists its open threads");
+  assert.ok(await page.locator('#p-tv .tv-card:not([data-stage="done"])').count() >= 3, "coordinator lists its open threads");
   await page.close();
 });
 

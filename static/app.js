@@ -936,6 +936,7 @@
       el("dl", { class: "meta", id: "p-meta" }),
       buildChat(t),
       el("div", { id: "p-next" }),
+      el("section", { id: "p-timeline", "aria-label": "Timeline" }, el("h3", { text: "Timeline" }), el("div", { id: "p-tl" })),
       // The report lives mainly in the coordinator panel; here it is a one-liner.
       el("details", { id: "p-report-box", class: "fold" },
         el("summary", {}, el("span", { class: "fold-h", text: "Latest report" }), el("span", { class: "preview" })),
@@ -943,6 +944,7 @@
       el("h3", { text: "Task" }), el("div", { class: "md", id: "p-task", text: "…" }),
       el("h3", { text: "Jump to it" }), el("div", { id: "p-jump" }),
     );
+    window.HDThreads?.mountThread($("#p-tl"), key);
     refreshPanelHeader();
   }
 
@@ -1072,6 +1074,7 @@
       el("div", { class: "proj", text: `Project · ${slug}` }),
       el("h2", { class: "title", text: p.name }),
       el("div", { id: "p-head" }),
+      el("section", { id: "p-tv-box", "aria-label": "Threads" }, el("h3", { text: "Threads" }), el("div", { id: "p-tv" })),
       el("section", { class: "session-details", "aria-label": "Session details" }),
       el("div", { id: "p-actions" }),
       el("dl", { class: "meta", id: "p-meta" }),
@@ -1083,12 +1086,12 @@
         el("div", { id: "coord-note" }),
         el("div", { class: "chat-row" }, input, send),
         el("div", { id: "chat-log" })),
-      el("h3", { text: "Open threads" }), el("ul", { id: "p-threads", class: "tlist" }),
       el("h3", { text: "Thread reports" }), el("div", { id: "p-reports", text: "…" }),
       el("h3", { text: "Tasks" }), el("div", { class: "md", id: "p-tasks", text: "…" }),
       el("details", { id: "p-memory", class: "fold" }, el("summary", {}, el("span", { class: "fold-h", text: "Memory index" })), el("div", { class: "md", id: "p-memory-md" })),
       el("h3", { text: "Jump to it" }), el("div", { id: "p-jump" }),
     );
+    window.HDThreads?.mount($("#p-tv"), slug);
     refreshCoordHeader();
     coordNote(!!p.coordinator?.pane_id, p.coordinator?.state === "blocked");
   }
@@ -1171,19 +1174,6 @@
     ].filter(([, v]) => v);
     $("#p-meta").replaceChildren(...rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
     if (p.error) $("#p-meta").append(el("dt", { text: "Error" }), el("dd", { class: "s-blocked", text: p.error }));
-    // Open threads: rebuilt only when they change, so clicks are not lost.
-    const open = state.threads.filter((t) => t.project === slug && t.state !== "resolved")
-      .sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || ageSec(a) - ageSec(b));
-    const ul = $("#p-threads");
-    const sig = JSON.stringify(open.map((t) => [t.key, t.state, t.title, t.activity]));
-    if (ul.dataset.sig !== sig) {
-      ul.dataset.sig = sig;
-      ul.replaceChildren(...(open.length ? open.map((t) => el("li", { "data-key": t.key },
-        el("button", { class: "trow", title: "Open " + t.key, onclick: () => select(t.key) },
-          el("span", { class: "dot", style: `background:${STATES[t.state].color}` }),
-          el("span", { class: "t", text: t.title }),
-          el("span", { class: "muted", text: `${t.id} · ${STATES[t.state].label}${t.activity ? " · " + t.activity : ""}` })))) : [el("li", { class: "muted", text: "No open threads." })]));
-    }
   }
 
   async function loadProject(slug) {
@@ -1375,6 +1365,7 @@
     state = { ...raw, threads: raw.threads.map(effective) };
     render();
     window.HDSystem?.state();
+    window.HDThreads?.state();
   }
   let stream = null;
   function connect() {
@@ -1432,6 +1423,7 @@
   dash.inFocus = (slug) => inFocus(slug);
   dash.state = () => state;
   dash.STATES = STATES;
+  dash.safeHTML = safeHTML;
   // The page's hooks for static/voice.js (and other add-ons).
   window.hd = {
     state: () => state,
