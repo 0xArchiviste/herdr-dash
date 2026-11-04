@@ -81,6 +81,7 @@ type RawThread struct {
 	StateLine        string   `json:"state_line"`
 	Error            string   `json:"error"`
 	Machine          string   `json:"machine"`
+	ThreadDir        string   `json:"thread_dir"`
 	ReportHash       string   `json:"report_hash"`
 	AckedReportHash  string   `json:"acked_report_hash"`
 	ResolvedReason   string   `json:"resolved_reason"`
@@ -145,15 +146,16 @@ type coordRecord struct {
 type Coordinator struct {
 	Session SessionDetails `json:"session"`
 
-	PaneID       string  `json:"pane_id"`
-	TabID        string  `json:"tab_id"`
-	Agent        string  `json:"agent"`
-	LiveStatus   string  `json:"live_status"`
-	State        string  `json:"state"`
-	Activity     string  `json:"activity"`
-	LastActivity string  `json:"last_activity"`
-	NeedsYou     bool    `json:"needs_you"`
-	Prompt       *Prompt `json:"prompt,omitempty"`
+	PaneID       string       `json:"pane_id"`
+	TabID        string       `json:"tab_id"`
+	Agent        string       `json:"agent"`
+	LiveStatus   string       `json:"live_status"`
+	State        string       `json:"state"`
+	Activity     string       `json:"activity"`
+	LastActivity string       `json:"last_activity"`
+	NeedsYou     bool         `json:"needs_you"`
+	Prompt       *Prompt      `json:"prompt,omitempty"`
+	Images       ImageSupport `json:"images"`
 }
 
 type ghPR struct {
@@ -210,6 +212,8 @@ type Thread struct {
 	Error        string   `json:"error,omitempty"`
 	Next         []string `json:"next"`
 	Prompt       *Prompt  `json:"prompt,omitempty"`
+	// Images says whether the chat box may send images, and why not.
+	Images ImageSupport `json:"images"`
 }
 
 type Snapshot struct {
@@ -353,8 +357,11 @@ func (c *Collector) Run(ctx context.Context) {
 	c.rebuild()
 	c.refreshPRs(ctx)
 	c.rebuild()
+	c.SweepImages()
 
 	paneT := time.NewTicker(c.cfg.Poll)
+	sweepT := time.NewTicker(time.Hour)
+	defer sweepT.Stop()
 	threadT := time.NewTicker(c.cfg.ThreadsEvery)
 	ghT := time.NewTicker(c.cfg.GHEvery)
 	defer paneT.Stop()
@@ -375,6 +382,9 @@ func (c *Collector) Run(ctx context.Context) {
 			c.refreshThreads(ctx, false)
 		case <-ghT.C:
 			c.refreshPRs(ctx)
+		case <-sweepT.C:
+			c.SweepImages()
+			continue
 		case <-c.kick: // a write just landed: show its effect now
 			c.refreshPanes(ctx)
 			c.refreshOpencode(ctx)
@@ -663,6 +673,7 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	}
 	sub, _ := pane.Tokens["hp_sub"].(string)
 	co := Coordinator{PaneID: pane.PaneID, TabID: tab, Agent: pane.Agent, LiveStatus: pane.AgentStatus, Activity: sub}
+	co.Images = coordImageTarget(c.cfg.Root, p.Slug, pane.Agent).support()
 	co.Session = c.sessionDetails(pane, pane.Agent, c.projectProfile(p.Slug, "coordinator"))
 	switch {
 	case pane.AgentStatus == "blocked":
@@ -914,7 +925,8 @@ func (c *Collector) rebuild() {
 				PaneID: t.PaneID, TabID: t.TabID, PaneAlive: alive, Branch: t.Branch,
 				PR: t.PR, PRState: t.PRState, Created: t.Created, Updated: t.Updated,
 				Note: t.Note, Error: t.Error, Next: t.Next,
-				Acked: t.ReportHash != "" && t.ReportHash == t.AckedReportHash,
+				Acked:  t.ReportHash != "" && t.ReportHash == t.AckedReportHash,
+				Images: threadImageTarget(slug, t).support(),
 			}
 			profile := t.Profile
 			if profile == "" {
