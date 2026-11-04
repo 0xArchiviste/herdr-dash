@@ -110,8 +110,14 @@ func (a *Actions) register(mux *http.ServeMux) {
 			"public_url": a.cfg.PublicURL,
 			"voice":      map[string]bool{"intent": a.cfg.Voice.Intent(), "transcribe": a.cfg.Voice.STT(), "local": a.cfg.STT.Local()}})
 	})
-	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guard(a.threadAction))
-	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guard(a.coordinator))
+	// A prompt may carry images (images.go); other thread actions stay small.
+	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guardN(func(r *http.Request) int64 {
+		if r.PathValue("action") == "prompt" {
+			return maxMessageBody
+		}
+		return 64 << 10
+	}, a.threadAction))
+	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guardN(func(*http.Request) int64 { return maxMessageBody }, a.coordinator))
 	mux.HandleFunc("POST /api/project/{slug}/answer", a.guard(a.coordAnswer))
 	mux.HandleFunc("POST /api/project/{slug}/keys", a.guard(a.coordKeys))
 	mux.HandleFunc("POST /api/ack", a.guard(a.bulkAck))
@@ -132,14 +138,23 @@ func (a *Actions) register(mux *http.ServeMux) {
 // (an HTML form cannot send one cross-site without a preflight) and a
 // same-origin Origin when the browser sends one.
 func (a *Actions) guard(h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
+	return a.guardN(func(*http.Request) int64 { return 64 << 10 }, h)
+}
+
+// guardN is guard with a body of up to limit(r) bytes; a longer one is refused.
+func (a *Actions) guardN(limitOf func(*http.Request) int64, h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		limit := limitOf(r)
 		target := strings.TrimPrefix(r.URL.Path, "/api/")
 		err := a.precheck(r)
 		var out any
 		if err == nil {
 			var body []byte
-			body, err = io.ReadAll(io.LimitReader(r.Body, 64<<10))
+			body, err = io.ReadAll(io.LimitReader(r.Body, limit+1))
+			if err == nil && int64(len(body)) > limit {
+				err = fail(http.StatusRequestEntityTooLarge, "the message is too large")
+			}
 			if err == nil {
 				out, err = h(r, body)
 			}
@@ -272,17 +287,18 @@ func (a *Actions) threadAction(r *http.Request, body []byte) (any, error) {
 	var out string
 	switch r.PathValue("action") {
 	case "prompt":
-		var req struct{ Text string }
+		var req messageReq
 		if err := decode(body, &req); err != nil {
 			return nil, err
 		}
-		text, err := cleanText(req.Text, maxPromptBytes, true)
+		text, stored, err := req.message(threadImageTarget(slug, t))
 		if err != nil {
 			return nil, err
 		}
 		out, err = a.hp(2*time.Minute, text, "thread", "prompt", slug, id, "--text-file", "-")
 		a.col.Burst(t.PaneID)
 		if err != nil {
+			unsent(stored, err)
 			return nil, err
 		}
 	case "keys":
@@ -372,24 +388,61 @@ func (a *Actions) coordinator(r *http.Request, body []byte) (any, error) {
 	if !a.col.hasProject(slug) {
 		return nil, fail(http.StatusNotFound, "no project %s", slug)
 	}
-	var req struct{ Text string }
+	var req messageReq
 	if err := decode(body, &req); err != nil {
 		return nil, err
 	}
-	text, err := cleanText(req.Text, maxPromptBytes, true)
+	co, live := a.col.coordPane(slug)
+	if len(req.Images) > 0 && !live {
+		return nil, fail(http.StatusConflict, "images not sent: no coordinator pane of %s is live", slug)
+	}
+	text, stored, err := req.message(coordImageTarget(a.cfg.Root, slug, co.Agent))
 	if err != nil {
 		return nil, err
 	}
 	out, err := a.hp(time.Minute, text, "coordinator", "prompt", slug, "--text-file", "-")
-	if co, ok := a.col.coordPane(slug); ok {
+	if live {
 		a.col.Burst(co.PaneID)
 	}
 	if err != nil {
+		unsent(stored, err)
 		return nil, err
 	}
 	a.col.Kick()
 	return actionResult{OK: true, Output: out}, nil
 }
+
+// messageReq is a prompt from a chat box: text, images, or both.
+type messageReq struct {
+	Text   string    `json:"text"`
+	Images []imageIn `json:"images"`
+}
+
+// message checks the text, stores the images in it and returns the
+// text to send, naming them. With images the text may be empty.
+func (m messageReq) message(it imageTarget) (string, []string, error) {
+	text := m.Text
+	if len(m.Images) == 0 || strings.TrimSpace(text) != "" {
+		var err error
+		if text, err = cleanText(text, maxPromptBytes, true); err != nil {
+			return "", nil, err
+		}
+	}
+	return storeImages(it, text, m.Images)
+}
+
+// unsent removes the images of a message refused before anything was typed
+// into the pane (rate limit, a blocked agent, a draft in the box). After any
+// other failure the text may sit in the pane, so its images stay until the
+// sweep (images.go).
+func unsent(paths []string, err error) {
+	var he httpErr
+	if len(paths) > 0 && (errors.As(err, &he) || refusedBeforeTyping.MatchString(err.Error())) {
+		removeAll(paths)
+	}
+}
+
+var refusedBeforeTyping = regexp.MustCompile(`\b(agent_blocked|draft_in_box)\b`)
 
 type bulkResult struct {
 	Key   string `json:"key"`
