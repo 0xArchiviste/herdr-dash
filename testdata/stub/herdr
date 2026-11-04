@@ -9,7 +9,8 @@ D="$(cd "$(dirname "$0")" && pwd)"
 # STUB_SCREENS/<pane>.noagent: the agent in that pane exited; herdr lists the
 # pane with no agent and status unknown, and a shell in the foreground.
 # STUB_SCREENS/<pane>.fg names another foreground program (vim, sleep).
-if [ "$1 $2" = "pane send-text" ]; then
+if [ "$1 $2" = "pane send-text" ] && [[ "$4" =~ [[:cntrl:]] ]]; then
+  # Control bytes (paste brackets, Enter, Ctrl+C) are logged quoted, on one line.
   echo "herdr pane send-text $3 $(printf '%q' "$4")" >> "${STUB_LOG:-/dev/null}"
 else
   echo "herdr $*" >> "${STUB_LOG:-/dev/null}"
