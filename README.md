@@ -144,6 +144,17 @@ Use **Fit graph** to bring the visible projects back into view after panning or 
 
 <img src="docs/screenshots/triage.png" alt="Needs-you queue in select mode with three review threads picked, Ack selected and Snooze buttons">
 
+- **Threads view** in each coordinator's panel (and a *Threads* tab in its
+  window): one card per thread, grouped Needs you → Review · PR open →
+  Working → Queued → Idle → Done, with a labelled colour chip, reported
+  progress, profile/model, age and PR. Each card shows its latest event
+  (report, PR opened/updated/failing/merged, idle, waiting, resolved,
+  progress) and expands to a colour-coded timeline, newest first. A summary
+  strip counts and filters the stages, shows overall progress and what is
+  blocked on you; search covers titles and events; new events since you
+  last looked are marked. *Report* opens the rendered report in a window.
+  Built from the inbox items herdr-projects already writes: no extra
+  commands.
 - **Needs-you queue** grouped by severity (blocked, waiting, review,
   landing), with counts and collapsible groups. The queue scrolls vertically beside
   the map on desktop and above it on smaller screens. Blocked or "needs you"

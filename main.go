@@ -312,6 +312,7 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		}
 		writeJSON(w, threadDetail(r.Context(), col, cfg, slug, t, alive))
 	})
+	mux.HandleFunc("GET /api/project/{slug}/timeline", timelineHTTP(col))
 	safety := newSafetyCache()
 	mux.HandleFunc("GET /api/project/{slug}", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
