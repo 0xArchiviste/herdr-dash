@@ -239,7 +239,7 @@ window.HDWin = (() => {
   }
   function renderMenu() {
     const act = activeWin();
-    menu.replaceChildren(el("button", { type: "button", role: "menuitem", class: "wt-menu-item wt-menu-all", title: allBtn.title },
+    menu.replaceChildren(el("button", { type: "button", role: "menuitem", class: "wt-menu-all", title: allBtn.title },
       el("span", { class: "wm-t", text: allLabel() }), el("span", { class: "wm-s", text: "Alt+Shift+M" })), ...orderedIds().map((id) => {
       const w = wins.get(id);
       return el("button", { type: "button", role: "menuitem", class: "wt-menu-item" + (w === act ? " active" : "") + (w.attn ? " attn" : ""), "data-win": id, title: w.title },
@@ -254,10 +254,10 @@ window.HDWin = (() => {
     more.setAttribute("aria-expanded", "true");
   });
   menu.addEventListener("click", (e) => {
+    if (e.target.closest(".wt-menu-all")) { closeMenu(); return toggleAll(); }
     const b = e.target.closest(".wt-menu-item");
     if (!b) return;
     closeMenu();
-    if (b.classList.contains("wt-menu-all")) return toggleAll();
     restore(b.dataset.win);
     wins.get(b.dataset.win)?.el.focus({ preventScroll: true });
   });
