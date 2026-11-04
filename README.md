@@ -106,10 +106,14 @@ always through `herdr-projects` and its safety checks.
   tab or pane to reorder it, out to float it, or into another dock;
   `Alt+]` / `Alt+[` step through tabs. Order, docks and the tray's place are
   kept across reloads. On a phone windows are full-width sheets, one at a
-  time; docked ones are tabs of one sheet.
+  time; docked ones are tabs of one sheet. **Minimise all** in the tray (or
+  its list, or `Alt+Shift+M`) hides every window, dock and the side panel
+  so the graph gets the whole screen; **Restore all** brings back the same
+  layout, also after a reload. New permission prompts still pop up.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
   is blocked. Or type an answer.
-- **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
+- **Chat**: send a follow-up prompt, with images if you like (see
+  [Images](#images-in-a-message)). **Next**: forward one of the thread's
   own suggested next steps with one click.
 - **When the agent dies**: a thread or coordinator whose agent exited
   (crashed, killed, `/exit`) while its pane stays gets a dashed red ring on
@@ -323,6 +327,33 @@ screens) still apply.
   on a live agent is an explicit switch, uses herdr's key encoder, and never
   reaches a trust screen. Every write is logged with what was sent.
 - Snooze is per browser (localStorage) and changes nothing on disk.
+
+### Images in a message
+
+Paste (Ctrl/Cmd+V), drop, or attach (📎; a phone offers the camera and
+photos) images in a thread's or coordinator's chat box, in the panel or a
+window. Thumbnails show until sent; × takes one out. Up to 6 a message,
+10 MB each, PNG, JPEG, GIF or WebP.
+
+Agents run in terminal panes and cannot take a clipboard image, so Dash
+stores each image as a file the agent can read and names it in the
+message: `Images: @/abs/path (attached in Dash)` for Claude Code (attached
+on submit, no tool permission), a plain absolute path for Codex (its image
+viewer) and opencode (its Read tool; only a model that accepts images sees
+it, so the box says so). Any other harness, or a thread on another machine,
+gets a disabled 📎 and a reason, never a useless path.
+
+- **Where:** a thread's own folder, `.herdr-project/<slug>-<id>/uploads/`,
+  inside the folder the agent works in (no "read outside the project"
+  prompt; herdr-projects keeps `.herdr-project/` out of git and removes it
+  with the worktree). A coordinator's go in the project's `uploads/`.
+- **Checks:** the same write guard as other writes (same origin, JSON,
+  `--read-only`); the type comes from the bytes, never the name, so SVG or
+  HTML is refused; random names (`dash-img-<32 hex>.<ext>`), mode 0600, a
+  0700 folder when Dash makes it; nothing is served back (thumbnails are the
+  page's own copies).
+- **Cleanup:** at start and hourly, Dash removes its uploads older than 7
+  days, and all of a resolved thread's. It only ever deletes files it named.
 
 ## Voice
 
@@ -603,7 +634,7 @@ and previews on screens taken live from Claude Code; `e2e/prompt-stale.test.mjs`
 checks that answered or vanished prompts leave the windows and the strip; `e2e/windows.test.mjs` drives the dialog and
 thread windows (several at once, drag, tray, Esc, Alt+W, reload, phone
 sheets) and the answer confirmation on 76-column Claude Code and Codex
-screens. `e2e/voice.test.mjs` drives voice with a mocked
+screens; `e2e/minall.test.mjs` drives Minimise all / Restore all. `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
 token never reaches the page. `e2e/usage.test.mjs` runs the usage strip

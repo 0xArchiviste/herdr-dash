@@ -858,6 +858,15 @@
     if (e.key !== "Escape" || $("#dlg").open || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     select(null);
   });
+  // "Minimise all" (static/windows.js) closes the panel; "Restore all"
+  // reopens what it showed, if that thread or project is still there.
+  window.HDWin?.panel("side", {
+    hide() { const k = selected; if (k) select(null); return k; },
+    show(k) {
+      const there = isHub(k) ? state.projects.some((p) => "hub:" + p.slug === k) : state.threads.some((t) => t.key === k);
+      if (typeof k === "string" && there && selected !== k) dash.open(k);
+    },
+  });
   let screenES = null;
   let live = ""; // live status of the open panel's pane, from its screen stream
   const isHub = (key) => key.startsWith("hub:");
@@ -961,7 +970,8 @@
     const key = t.key;
     const input = el("textarea", { id: "chat-input", class: "w", rows: "2", placeholder: "Follow-up prompt… (Ctrl+Enter sends)" });
     const send = el("button", { id: "chat-send", class: "tbtn primary w", text: "Send" });
-    const go = () => sendChat(key, input, send);
+    const att = attach(input, () => state.threads.find((x) => x.key === key)?.images);
+    const go = () => sendChat(key, input, send, att);
     send.addEventListener("click", go);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
     box.append(
@@ -969,12 +979,20 @@
       screenBox(tpath(key, "history"), key),
       el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
         ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => pressKeys(key, [k]) }))),
-      el("div", { class: "chat-row" }, input, send),
+      att?.tray,
+      el("div", { class: "chat-row" }, input, att?.button, send),
       termBox(key),
       el("div", { id: "chat-log" }),
     );
     return box;
   }
+
+  // attach adds images to a chat box (static/attach.js); support() is the
+  // target's `images` from the state.
+  function attach(input, support) {
+    return window.HDAttach ? HDAttach.mount(input, () => support() || { ok: false }) : null;
+  }
+  const sentLine = (text, n) => "Sent: " + text + (n ? `${text ? " " : ""}(+${n} image${n > 1 ? "s" : ""})` : "");
 
   // The open panel's prompt card (static/prompts.js), above its screen: fed
   // by the screen stream, which carries the parsed prompt of a blocked pane.
@@ -1038,25 +1056,28 @@
     return r;
   }
 
-  async function sendChat(key, input, btn) {
+  async function sendChat(key, input, btn, att) {
     const text = input.value.trim();
-    if (!text || btn.disabled) return;
+    const n = att?.count() || 0;
+    if ((!text && !n) || btn.disabled) return;
     btn.disabled = true;
     try {
       if (live === "blocked") {
         // A question/permission menu is up: type the answer, then Enter.
+        if (n) { att.error("The agent is waiting on a prompt: answer it first; images go with a normal message."); return; }
         if ((await pressKeys(key, ["enter"], text)).ok) input.value = "";
         return;
       }
       chatMsg("Sending…", "pending");
-      const r = await api(tpath(key, "prompt"), { text });
+      const r = await api(tpath(key, "prompt"), n ? { text, images: await att.images() } : { text });
       $("#chat-log .pending")?.remove();
       if (selected !== key) return;
-      if (r.ok) { input.value = ""; chatMsg("Sent: " + text, "ok"); return; }
+      if (r.ok) { input.value = ""; att?.clear(); chatMsg(sentLine(text, n), "ok"); return; }
       const code = r.data.code;
       if (code === "prompt_unconfirmed") {
         // Typed, but not seen starting: it may sit in the input box. Never resend.
         input.value = "";
+        att?.clear();
         chatMsg("Typed into the pane but not confirmed as started. Not resent: check the screen, then submit it if it sits in the box.", "warn",
           el("button", { class: "tbtn submit-enter", text: "Press Enter", onclick: () => pressKeys(key, ["enter"]) }));
       } else if (code === "agent_blocked") {
@@ -1079,7 +1100,8 @@
     if (!p) { body.replaceChildren(el("p", { text: "Project not found." })); return; }
     const input = el("textarea", { id: "coord-input", class: "w", rows: "2", placeholder: `Message the ${p.name} coordinator… (Ctrl+Enter sends)` });
     const send = el("button", { id: "coord-send", class: "tbtn primary w", text: "Send" });
-    const go = () => sendCoord(slug, input, send);
+    const att = attach(input, () => state.projects.find((x) => x.slug === slug)?.coordinator?.images);
+    const go = () => sendCoord(slug, input, send, att);
     send.addEventListener("click", go);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
     body.replaceChildren(
@@ -1095,7 +1117,8 @@
         el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
           ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => coordKeys(slug, [k]) }))),
         el("div", { id: "coord-note" }),
-        el("div", { class: "chat-row" }, input, send),
+        att?.tray,
+        el("div", { class: "chat-row" }, input, att?.button, send),
         termBox("hub:" + slug),
         el("div", { id: "chat-log" })),
       el("h3", { text: "Open threads" }), el("ul", { id: "p-threads", class: "tlist" }),
@@ -1131,17 +1154,18 @@
     else box.replaceChildren(el("p", { class: "muted note", text: "Messages go through herdr-projects. When the coordinator waits on a prompt, it can be answered here." }));
   }
 
-  async function sendCoord(slug, input, btn) {
+  async function sendCoord(slug, input, btn, att) {
     const key = "hub:" + slug;
     const text = input.value.trim();
-    if (!text || btn.disabled) return;
+    const n = att?.count() || 0;
+    if ((!text && !n) || btn.disabled) return;
     btn.disabled = true;
     chatMsg("Sending…", "pending");
-    const r = await api(`/api/project/${encodeURIComponent(slug)}/coordinator`, { text });
+    const r = await api(`/api/project/${encodeURIComponent(slug)}/coordinator`, n ? { text, images: await att.images() } : { text });
     btn.disabled = false;
     $("#chat-log .pending")?.remove();
     if (selected !== key) return;
-    if (r.ok) { input.value = ""; chatMsg("Sent: " + text, "ok"); }
+    if (r.ok) { input.value = ""; att?.clear(); chatMsg(sentLine(text, n), "ok"); }
     else chatMsg(r.data.error || "HTTP " + r.status, "err"); // kept in the box for a retry
   }
 

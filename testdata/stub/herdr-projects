@@ -11,7 +11,8 @@ case "$1 $2" in
   "thread list")
     f="$D/thread-list-$3.json"
     [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }
-    cat "$f" ;;
+    # STUB_WT moves the fixture thread folders somewhere writable.
+    sed "s#/fixture/wt/#${STUB_WT:-/fixture/wt}/#g" "$f" ;;
   "thread prompt")
     logstdin
     case "$3/$4" in

@@ -51,6 +51,13 @@ window.HDThreadWin = (() => {
     return { name: t?.title || key, sub: t ? `${p?.name || t.project} · ${t.id} · ${t.state}` : "", short: t?.id || key, live: !!(t && t.pane_alive && t.state !== "resolved") };
   }
 
+  // imagesOf is whether key's chat box takes images (images.go), from the state.
+  function imagesOf(key) {
+    const st = window.hd?.state() || { threads: [], projects: [] };
+    const s = key.startsWith("hub:") ? st.projects.find((x) => x.slug === key.slice(4))?.coordinator?.images : st.threads.find((x) => x.key === key)?.images;
+    return s || { ok: false };
+  }
+
   function open(key) {
     if (!window.HDWin) return null;
     const id = "thread:" + key;
@@ -65,6 +72,7 @@ window.HDThreadWin = (() => {
         const msg = (text, kind) => { log.append(el("div", { class: "msg " + kind, text })); while (log.childElementCount > 6) log.firstElementChild.remove(); };
         const input = el("textarea", { class: "tw-input w", rows: "2", placeholder: "Follow-up prompt… (Ctrl+Enter sends)" });
         const send = el("button", { type: "button", class: "tbtn primary w tw-send", text: "Send" });
+        const att = window.HDAttach?.mount(input, () => imagesOf(key)) || null;
         const quick = el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
           ...QUICK.map(([k, label]) => el("button", { type: "button", class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => keys([k]) })));
         async function keys(ks, text) {
@@ -74,15 +82,20 @@ window.HDThreadWin = (() => {
         }
         async function go() {
           const text = input.value.trim();
-          if (!text || send.disabled) return;
+          const n = att?.count() || 0;
+          if ((!text && !n) || send.disabled) return;
           send.disabled = true;
           try {
-            if (blocked && !key.startsWith("hub:")) { if ((await keys(["enter"], text)).ok) input.value = ""; return; }
+            if (blocked && !key.startsWith("hub:")) {
+              if (n) { att.error("The agent is waiting on a prompt: answer it first; images go with a normal message."); return; }
+              if ((await keys(["enter"], text)).ok) input.value = "";
+              return;
+            }
             msg("Sending…", "pending");
-            const r = await post(P.send, { text });
+            const r = await post(P.send, n ? { text, images: await att.images() } : { text });
             log.querySelector(".pending")?.remove();
-            if (r.ok) { input.value = ""; msg("Sent: " + text, "ok"); return; }
-            if (r.data.code === "prompt_unconfirmed") { input.value = ""; msg("Typed into the pane but not confirmed as started. Not resent: check the screen.", "warn"); }
+            if (r.ok) { input.value = ""; att?.clear(); msg("Sent: " + text + (n ? `${text ? " " : ""}(+${n} image${n > 1 ? "s" : ""})` : ""), "ok"); return; }
+            if (r.data.code === "prompt_unconfirmed") { input.value = ""; att?.clear(); msg("Typed into the pane but not confirmed as started. Not resent: check the screen.", "warn"); }
             else if (r.data.code === "agent_blocked") msg("The agent is waiting on a prompt: answer it with the card above.", "err");
             else msg(r.data.error || "HTTP " + r.status, "err");
           } finally { send.disabled = false; }
@@ -91,13 +104,15 @@ window.HDThreadWin = (() => {
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
         screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
-        const chat = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
+        const chat = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
         // A pane whose agent exited: a command line and the way back (static/terminal.js).
         const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chat.hidden = x; } }) : null;
         body.append(
           el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
             el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) })),
-          card, screen.el, quick, chat, term?.el, log);
+          card, screen.el, quick,
+          a.live || key.startsWith("hub:") ? att?.tray : null,
+          chat, term?.el, log);
         ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
         const paused = el("p", { class: "muted tw-paused", hidden: "", text: `Paused: only the ${LIVE} front-most windows stream. Click here to resume.` });
         screen.el.before(paused);

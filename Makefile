@@ -19,6 +19,7 @@ vet:
 	node --check static/threadwin.js
 	node --check static/terminal.js
 	node --check static/routing.js
+	node --check static/attach.js
 
 test:
 	go test ./...
