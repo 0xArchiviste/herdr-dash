@@ -129,7 +129,7 @@ test("answer API: server-side keys, sig check, text rules, refusals", async () =
     [{ sig: p.sig, option: 9 }, 400],
     [{ sig: p.sig, option: -1 }, 400],
     [{ option: 0 }, 400],
-    [{ sig: p.sig, option: 0, text: "hello" }, 400], // "Yes" takes no text
+    [{ sig: p.sig, option: 1, text: "hello" }, 400], // a lasting grant takes no text ("Yes" and "No" do: Tab to amend)
   ]) assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", body)).status, code, JSON.stringify(body));
   assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", { sig: p.sig, option: 0 }, { Origin: "http://evil.example" })).status, 403);
   assert.deepEqual(log.since(m), [], "nothing sent");
@@ -152,7 +152,7 @@ test("answer API: server-side keys, sig check, text rules, refusals", async () =
   const o = await waitFor(async () => { const x = await promptOf("alpha/t-0002"); return x?.question === "Which color?" && x; });
   m = log.mark();
   assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", { sig: o.sig, option: 2 })).status, 400);
-  assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", { sig: o.sig, option: 2, text: "a\nb" })).status, 400);
+  assert.equal((await post(url, "/api/thread/alpha/t-0002/answer", { sig: o.sig, option: 2, text: "a\tb" })).status, 400); // a tab would be the Tab key
   assert.deepEqual(log.since(m), []);
   // A pane with no prompt any more.
   show("w1B:p1", null);
@@ -215,11 +215,11 @@ test("panel card: text options and multi-select", async () => {
   await waitFor(async () => /question/i.test(await card.locator(".pc-kind").innerText()), 6000);
   assert.equal(await card.locator(".pc-opt", { hasText: "Postgres" }).locator(".desc").innerText(), "Full-featured relational database server.");
   // "Type something." is a field, not a bare button.
-  const field = card.locator(".pc-text input");
+  const field = card.locator(".pc-text .pc-field");
   assert.equal(await field.count(), 1);
   let m = log.mark();
   await field.fill("CockroachDB");
-  await card.locator(".pc-text button").click();
+  await card.locator(".pc-text .send").click();
   await waitFor(() => log.since(m).length >= 2, 4000);
   assert.deepEqual(log.since(m), [`${hp} thread keys alpha t-0002 4`, `${hp} thread keys alpha t-0002 enter --text=CockroachDB`]);
 

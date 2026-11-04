@@ -207,11 +207,11 @@ test("dialogs: one window per waiting agent, front on click, drag, close, Esc, n
   await page.mouse.up();
   const placed = await box(page, "prompt:alpha/t-0002");
 
-  // Close with the button; Esc closes the focused one only.
+  // Close with the button. (Esc in a prompt window is the pane's Esc when
+  // the prompt offers one: prompt-keys.test.mjs.)
   await c.locator(".hw-close").click();
   assert.equal(await c.count(), 0);
-  await a.locator(".hw-title").click();
-  await page.keyboard.press("Escape");
+  await a.locator(".hw-close").click();
   assert.equal(await a.count(), 0);
   // A closed window does not pop up again for the same prompt.
   await page.waitForTimeout(2500);
@@ -272,10 +272,10 @@ test("dialogs: digits answer the focused window, results and failures show in it
   assert.deepEqual(log.since(m), []);
   // Digits do nothing while typing in a field.
   show("w1B:p1", "claude-question.txt");
-  await waitFor(async () => (await a.locator(".pc-text input").count()) === 1, 8000);
+  await waitFor(async () => (await a.locator(".pc-text .pc-field").count()) === 1, 8000);
   m = log.mark();
-  await a.locator(".pc-text input").fill("");
-  await a.locator(".pc-text input").press("2");
+  await a.locator(".pc-text .pc-field").fill("");
+  await a.locator(".pc-text .pc-field").press("2");
   await page.waitForTimeout(600);
   assert.deepEqual(log.since(m), []);
   assert.deepEqual(page.errors, []);

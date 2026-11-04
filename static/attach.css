@@ -1,0 +1,15 @@
+/* Images in a chat box (static/attach.js): thumbnails with an x above the
+   input row, a note for opencode, and refusals. */
+.att:not(.on) { display: none; }
+.att { margin-top: 8px; }
+.att-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.att-thumb { position: relative; width: 64px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid var(--g4); background: var(--hard-black); }
+.att-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.att-x { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(21, 21, 21, .85); color: var(--bwhite); font-size: 14px; line-height: 20px; cursor: pointer; }
+.att-x:hover, .att-x:focus-visible { background: var(--red); outline: none; }
+.att-note { margin-top: 4px; }
+.att-err { margin-top: 6px; }
+.att-btn { flex: none; font-size: 14px; padding: 4px 8px; }
+.att-btn:disabled { opacity: .45; cursor: not-allowed; }
+.chat-row textarea.att-over { border-color: var(--bblue); border-style: dashed; }

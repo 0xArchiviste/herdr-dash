@@ -60,7 +60,8 @@
 
 .sagent-tot { font-size: 12px; margin-bottom: 4px; }
 .sproj { display: grid; grid-template-columns: 1fr repeat(3, 26px) 48px; gap: 6px; align-items: center; padding: 2px 0; font-size: 12px; }
-.sproj .spn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sproj .spn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sproj .spn:hover, .sproj .spn:focus-visible { color: var(--bwhite); text-decoration: underline; }
 .sproj .sc { text-align: right; font-variant-numeric: tabular-nums; }
 .slimit { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
 .slimit[data-level="warn"] { color: var(--byellow); }
