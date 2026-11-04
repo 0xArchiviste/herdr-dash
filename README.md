@@ -48,6 +48,13 @@ always through `herdr-projects` and its safety checks.
   results and the System strip's agents, queue and processes follow it
   live; unfocused projects hide, or fade with **Fade others**. The focus
   survives reloads and lives in the URL (`?focus=a,b`) for bookmarks.
+- **Go to a project**: click a focus chip to pan and zoom the map to that
+  project and pulse its nodes (click again to open its coordinator); hover
+  lights it and dims the rest. Chips take Tab, ←/→, Enter and
+  Delete/Backspace; on a phone tap goes and long-press removes. **Fit all**
+  frames every focused project. The picker's **Go** (or **G**), a System
+  strip agents row and hovering a Needs-you item do the same. Only the view
+  moves; the layout is not reheated.
 - **Content search** finds threads by what was said or done in them, not
   just their titles (see [Content search](#content-search)).
 
