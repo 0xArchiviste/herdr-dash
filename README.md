@@ -93,6 +93,16 @@ always through `herdr-projects` and its safety checks.
   is blocked. Or type an answer.
 - **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
   own suggested next steps with one click.
+- **When the agent dies**: a thread or coordinator whose agent exited
+  (crashed, killed, `/exit`) while its pane stays gets a dashed red ring on
+  its node, an "exited" count in the System strip's Agents pill, and in the
+  panel and windows a banner, **Restart agent…** (`thread restart`, same
+  profile, a fresh session) or for a coordinator **Resume session** (`open`,
+  which resumes the recorded session when the harness can), **Resolve
+  thread…**, and a command line for the shell left in the pane: Enter runs
+  the text as one bracketed paste, Shift+Enter adds a line, ↑/↓ walk the
+  history, Ctrl+C (button, or in the empty field) interrupts. **Keys mode**
+  forwards every key press; on a live agent it asks first.
 - Task, latest report (sanitized markdown), PR and branch links, and
   copyable jump commands (`herdr agent focus …`) to reach the pane in your
   terminal.
@@ -264,6 +274,8 @@ screens) still apply.
 | Resolve (after a confirm dialog) | `thread resolve SLUG ID` |
 | Coordinator panel: message | `coordinator prompt SLUG --text-file -` |
 | Coordinator panel: prompt card, keys (blocked only) | `herdr pane get PANE`, then `herdr pane send-keys PANE KEY...` (and `send-text` for typed answers) |
+| Agent exited: Restart agent… (after a confirm dialog) | `thread restart SLUG ID`; a coordinator: `open SLUG` (Resume session) |
+| Agent exited: command line, Ctrl+C, keys mode | `herdr pane get PANE` and `herdr pane process-info --pane PANE`, then `herdr pane send-text PANE BYTES` |
 
 - **Server side:** POST with a JSON body only, same-origin only; slug, id,
   keys and line validated (keys: `enter esc up down left right tab space
@@ -282,6 +294,16 @@ screens) still apply.
   panel identifies (never guessed), only after `herdr pane get` shows the
   same agent session still blocked, with the same key allow-list, and
   logged. Trust screens stay the user's to answer in the pane.
+- **Dead panes:** herdr-projects has no command for typing into a shell, so
+  the command line uses `herdr pane send-text` on the thread's recorded pane
+  or the identified coordinator pane only, after `herdr pane get` shows, right
+  then, that no agent runs there (refused with `agent_alive` otherwise).
+  A killed agent leaves its keyboard modes behind (kitty keyboard protocol),
+  so herdr's key encoder would send bash Ctrl+C and arrows as escape codes it
+  cannot read: keys go as the plain bytes a shell expects. Text goes as one
+  bracketed paste when the foreground is a shell, else as one line. Keys mode
+  on a live agent is an explicit switch, uses herdr's key encoder, and never
+  reaches a trust screen. Every write is logged with what was sent.
 - Snooze is per browser (localStorage) and changes nothing on disk.
 
 ## Voice

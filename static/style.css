@@ -62,10 +62,11 @@ body.ro .w { display: none !important; }
 #p-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 #p-chat .quick { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 8px 0; padding: 6px; border-radius: 6px; background: #2a1f0a; }
 #p-chat .quick .tbtn { min-width: 22px; text-align: center; background: var(--g3); }
-.chat-row { display: flex; gap: 6px; align-items: flex-end; margin-top: 8px; }
-.chat-row textarea, .chat-row input { flex: 1; min-width: 0; background: var(--hard-black); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px;
+.chat-row, .ht-row { display: flex; gap: 6px; align-items: flex-end; margin-top: 8px; }
+.chat-row[hidden] { display: none !important; }
+.chat-row textarea, .chat-row input, .ht-row textarea { flex: 1; min-width: 0; background: var(--hard-black); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 6px;
   padding: 6px 8px; font: inherit; font-size: 13px; resize: vertical; }
-.chat-row textarea:focus, .chat-row input:focus { outline: none; border-color: var(--bblue); }
+.chat-row textarea:focus, .chat-row input:focus, .ht-row textarea:focus { outline: none; border-color: var(--bblue); }
 .msg { font-size: 12px; margin-top: 6px; padding: 5px 8px; border-radius: 5px; background: var(--g1); overflow-wrap: anywhere; }
 .msg.ok { color: var(--bgreen); }
 .msg.err { color: var(--bred); background: #2a0f0d; }
@@ -383,3 +384,26 @@ header#top { padding: 14px 20px; gap: 12px 20px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation: none !important; }
 }
+
+/* A pane whose agent exited (static/terminal.js): dashed, still ring on the
+   node; a banner, the way back and a command line in the panel and windows. */
+:root { --s-exited: var(--bred); }
+.s-exited { color: var(--s-exited); }
+.node.exited .ring { stroke: var(--s-exited); stroke-dasharray: 3 3; stroke-width: 2; animation: none; transform: scale(1.4); transform-box: fill-box; transform-origin: center; }
+.node.exited .core { opacity: .6; }
+.hd-term[hidden], .hd-term [hidden] { display: none !important; }
+.hd-term { margin-top: 8px; }
+.hd-term.exited { padding: 8px; border: 1px dashed var(--s-exited); border-radius: 8px; background: #241311; }
+.ht-banner { margin: 0 0 6px; font-size: 13px; }
+.ht-banner b { color: var(--s-exited); }
+.ht-actions, .ht-ctls, .ht-modes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ht-actions { margin-bottom: 6px; }
+.ht-row { margin-top: 4px; }
+.ht-input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; resize: vertical; }
+.ht-ctls { margin-top: 6px; }
+.ht-ctls .ht-mode { margin-left: auto; }
+.ht-modes { margin-top: 6px; }
+.hd-term:not(.exited) .ht-modes { justify-content: flex-end; }
+.ht-keys { margin-top: 6px; padding: 10px; border: 1px dashed var(--borange); border-radius: 6px; color: var(--bblack); font-size: 12px; cursor: text; }
+.ht-keys:focus { outline: none; border-style: solid; color: var(--bwhite); background: #2a1f0a; }
+.ht-log .msg { font-size: 12px; margin-top: 4px; }

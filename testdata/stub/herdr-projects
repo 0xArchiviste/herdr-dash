@@ -30,10 +30,20 @@ case "$1 $2" in
     echo "$4: report acknowledged" ;;
   "thread next") echo "sent Next line to $4" ;;
   "thread resolve") echo "$4 resolved" ;;
+  "thread restart")
+    # The agent is back: the pane's exited marker (STUB_SCREENS/<slug>_<id>.pane) goes.
+    m="${STUB_SCREENS:-/nonexistent}/$3_$4.pane"
+    [ -f "$m" ] && rm -f "$STUB_SCREENS/$(cat "$m").noagent"
+    echo "restarted $4 in its pane" ;;
   "coordinator prompt")
     logstdin
     [ "$3" = "beta" ] && { echo "herdr-projects: no coordinator of \`beta\` can take a prompt right now; \`open beta\` starts one" >&2; exit 1; }
     echo "sent to the coordinator in pane w1Z:p1 (agent was done)" ;;
+  "open "*)
+    [ "$2" = "beta" ] && { echo "herdr-projects: stub refuses to open beta" >&2; exit 1; }
+    m="${STUB_SCREENS:-/nonexistent}/hub_$2.pane"
+    [ -f "$m" ] && rm -f "$STUB_SCREENS/$(cat "$m").noagent"
+    echo "resuming session 44444444 in pane w1Z:p1" ;;
   "progress --pane")
     f="$D/progress-${3//:/_}.json"
     if [ -f "$f" ]; then cat "$f"; else echo null; fi ;;

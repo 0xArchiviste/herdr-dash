@@ -91,12 +91,13 @@ window.HDThreadWin = (() => {
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
         screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
+        const chat = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
+        // A pane whose agent exited: a command line and the way back (static/terminal.js).
+        const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chat.hidden = x; } }) : null;
         body.append(
           el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), el("div", { class: "muted tw-sub", text: a.sub }),
             el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) })),
-          card, screen.el, quick,
-          a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." }),
-          log);
+          card, screen.el, quick, chat, term?.el, log);
         ctl = window.HDPrompt?.mount(card, key, { compact: true }) || null;
         const paused = el("p", { class: "muted tw-paused", hidden: "", text: `Paused: only the ${LIVE} front-most windows stream. Click here to resume.` });
         screen.el.before(paused);
@@ -110,6 +111,7 @@ window.HDThreadWin = (() => {
             blocked = d.live_status === "blocked";
             quick.hidden = !blocked;
             ctl?.update(blocked ? d.prompt : null);
+            term?.update(d);
             input.placeholder = blocked && !key.startsWith("hub:") ? "Type an answer: typed into the prompt, then Enter" : "Follow-up prompt… (Ctrl+Enter sends)";
           });
         };

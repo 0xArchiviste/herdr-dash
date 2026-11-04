@@ -11,7 +11,7 @@
     resolved: { label: "Resolved", color: "#4e4e4e" },
   };
   // A coordinator's state: herdr's live status, plus herdr-projects' "needs you".
-  const COORD = { blocked: "Blocked", waiting: "Waiting on you", working: "Working", idle: "Idle", none: "No live pane" };
+  const COORD = { blocked: "Blocked", waiting: "Waiting on you", working: "Working", idle: "Idle", exited: "Agent exited", none: "No live pane" };
   const ORDER = ["blocked", "waiting", "review", "landing", "working", "idle", "resolved"];
   const HUB_COLORS = ["#ff8700", "#ff5c8f", "#2be4d0", "#fed06e", "#68a8e4", "#98bc37", "#e02c6d", "#0aaeb3", "#f75341", "#fce8c3"];
   // Viewer's local time zone, labelled (e.g. "Oct 10, 5:00 PM EDT").
@@ -345,7 +345,7 @@
       (update) => update,
       (exit) => exit.attr("class", "node leaving").transition().duration(motionMs(400)).style("opacity", 0).remove(),
     );
-    nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.id === selected ? " selected" : ""}`)
+    nodeSel.attr("class", (d) => d.hub ? `node hub${d.p.coordinator?.needs_you ? " " + d.p.coordinator.state : ""}${d.p.coordinator?.agent_exited ? " exited" : ""}${d.id === selected ? " selected" : ""}` : `node thread ${d.t.state}${d.t.needs_you && d.t.state !== "review" ? " attn" : ""}${d.t.agent_exited ? " exited" : ""}${d.id === selected ? " selected" : ""}`)
       .style("color", (d) => d.color);
     nodeSel.classed("hit", (d) => dash.hits.has(d.id)).classed("faded", (d) => d.faded);
     svg.classed("searching", dash.hits.size > 0);
@@ -414,12 +414,14 @@
       const co = d.p.coordinator;
       if (co) tip.append(el("div", { class: "s-" + co.state, text: "Coordinator: " + (COORD[co.state] || co.state) + (co.activity ? " · " + co.activity : "") }));
       if (co?.prompt) tip.append(el("div", { class: "s-blocked", text: co.prompt.summary }));
+      if (co?.agent_exited) tip.append(el("div", { class: "s-exited", text: "Coordinator agent exited: its pane is at a shell" }));
     } else {
       const t = d.t;
       tip.append(el("div", { class: "tt", text: t.title }),
         el("div", { class: "s-" + t.state, text: STATES[t.state]?.label + (t.activity ? " · " + t.activity : "") }),
         el("div", { class: "sub", text: `${t.key} · ${t.agent || "?"} · ${ago(t.last_activity)}` }));
       if (t.prompt) tip.append(el("div", { class: "s-blocked", text: t.prompt.summary }));
+      if (t.agent_exited) tip.append(el("div", { class: "s-exited", text: "Agent exited: its pane is at a shell" }));
     }
     tip.append(el("div", { class: "sub hint", text: d.hub ? "Ctrl/Shift+click: add to or remove from focus" : "Shift+click: open in a window" }));
     tip.hidden = false;
@@ -868,6 +870,7 @@
     live = "";
     coordDetail = null;
     promptCtl = null;
+    term = null;
     if (!key) {
       panel.classList.remove("open");
       panel.setAttribute("aria-hidden", "true");
@@ -967,6 +970,7 @@
       el("div", { class: "quick w", hidden: "" }, el("span", { class: "muted", text: "Keys:" }),
         ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => pressKeys(key, [k]) }))),
       el("div", { class: "chat-row" }, input, send),
+      termBox(key),
       el("div", { id: "chat-log" }),
     );
     return box;
@@ -984,6 +988,15 @@
   // The open panel's screen box (static/scrollback.js): the live stream's
   // tails merge into a longer buffer, earlier lines load on scroll up.
   let screen = null;
+  // The open panel's terminal controls (static/terminal.js): a command line
+  // and the way back when the pane's agent exited; the chat hides meanwhile.
+  let term = null;
+  function termBox(key) {
+    term = window.HDTerm?.mount(key, { onExited: (x) => { const row = $("#p-chat > .chat-row"); if (row) row.hidden = x; } }) || null;
+    if (!term) return null;
+    term.el.id = "p-term";
+    return term.el;
+  }
   function screenBox(historyURL, key) {
     screen = HDScrollback.box((n) => `${historyURL}?lines=${n}`, () => selected === key);
     return screen.el;
@@ -998,6 +1011,7 @@
     live = d.live_status || "";
     const blocked = live === "blocked";
     promptCtl?.update(blocked ? d.prompt : null);
+    term?.update(d);
     if (isHub(selected || "")) {
       coordNote(d.pane_alive, blocked);
       const q = box.querySelector(".quick");
@@ -1082,6 +1096,7 @@
           ...QUICK.map(([k, label]) => el("button", { class: "tbtn", "data-key": k, title: "Press " + k, text: label, onclick: () => coordKeys(slug, [k]) }))),
         el("div", { id: "coord-note" }),
         el("div", { class: "chat-row" }, input, send),
+        termBox("hub:" + slug),
         el("div", { id: "chat-log" })),
       el("h3", { text: "Open threads" }), el("ul", { id: "p-threads", class: "tlist" }),
       el("h3", { text: "Thread reports" }), el("div", { id: "p-reports", text: "…" }),
@@ -1259,7 +1274,7 @@
       t.activity && el("span", { text: "  " + t.activity })].filter(Boolean));
     if (t.percent && t.state !== "resolved") head.append(el("div", { class: "bar" }, el("i", { style: `width:${t.percent}%` })));
     const rows = [
-      ["Agent", `${t.agent || "?"}${t.pane_id ? " · pane " + t.pane_id : ""}${t.pane_alive ? "" : t.state === "resolved" ? "" : " (pane gone)"}`],
+      ["Agent", `${t.agent || "?"}${t.pane_id ? " · pane " + t.pane_id : ""}${t.pane_alive ? (t.agent_exited ? " (agent exited)" : "") : t.state === "resolved" ? "" : " (pane gone)"}`],
       ["Live", t.live_status || "—"],
       ["Group", t.group || "—"],
       ["Last activity", `${nyTime(t.last_activity)} (${ago(t.last_activity)})`],
@@ -1444,6 +1459,8 @@
     clearFilters: () => { clearFilters(); focusChanged(); },
     ack: (key) => ackKeys([key]),
     resolve: (key) => resolveKey(key, true),
+    resolveAsk: (key) => resolveKey(key),
+    confirm: confirmDlg,
     dock: (pos) => { if (DOCKS.includes(pos)) { dock.pos = pos; saveDock(); applyDock(); } },
     toast,
     promptFor: (key) => window.HDPrompt?.promptFor(key) || null,

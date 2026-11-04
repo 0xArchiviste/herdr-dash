@@ -136,6 +136,7 @@ type coordRecord struct {
 	Cwd          string `json:"cwd"`
 	Agent        string `json:"agent"`
 	AgentSession string `json:"agent_session"`
+	Profile      string `json:"profile"`
 	Updated      string `json:"updated"`
 }
 
@@ -154,6 +155,10 @@ type Coordinator struct {
 	LastActivity string  `json:"last_activity"`
 	NeedsYou     bool    `json:"needs_you"`
 	Prompt       *Prompt `json:"prompt,omitempty"`
+	// AgentExited: the pane is there but its agent is not (crashed, quit);
+	// Resumable: `open` would resume the recorded session.
+	AgentExited bool `json:"agent_exited,omitempty"`
+	Resumable   bool `json:"resumable,omitempty"`
 }
 
 type ghPR struct {
@@ -182,21 +187,24 @@ type Project struct {
 type Thread struct {
 	Session SessionDetails `json:"session"`
 
-	Key          string   `json:"key"`
-	Project      string   `json:"project"`
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	State        string   `json:"state"`
-	Group        string   `json:"group"`
-	LiveStatus   string   `json:"live_status"`
-	Activity     string   `json:"activity"`
-	Percent      int      `json:"percent"`
-	Agent        string   `json:"agent"`
-	Profile      string   `json:"profile,omitempty"`
-	Kind         string   `json:"kind"`
-	PaneID       string   `json:"pane_id"`
-	TabID        string   `json:"tab_id"`
-	PaneAlive    bool     `json:"pane_alive"`
+	Key        string `json:"key"`
+	Project    string `json:"project"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	Group      string `json:"group"`
+	LiveStatus string `json:"live_status"`
+	Activity   string `json:"activity"`
+	Percent    int    `json:"percent"`
+	Agent      string `json:"agent"`
+	Profile    string `json:"profile,omitempty"`
+	Kind       string `json:"kind"`
+	PaneID     string `json:"pane_id"`
+	TabID      string `json:"tab_id"`
+	PaneAlive  bool   `json:"pane_alive"`
+	// AgentExited: the pane is there but its agent is not (crashed, quit),
+	// for a thread that is neither resolved nor being launched.
+	AgentExited  bool     `json:"agent_exited,omitempty"`
 	Launch       *Launch  `json:"launch,omitempty"`
 	Branch       string   `json:"branch"`
 	PR           string   `json:"pr"`
@@ -665,6 +673,9 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	co := Coordinator{PaneID: pane.PaneID, TabID: tab, Agent: pane.Agent, LiveStatus: pane.AgentStatus, Activity: sub}
 	co.Session = c.sessionDetails(pane, pane.Agent, c.projectProfile(p.Slug, "coordinator"))
 	switch {
+	case pane.Agent == "":
+		co.State, co.AgentExited = "exited", true
+		co.Resumable = resumable(p.record, c.projectProfile(p.Slug, "coordinator"))
 	case pane.AgentStatus == "blocked":
 		co.State = "blocked"
 	case strings.HasPrefix(sub, "needs you"):
@@ -937,6 +948,7 @@ func (c *Collector) rebuild() {
 				}
 			}
 			th.Launch = launchOf(t, alive && pane.AgentStatus != "")
+			th.AgentExited = alive && pane.Agent == "" && t.Status == "open" && th.Launch == nil
 			if live == "blocked" {
 				th.Prompt = c.prompts[t.PaneID]
 			}
@@ -959,12 +971,12 @@ func (c *Collector) rebuild() {
 	}
 	for _, pr := range snap.Projects {
 		if id := pr.Coordinator.PaneID; id != "" {
-			owners[id] = paneOwner{key: "hub:" + pr.Slug, kind: "coordinator", project: pr.Slug, agent: pr.Coordinator.Agent}
+			owners[id] = paneOwner{key: "hub:" + pr.Slug, kind: "coordinator", project: pr.Slug, agent: pr.Coordinator.Agent, exited: pr.Coordinator.AgentExited}
 		}
 	}
 	for _, th := range snap.Threads {
 		if th.PaneID != "" && th.State != "resolved" {
-			owners[th.PaneID] = paneOwner{key: th.Key, kind: "thread", project: th.Project, thread: th.ID, agent: th.Agent}
+			owners[th.PaneID] = paneOwner{key: th.Key, kind: "thread", project: th.Project, thread: th.ID, agent: th.Agent, exited: th.AgentExited}
 		}
 	}
 	c.owners = owners
@@ -1149,6 +1161,14 @@ func (c *Collector) bursting(pane string) bool {
 		return false
 	}
 	return ok
+}
+
+// pane is pane as of the last poll, and whether herdr listed it.
+func (c *Collector) pane(id string) (Pane, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p, ok := c.panes[id]
+	return p, ok
 }
 
 func (c *Collector) liveStatus(pane string) string {

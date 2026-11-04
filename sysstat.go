@@ -66,15 +66,17 @@ type SysProc struct {
 	Thread  string   `json:"thread,omitempty"`
 	Pane    string   `json:"pane,omitempty"`
 	Agent   string   `json:"agent,omitempty"`
-	Top     string   `json:"top"` // name of its busiest process
-	CPU     *float64 `json:"cpu"` // % of one core; nil while measuring
-	RSS     uint64   `json:"rss"` // bytes, summed (shared pages count twice)
-	N       int      `json:"n"`   // processes
+	Exited  bool     `json:"exited,omitempty"` // the pane's agent exited
+	Top     string   `json:"top"`              // name of its busiest process
+	CPU     *float64 `json:"cpu"`              // % of one core; nil while measuring
+	RSS     uint64   `json:"rss"`              // bytes, summed (shared pages count twice)
+	N       int      `json:"n"`                // processes
 }
 
 // paneOwner names what runs in a pane, from the last snapshot.
 type paneOwner struct {
 	key, kind, project, thread, agent string
+	exited                            bool // its agent exited; a shell is left
 }
 
 type procEntry struct {
@@ -444,7 +446,7 @@ func (m *SysMon) describe(tag string, owners map[string]paneOwner) SysProc {
 	}
 	pane := strings.TrimPrefix(tag, "pane:")
 	if o, ok := owners[pane]; ok {
-		return SysProc{Key: o.key, Kind: o.kind, Project: o.project, Thread: o.thread, Pane: pane, Agent: o.agent}
+		return SysProc{Key: o.key, Kind: o.kind, Project: o.project, Thread: o.thread, Pane: pane, Agent: o.agent, Exited: o.exited}
 	}
 	return SysProc{Key: "pane:" + pane, Kind: "pane", Pane: pane}
 }

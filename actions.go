@@ -45,18 +45,21 @@ var allowedKeys = map[string]bool{
 }
 
 // codeRe pulls the machine-readable refusal out of a herdr-projects error.
-var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked)\b`)
+var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked|agent_alive)\b`)
 
 type Actions struct {
-	cfg     Config
-	col     *Collector
-	mu      sync.Mutex // one write command at a time keeps load tiny
-	bucket  *bucket
-	screens atomic.Int32
+	cfg    Config
+	col    *Collector
+	mu     sync.Mutex // one write command at a time keeps load tiny
+	bucket *bucket
+	// termBucket limits terminal writes (typing in keys mode sends often;
+	// they go to herdr, not herdr-projects).
+	termBucket *bucket
+	screens    atomic.Int32
 }
 
 func NewActions(cfg Config, col *Collector) *Actions {
-	return &Actions{cfg: cfg, col: col, bucket: newBucket(cfg.WriteBurst, cfg.WritePerMin)}
+	return &Actions{cfg: cfg, col: col, bucket: newBucket(cfg.WriteBurst, cfg.WritePerMin), termBucket: newBucket(4*cfg.WriteBurst, 8*cfg.WritePerMin)}
 }
 
 // bucket is a token bucket: burst tokens, refilled at perMin a minute.
@@ -110,12 +113,16 @@ func (a *Actions) register(mux *http.ServeMux) {
 			"voice":      map[string]bool{"intent": a.cfg.Voice.Intent(), "transcribe": a.cfg.Voice.STT(), "local": a.cfg.STT.Local()}})
 	})
 	mux.HandleFunc("POST /api/thread/{slug}/{id}/{action}", a.guard(a.threadAction))
+	mux.HandleFunc("POST /api/thread/{slug}/{id}/term", a.guard(a.threadTerm))
+	mux.HandleFunc("POST /api/thread/{slug}/{id}/restart", a.guard(a.threadRestart))
+	mux.HandleFunc("POST /api/project/{slug}/term", a.guard(a.coordTerm))
+	mux.HandleFunc("POST /api/project/{slug}/restart", a.guard(a.coordRestart))
 	mux.HandleFunc("POST /api/project/{slug}/coordinator", a.guard(a.coordinator))
 	mux.HandleFunc("POST /api/project/{slug}/answer", a.guard(a.coordAnswer))
 	mux.HandleFunc("POST /api/project/{slug}/keys", a.guard(a.coordKeys))
 	mux.HandleFunc("POST /api/ack", a.guard(a.bulkAck))
 	// Anything but POST on a write path is refused, not served as a file.
-	for _, p := range []string{"GET /api/thread/{slug}/{id}/{action}", "GET /api/project/{slug}/coordinator", "GET /api/project/{slug}/answer", "GET /api/project/{slug}/keys", "GET /api/ack"} {
+	for _, p := range []string{"GET /api/thread/{slug}/{id}/{action}", "GET /api/project/{slug}/coordinator", "GET /api/project/{slug}/answer", "GET /api/project/{slug}/keys", "GET /api/project/{slug}/term", "GET /api/project/{slug}/restart", "GET /api/ack"} {
 		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -442,6 +449,10 @@ type screenEvent struct {
 	LiveStatus string  `json:"live_status"`
 	PaneAlive  bool    `json:"pane_alive"`
 	Prompt     *Prompt `json:"prompt,omitempty"`
+	// The pane runs no agent now: what runs in its foreground instead.
+	AgentExited bool   `json:"agent_exited,omitempty"`
+	Shell       bool   `json:"shell,omitempty"`
+	Foreground  string `json:"foreground,omitempty"`
 }
 
 // screenTarget says which pane a screen stream reads right now: its id,
@@ -579,6 +590,12 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 			ev.LiveStatus = a.col.liveStatus(pane)
 			if ev.LiveStatus == "blocked" {
 				ev.Prompt = ParsePrompt(raw, a.col.paneAgent(pane))
+			}
+			if a.col.paneAgent(pane) == "" {
+				ev.AgentExited = true
+				if pi, err := a.col.processInfo(r.Context(), pane); err == nil {
+					ev.Shell, ev.Foreground = pi.Shell, pi.Foreground
+				}
 			}
 		}
 		b, _ := json.Marshal(ev)

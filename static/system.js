@@ -59,18 +59,20 @@
   // ------------------------------------------------------------ derived
   function agents() {
     const s = st(), per = new Map();
-    for (const p of s.projects) if (inFocus(p.slug)) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0 });
-    const tot = { working: 0, waiting: 0, idle: 0 };
+    for (const p of s.projects) if (inFocus(p.slug)) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0, exited: 0 });
+    const tot = { working: 0, waiting: 0, idle: 0, exited: 0 };
+    // Agents that exited, leaving a shell in their pane: threads and coordinators.
+    for (const p of s.projects) if (per.has(p.slug) && p.coordinator?.agent_exited) { per.get(p.slug).exited++; tot.exited++; }
     for (const t of s.threads) {
       const p = per.get(t.project);
       if (!p || t.state === "resolved") continue;
       // herdr-projects counts open and starting threads against the limit.
       if (!t.launch || t.launch.stage !== "failed") p.open++;
       if (!t.pane_alive) continue;
-      const k = t.needs_you ? "waiting" : t.state === "working" ? "working" : "idle";
+      const k = t.agent_exited ? "exited" : t.needs_you ? "waiting" : t.state === "working" ? "working" : "idle";
       p[k]++; tot[k]++;
     }
-    const rows = [...per.values()].filter((p) => p.open || p.working || p.waiting || p.idle);
+    const rows = [...per.values()].filter((p) => p.open || p.working || p.waiting || p.idle || p.exited);
     for (const p of rows) p.level = level((100 * p.open) / p.max);
     return { tot, rows };
   }
@@ -127,11 +129,12 @@
     }
     const a = agents(), over = a.rows.filter((p) => p.level !== "ok");
     kids.push(pill("agents", worst(a.rows.map((p) => p.level)),
-      `Agents: ${a.tot.working} working, ${a.tot.waiting} waiting on you, ${a.tot.idle} idle` + (over.length ? ` · at or over the limit: ${over.map((p) => `${p.slug} ${p.open}/${p.max}`).join(", ")}` : ""),
+      `Agents: ${a.tot.working} working, ${a.tot.waiting} waiting on you, ${a.tot.idle} idle` + (a.tot.exited ? `, ${a.tot.exited} exited (a shell is left in the pane)` : "") + (over.length ? ` · at or over the limit: ${over.map((p) => `${p.slug} ${p.open}/${p.max}`).join(", ")}` : ""),
       el("span", { class: "sl", text: "Agents" }),
       el("span", { class: "sn", "data-k": "working", text: String(a.tot.working) }),
       el("span", { class: "sn", "data-k": "waiting", text: String(a.tot.waiting) }),
-      el("span", { class: "sn", "data-k": "idle", text: String(a.tot.idle) })));
+      el("span", { class: "sn", "data-k": "idle", text: String(a.tot.idle) }),
+      a.tot.exited ? el("span", { class: "sn", "data-k": "exited", text: String(a.tot.exited) }) : null));
     const q = queue();
     kids.push(pill("queue", q.rows.length ? worst(q.rows.map(qLevel)) : "ok",
       `Launch queue: ${q.waiting} waiting` + (q.failed ? `, ${q.failed} failed or stuck` : ""),
@@ -192,7 +195,8 @@
       el("div", { class: "sagent-tot" },
         el("span", { "data-k": "working", text: `${a.tot.working} working` }), " · ",
         el("span", { "data-k": "waiting", text: `${a.tot.waiting} waiting on you` }), " · ",
-        el("span", { "data-k": "idle", text: `${a.tot.idle} idle` }))];
+        el("span", { "data-k": "idle", text: `${a.tot.idle} idle` }),
+        a.tot.exited ? " · " : null, a.tot.exited ? el("span", { "data-k": "exited", text: `${a.tot.exited} exited` }) : null)];
     if (!a.rows.length) body.push(el("div", { class: "snote", text: "No open threads." }));
     else body.push(el("div", { class: "sprojs" }, ...a.rows.map((p) =>
       el("div", { class: "sproj", "data-slug": p.slug },
@@ -200,6 +204,7 @@
         el("span", { class: "sc", "data-k": "working", title: "working", text: String(p.working) }),
         el("span", { class: "sc", "data-k": "waiting", title: "waiting on you", text: String(p.waiting) }),
         el("span", { class: "sc", "data-k": "idle", title: "idle", text: String(p.idle) }),
+        p.exited ? el("span", { class: "sc", "data-k": "exited", title: "agent exited", text: String(p.exited) }) : null,
         el("span", { class: "slimit", "data-level": p.level, title: `${p.open} open threads; max_parallel_threads ${p.max}`, text: `${p.open}/${p.max}` })))));
     return el("section", { class: "ssec", "data-id": "agents" }, ...body);
   }
@@ -226,7 +231,7 @@
         onclick: opens(p) ? () => { close(); window.dash.open(p.key); } : null,
       },
         el("span", { class: "spname" }, p.project && p.kind === "thread" ? el("span", { class: "spproj", text: p.project }) : null, procName(p)),
-        el("span", { class: "spagent", text: [p.agent, p.top !== p.agent ? p.top : null].filter(Boolean).join(" · ") + ` (${p.n})` }),
+        el("span", { class: "spagent", text: (p.exited ? "agent exited · " + p.top : [p.agent, p.top !== p.agent ? p.top : null].filter(Boolean).join(" · ")) + ` (${p.n})` }),
         el("span", { class: "spcpu", text: p.cpu == null ? "…" : pct(p.cpu) }),
         el("span", { class: "sprss", text: bytes(p.rss) })));
     }
