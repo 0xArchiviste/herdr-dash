@@ -1,0 +1,18 @@
+  Ran 1 shell command
+─────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☐ Extras  ✔ Submit  →
+
+Which extras do you want on the poster page?
+
+❯ 1. [ ] Logo
+         Top-left mark
+  2. [ ] Footer
+         Links at the bottom
+  3. [ ] Search
+         A search box
+  4. [ ] Type something
+     Submit
+─────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

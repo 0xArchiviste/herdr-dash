@@ -1,0 +1,24 @@
+  ⎿  $ /home/dev/.config/demox/plugins/plugin/hemo-reporters-0123456789ab/ta
+     rget/release/hemo-reporters --root /home/dev/.hemo-reporters report
+     --unknown --activity 'Waiting for you'
+
+────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto
+ mode" below
+ Report waiting status
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ /home/dev/.config/demox/plugins/plugin/hemo-reporters-0123456789ab/targe
+ │ t/release/hemo-reporters --root /home/dev/.hemo-reporters report
+ │ --unknown --activity 'Waiting for you'
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: /home/dev/.config/demox/plugins/plugin/d
+      emo-reporters-0123456789ab/target/release/hemo-reporters *
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
