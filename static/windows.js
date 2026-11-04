@@ -16,7 +16,11 @@
 // windows as tabs of one full-width sheet, floating ones as sheets too.
 //
 // Positions are kept per id; the tray, the docks, the order and the open
-// thread windows in one layout record; both in localStorage. A drag reads
+// thread windows in one layout record; both in localStorage.
+//
+// "Minimise all" (tray button, its list, Alt+Shift+M) minimises every window,
+// empties the docks and hides registered panels (the side panel), keeping
+// the layout before in layout.hidden; "Restore all" puts it back. A drag reads
 // the layout once when it starts, then only writes styles each frame.
 window.HDWin = (() => {
   "use strict";
@@ -47,11 +51,7 @@ window.HDWin = (() => {
 
   // ---------------------------------------------------------------- layout
   const strs = (a) => (Array.isArray(a) ? [...new Set(a.filter((x) => typeof x === "string"))] : []);
-  function loadLayout() {
-    let s = {};
-    try { s = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") || {}; } catch {}
-    const L = { order: strs(s.order), tray: TRAY_POS.includes(s.tray) ? s.tray : "bl", open: strs(s.open), min: strs(s.min),
-      side: SIDES.includes(s.side) ? s.side : "right", docks: {} };
+  function readDocks(s, L) {
     const seen = new Set();
     for (const side of SIDES) {
       const d = (s.docks && s.docks[side]) || {};
@@ -62,8 +62,22 @@ window.HDWin = (() => {
       L.docks[side] = { ids, mode: d.mode === "split" ? "split" : "tabs", active: ids.includes(d.active) ? d.active : ids[0] || null,
         size: Number.isFinite(d.size) && d.size > 0 ? Math.round(d.size) : 0, ratio };
     }
+  }
+  function loadLayout() {
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") || {}; } catch {}
+    const L = { order: strs(s.order), tray: TRAY_POS.includes(s.tray) ? s.tray : "bl", open: strs(s.open), min: strs(s.min),
+      side: SIDES.includes(s.side) ? s.side : "right", docks: {}, hidden: null };
+    readDocks(s, L);
+    // The layout to restore after "Minimise all", in the same shape.
+    if (s.hidden && typeof s.hidden === "object") {
+      const H = loadLayoutFrom(s.hidden);
+      L.hidden = { docks: H.docks, side: H.side, min: H.min, front: typeof s.hidden.front === "string" ? s.hidden.front : null,
+        panels: s.hidden.panels && typeof s.hidden.panels === "object" ? s.hidden.panels : {} };
+    }
     return L;
   }
+  const loadLayoutFrom = (s) => { const L = { min: strs(s.min), side: SIDES.includes(s.side) ? s.side : "right", docks: {} }; readDocks(s, L); return L; };
   const layout = loadLayout();
   const saveLayout = () => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch {} };
   const dockOf = (id) => SIDES.find((s) => layout.docks[s].ids.includes(id)) || null;
@@ -84,9 +98,10 @@ window.HDWin = (() => {
   const trayList = el("div", { class: "wt-list" });
   const grip = el("button", { type: "button", class: "wt-grip", title: "Drag to move the tray to another edge or corner", "aria-label": "Move the tray", text: "⠿" });
   const more = el("button", { type: "button", class: "wt-more", title: "All windows", "aria-haspopup": "menu", "aria-expanded": "false", text: "≡" });
+  const allBtn = el("button", { type: "button", class: "wt-all", onclick: () => toggleAll() });
   const menu = el("div", { id: "wt-menu", role: "menu", "aria-label": "All windows", hidden: "" });
   const tray = el("div", { id: "win-tray", role: "toolbar", "aria-label": "Open windows", hidden: "", "data-pos": layout.tray },
-    grip, el("span", { class: "wt-label", title: "Alt+W cycles windows", text: "Windows" }), trayList, more, menu);
+    grip, el("span", { class: "wt-label", title: "Alt+W cycles windows", text: "Windows" }), trayList, more, allBtn, menu);
   const hint = el("div", { id: "dock-hint", hidden: "" }, el("div", { class: "bar" }));
   layer.append(tray, hint);
   const wins = new Map(); // id -> win
@@ -180,8 +195,12 @@ window.HDWin = (() => {
       "data-win": w.id, title: (w.min ? "Restore: " : "Show: ") + w.title + (w.dock ? ` (docked ${w.dock})` : ""), text: w.short || w.title,
     });
   }
+  const allLabel = () => (layout.hidden ? "Restore all" : "Minimise all");
   function renderTray() {
-    tray.hidden = wins.size === 0;
+    tray.hidden = wins.size === 0 && !layout.hidden;
+    allBtn.textContent = layout.hidden ? "▣ Restore all" : "▁ Minimise all";
+    allBtn.title = (layout.hidden ? "Restore every window, dock and the panel as they were" : "Minimise every window, dock and the panel") + " · Alt+Shift+M";
+    allBtn.setAttribute("aria-pressed", String(!!layout.hidden));
     tray.dataset.pos = layout.tray;
     const ph = phone();
     layer.classList.toggle("sheet", ph);
@@ -220,7 +239,8 @@ window.HDWin = (() => {
   }
   function renderMenu() {
     const act = activeWin();
-    menu.replaceChildren(...orderedIds().map((id) => {
+    menu.replaceChildren(el("button", { type: "button", role: "menuitem", class: "wt-menu-item wt-menu-all", title: allBtn.title },
+      el("span", { class: "wm-t", text: allLabel() }), el("span", { class: "wm-s", text: "Alt+Shift+M" })), ...orderedIds().map((id) => {
       const w = wins.get(id);
       return el("button", { type: "button", role: "menuitem", class: "wt-menu-item" + (w === act ? " active" : "") + (w.attn ? " attn" : ""), "data-win": id, title: w.title },
         el("span", { class: "wm-t", text: w.title }), el("span", { class: "wm-s", text: w.dock ? (phone() ? "docked" : w.dock) : w.min ? "minimised" : "" }));
@@ -237,6 +257,7 @@ window.HDWin = (() => {
     const b = e.target.closest(".wt-menu-item");
     if (!b) return;
     closeMenu();
+    if (b.classList.contains("wt-menu-all")) return toggleAll();
     restore(b.dataset.win);
     wins.get(b.dataset.win)?.el.focus({ preventScroll: true });
   });
@@ -686,6 +707,69 @@ window.HDWin = (() => {
     if (next) front(next); else renderTray();
   }
 
+  // ---------------------------------------------------------------- all
+  // Panels outside the windows (the side panel) join "Minimise all" through
+  // panel(name, { hide() -> what to show again or null, show(saved) }).
+  const panels = new Map();
+  function hideAll() {
+    if (layout.hidden) return;
+    const saved = {};
+    for (const [name, p] of panels) { try { const v = p.hide(); if (v != null) saved[name] = v; } catch (e) { console.error(e); } }
+    layout.hidden = { docks: JSON.parse(JSON.stringify(layout.docks)), side: layout.side, min: [...layout.min], front: activeWin()?.id || null, panels: saved };
+    for (const s of SIDES) Object.assign(layout.docks[s], { ids: [], active: null, ratio: {} });
+    for (const w of wins.values()) {
+      if (w.dock) {
+        w.dock = null;
+        w.el.classList.remove("docked", "wd-off");
+        paneSize(w.el, 0);
+        layer.append(w.el);
+        w.el.style.left = w.x + "px";
+        w.el.style.top = w.y + "px";
+        syncDockBtn(w);
+      }
+      w.min = true;
+      w.el.classList.add("min");
+      w.el.classList.remove("active");
+      if (!layout.min.includes(w.id)) layout.min.push(w.id);
+    }
+    closeMenu();
+    saveLayout();
+    renderDocks();
+    renderTray();
+  }
+  function showAll() {
+    const H = layout.hidden;
+    if (!H) return;
+    layout.hidden = null;
+    // Windows docked meanwhile stay where they are; the rest go back.
+    const kept = (id) => wins.has(id) || layout.open.includes(id);
+    const now = new Set(SIDES.flatMap((s) => layout.docks[s].ids));
+    for (const s of SIDES) {
+      const old = H.docks[s], cur = layout.docks[s];
+      const ids = [...old.ids.filter((id) => kept(id) && !now.has(id)), ...cur.ids];
+      const ratio = {};
+      for (const id of ids) { const r = cur.ratio[id] ?? old.ratio[id]; if (r) ratio[id] = r; }
+      layout.docks[s] = { ids, mode: old.mode, active: ids.includes(old.active) ? old.active : cur.active || ids[0] || null, size: old.size, ratio };
+    }
+    layout.side = H.side;
+    layout.min = H.min.filter(kept);
+    for (const w of wins.values()) {
+      w.dock = dockOf(w.id);
+      w.min = !w.dock && layout.min.includes(w.id);
+      w.el.classList.toggle("docked", !!w.dock);
+      w.el.classList.toggle("min", w.min);
+      if (w.dock) w.el.style.left = w.el.style.top = w.el.style.zIndex = "";
+      syncDockBtn(w);
+    }
+    saveLayout();
+    renderDocks();
+    for (const w of wins.values()) clamp(w);
+    const f = wins.get(H.front);
+    if (f && !f.min) front(f); else { const a = activeWin(); if (a) front(a); else renderTray(); }
+    for (const [name, p] of panels) if (H.panels[name] != null) { try { p.show(H.panels[name]); } catch (e) { console.error(e); } }
+  }
+  const toggleAll = () => (layout.hidden ? showAll() : hideAll());
+
   // Esc closes the front window when the focus is in it (or nowhere), Alt+W
   // brings the next window to front, Alt+Shift+D docks or floats the focused
   // window, Alt+] and Alt+[ step through a dock's tabs. All run before the
@@ -702,7 +786,14 @@ window.HDWin = (() => {
       close(w.id);
       return;
     }
-    if (!e.altKey || e.ctrlKey || e.metaKey || !wins.size) return;
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.code === "KeyM" && e.shiftKey) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      toggleAll();
+      return;
+    }
+    if (!wins.size) return;
     if (e.code === "KeyW") {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -743,6 +834,9 @@ window.HDWin = (() => {
   document.body.append(layer);
   return {
     open, close, minimise, restore,
+    minimiseAll: hideAll, restoreAll: showAll, toggleAll, allHidden: () => !!layout.hidden,
+    // panel(name, { hide, show }): see "Minimise all" above.
+    panel: (name, p) => { panels.set(name, p); renderTray(); },
     dock: (id, side, index) => dockWin(id, side, index),
     float: (id) => floatWin(id),
     get: (id) => wins.get(id) || null,

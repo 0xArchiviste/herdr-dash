@@ -88,7 +88,10 @@ always through `herdr-projects` and its safety checks.
   tab or pane to reorder it, out to float it, or into another dock;
   `Alt+]` / `Alt+[` step through tabs. Order, docks and the tray's place are
   kept across reloads. On a phone windows are full-width sheets, one at a
-  time; docked ones are tabs of one sheet.
+  time; docked ones are tabs of one sheet. **Minimise all** in the tray (or
+  its list, or `Alt+Shift+M`) hides every window, dock and the side panel
+  so the graph gets the whole screen; **Restore all** brings back the same
+  layout, also after a reload. New permission prompts still pop up.
 - **Quick replies** (`1` `2` `3` `Enter` `Esc` `↑` `↓` …) show up when the pane
   is blocked. Or type an answer.
 - **Chat**: send a follow-up prompt. **Next**: forward one of the thread's
@@ -560,7 +563,7 @@ from real Claude Code, Codex and opencode panes (`testdata/prompts/`);
 check and the coordinator path; `e2e/windows.test.mjs` drives the dialog and
 thread windows (several at once, drag, tray, Esc, Alt+W, reload, phone
 sheets) and the answer confirmation on 76-column Claude Code and Codex
-screens. `e2e/voice.test.mjs` drives voice with a mocked
+screens; `e2e/minall.test.mjs` drives Minimise all / Restore all. `e2e/voice.test.mjs` drives voice with a mocked
 `SpeechRecognition`, Chromium's fake microphone and a fake Workers AI:
 dictation, the commands, the confirmations, the intent fallback and that the
 token never reaches the page. `e2e/usage.test.mjs` runs the usage strip

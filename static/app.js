@@ -856,6 +856,15 @@
     if (e.key !== "Escape" || $("#dlg").open || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     select(null);
   });
+  // "Minimise all" (static/windows.js) closes the panel; "Restore all"
+  // reopens what it showed, if that thread or project is still there.
+  window.HDWin?.panel("side", {
+    hide() { const k = selected; if (k) select(null); return k; },
+    show(k) {
+      const there = isHub(k) ? state.projects.some((p) => "hub:" + p.slug === k) : state.threads.some((t) => t.key === k);
+      if (typeof k === "string" && there && selected !== k) dash.open(k);
+    },
+  });
   let screenES = null;
   let live = ""; // live status of the open panel's pane, from its screen stream
   const isHub = (key) => key.startsWith("hub:");
