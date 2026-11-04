@@ -206,7 +206,9 @@ func storeImages(t imageTarget, text string, in []imageIn) (string, []string, er
 		paths = append(paths, p)
 		refs = append(refs, imageRef(t.agent, p))
 	}
-	line := "Images: " + strings.Join(refs, " ")
+	// A ref never ends the message: Claude Code's file picker stays open
+	// after a trailing `@path`, and Enter would pick a file, not submit.
+	line := "Images: " + strings.Join(refs, " ") + " (attached in Dash)"
 	if strings.TrimSpace(text) == "" {
 		return line, paths, nil
 	}

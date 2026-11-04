@@ -430,13 +430,18 @@ func (m messageReq) message(it imageTarget) (string, []string, error) {
 	return storeImages(it, text, m.Images)
 }
 
-// unsent removes the images of a message herdr-projects refused, unless it
-// may have reached the pane (then the agent may still read them).
+// unsent removes the images of a message refused before anything was typed
+// into the pane (rate limit, a blocked agent, a draft in the box). After any
+// other failure the text may sit in the pane, so its images stay until the
+// sweep (images.go).
 func unsent(paths []string, err error) {
-	if len(paths) > 0 && !strings.Contains(err.Error(), "prompt_unconfirmed") {
+	var he httpErr
+	if len(paths) > 0 && (errors.As(err, &he) || refusedBeforeTyping.MatchString(err.Error())) {
 		removeAll(paths)
 	}
 }
+
+var refusedBeforeTyping = regexp.MustCompile(`\b(agent_blocked|draft_in_box)\b`)
 
 type bulkResult struct {
 	Key   string `json:"key"`

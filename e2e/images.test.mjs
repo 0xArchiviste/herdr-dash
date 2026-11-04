@@ -122,6 +122,21 @@ test("I2: Codex and opencode threads get a plain absolute path; images alone are
   }
 });
 
+test("I2: a ref never ends the message (Claude Code's file picker would take the Enter)", async () => {
+  const m = log.mark();
+  assert.equal((await post(url, "/api/thread/alpha/t-0001/prompt", { text: "", images: [img(PNG)] })).status, 200);
+  const [msg] = stdinSince(m);
+  assert.match(msg, /@\S+\.png /, msg);
+  assert.doesNotMatch(msg.trimEnd(), /@\S+$/, msg);
+});
+
+test("I4: images stay when the text may have reached the pane (prompt_unconfirmed)", async () => {
+  const dir = join(wt, "beta-t-0002", ".herdr-project", "beta-t-0002", "uploads");
+  const r = await post(url, "/api/thread/beta/t-0002/prompt", { text: "x", images: [img(PNG)] });
+  assert.equal(r.json.code, "prompt_unconfirmed", JSON.stringify(r.json));
+  assert.equal(listUp(dir).length, 1, "the agent may still read it");
+});
+
 test("I2: the coordinator gets refs to files in the project's uploads folder", async () => {
   const m = log.mark();
   const r = await post(url, "/api/project/alpha/coordinator", { text: "See this", images: [img(PNG)] });
