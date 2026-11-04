@@ -1,0 +1,18 @@
+● Update(notes.txt)
+
+─────────────────────────────────────────────────────────────────────────────
+ Edit file
+ notes.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1 -hello
+ 1 +hello world
+ 2 +second line
+ 3 +third line
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to notes.txt?
+ ❯ 1. Yes, and tell Claude what to do next
+   2. Yes, and switch to accept edits (auto-approve file edits and common
+      file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel

@@ -60,12 +60,12 @@ func TestParsePrompt(t *testing.T) {
 		{file: "claude-bash.txt", agent: "claude", kind: "permission", harness: "claude", title: "Bash command",
 			q: "Do you want to proceed?", subject: "ls -la /etc/hostname && wc -l notes.txt",
 			summary: "Permission: Bash ls -la /etc/hostname && wc -l notes.txt",
-			opts: []wantOpt{{label: "Yes", keys: "1", cur: true}, {label: "Yes, allow reading from /etc from this project", keys: "2", always: true},
-				{label: "Yes, and switch to auto mode", keys: "3", always: true}, {label: "No", keys: "4"}}},
+			opts: []wantOpt{{label: "Yes", keys: "1", cur: true, text: "optional"}, {label: "Yes, allow reading from /etc from this project", keys: "2", always: true},
+				{label: "Yes, and switch to auto mode", keys: "3", always: true}, {label: "No", keys: "4", text: "optional"}}},
 		{file: "claude-edit.txt", agent: "claude", kind: "permission", harness: "claude", title: "Edit file",
 			q: "Do you want to make this edit to notes.txt?", subject: "notes.txt", detail: "1 +hello world",
 			summary: "Permission: Edit notes.txt",
-			opts:    []wantOpt{{label: "Yes", keys: "1", cur: true}, {label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3"}}},
+			opts:    []wantOpt{{label: "Yes", keys: "1", cur: true, text: "optional"}, {label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3", text: "optional"}}},
 		{file: "claude-fetch.txt", agent: "claude", kind: "permission", harness: "claude", title: "Fetch",
 			q: "Do you want to allow Claude to fetch this content?", subject: "https://example.com/",
 			summary: "Permission: Fetch https://example.com/",
@@ -77,11 +77,14 @@ func TestParsePrompt(t *testing.T) {
 		{file: "claude-question-wrapped.txt", agent: "claude", kind: "question", harness: "claude",
 			q:    "Self-test of herdr-dash prompt cards: this question will be answered automatically from the dashboard in ~10s (no need to answer). Which option?",
 			opts: []wantOpt{{label: "Self-test A", keys: "1", cur: true}, {label: "Self-test B", keys: "2"}, {label: "Type something.", keys: "3", text: "required"}}},
+		// The highlight sits on "Type something." and its field has focus: a
+		// digit would be typed into it (seen live), so the others take arrows.
 		{file: "claude-other.txt", agent: "claude", kind: "question", harness: "claude", q: "Which color?",
-			opts: []wantOpt{{label: "Red", keys: "1"}, {label: "Blue", keys: "2"}, {label: "Type something.", keys: "3", text: "required", cur: true}}},
+			opts: []wantOpt{{label: "Red", keys: "up up enter"}, {label: "Blue", keys: "up enter"}, {label: "Type something.", keys: "", text: "required", cur: true}}},
 		{file: "claude-multiselect.txt", agent: "claude", kind: "question", harness: "claude", multi: true,
 			q: "Which features do you want to enable?",
 			opts: []wantOpt{{label: "Logging", keys: "1", cur: true, check: "on"}, {label: "Metrics", keys: "2", check: "off"}, {label: "Tracing", keys: "3", check: "on"},
+				{label: "Type something", keys: "4", text: "required", check: "off"},
 				{label: "Submit", keys: "down down down down enter", submit: true}}},
 		{file: "claude-review.txt", agent: "claude", kind: "question", harness: "claude", q: "Ready to submit your answers?", detail: "→ Logging, Tracing",
 			opts: []wantOpt{{label: "Submit answers", keys: "1", cur: true}, {label: "Cancel", keys: "2"}}},
@@ -100,13 +103,13 @@ func TestParsePrompt(t *testing.T) {
 			q:       "Do you want to proceed?",
 			subject: "/opt/demo-tools/plugins/report-kit-0123456789abcdef/target/release/report-kit --root /srv/demo-projects report --percent 10 --activity 'Running command'",
 			desc:    "Report task progress\nThis command requires approval",
-			opts: []wantOpt{{label: "Yes", keys: "1", cur: true},
+			opts: []wantOpt{{label: "Yes", keys: "1", cur: true, text: "optional"},
 				{label: "Yes, and don’t ask again for: /opt/demo-tools/plugins/report-kit-0123456789abcdef/target/release/report-kit *", keys: "2", always: true},
-				{label: "Yes, and switch to auto mode", detail: "auto mode handles these prompts for you", keys: "3", always: true}, {label: "No", keys: "4"}}},
+				{label: "Yes, and switch to auto mode", detail: "auto mode handles these prompts for you", keys: "3", always: true}, {label: "No", keys: "4", text: "optional"}}},
 		{file: "claude-edit-wrapped.txt", agent: "claude", kind: "permission", harness: "claude", title: "Edit file",
 			q: "Do you want to make this edit to notes.txt?", subject: "notes.txt", detail: "2 +hello world",
-			opts: []wantOpt{{label: "Yes", keys: "1", cur: true},
-				{label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3"}}},
+			opts: []wantOpt{{label: "Yes", keys: "1", cur: true, text: "optional"},
+				{label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true}, {label: "No", keys: "3", text: "optional"}}},
 		{file: "claude-trust-wrapped.txt", agent: "claude", kind: "trust", harness: "claude",
 			subject: "/srv/demo-workspaces/agents/ws-0042/pane-scratch-0123456789abcdef0123456789abcdef/demo",
 			opts:    []wantOpt{{label: "No, exit", keys: "enter", cur: true}, {label: "Yes, I trust this folder", keys: "down enter", always: true}}},
@@ -285,5 +288,217 @@ func TestPromptSig(t *testing.T) {
 	m2 := ParsePrompt(strings.Replace(string(m), "[ ] Metrics", "[✔] Metrics", 1), "claude")
 	if m1.Sig != m2.Sig {
 		t.Error("sig changed with a check mark")
+	}
+}
+
+// Claude Code's richer menus, taken live from a 76-column pane (Claude Code
+// 2.1): question tabs, previews with notes, the free-text row of single and
+// multi-select questions, "Tab to amend" on permission prompts, plan
+// approval, and each of those with text already typed in the pane.
+//
+// More ways it could fail, written before the parser:
+//  13. Text typed into a field the pane focuses is lost, read as an option
+//     label or description, or changes the signature (the window would
+//     think a new prompt is up).
+//  14. With a field focused, an option is picked with a digit (typed into
+//     the field instead, seen live) or the menu is cancelled or tabbed
+//     (Esc and arrows act on the text).
+//  15. A text option is reached with the wrong keys: a digit that picks
+//     instead of opening the field, no Tab before amend text, an Enter
+//     after multi-select text (it unticks the row, seen live).
+//  16. A preview's box joins the option labels, the menu is not seen at all,
+//     or the notes field is missing.
+//  17. Question tabs are a title, or the current tab is lost.
+//  18. A plan approval is a plain question with no plan, or its "tell Claude
+//     what to change" row takes no text.
+func TestParsePromptInteractive(t *testing.T) {
+	type opt struct {
+		label, keys, text, textKeys, draft, check string
+		cur, always, submit                       bool
+		preview                                   string // substring
+	}
+	cases := []struct {
+		file, kind, title, q  string
+		detail                string // substring
+		tabs                  string // "label" with * current, + done
+		cancel, prev, next    string
+		focused, multi, notes bool
+		sameSig               string // fixture with the same prompt, nothing typed
+		opts                  []opt
+	}{
+		{file: "claude-ask-tabs.ansi", kind: "question", q: "Which color should the poster use?",
+			tabs: "*Color Extras +Submit", cancel: "esc", next: "right",
+			opts: []opt{{label: "Red", keys: "1", cur: true}, {label: "Blue", keys: "2"}, {label: "Green", keys: "3"},
+				{label: "Type something.", keys: "4", text: "required", textKeys: "4"}}},
+		{file: "claude-ask-other-typed.txt", kind: "question", q: "Which color should the poster use?", focused: true, sameSig: "claude-ask-tabs.ansi",
+			tabs: "Color Extras +Submit",
+			opts: []opt{{label: "Red", keys: "up up up enter"}, {label: "Blue", keys: "up up enter"}, {label: "Green", keys: "up enter"},
+				{label: "Type something.", keys: "enter", text: "required", draft: "Teal \"#0aa\" — ünï ✓\nwith a 2nd line", cur: true}}},
+		{file: "claude-ask-multi.txt", kind: "question", q: "Which extras do you want on the poster page?", multi: true,
+			tabs: "+Color Extras +Submit", cancel: "esc",
+			opts: []opt{{label: "Logo", keys: "1", check: "off", cur: true}, {label: "Footer", keys: "2", check: "off"}, {label: "Search", keys: "3", check: "off"},
+				{label: "Type something", keys: "4", check: "off", text: "required", textKeys: "down down down"},
+				{label: "Submit", keys: "down down down down enter", submit: true}}},
+		{file: "claude-ask-multi-typed.txt", kind: "question", q: "Which extras do you want on the poster page?", multi: true, focused: true,
+			sameSig: "claude-ask-multi.txt", tabs: "+Color +Extras +Submit",
+			opts: []opt{{label: "Logo", keys: "up up up space", check: "on"}, {label: "Footer", keys: "up up space", check: "off"}, {label: "Search", keys: "up space", check: "on"},
+				{label: "Type something", keys: "enter", check: "on", text: "required", draft: "Dark mode \"toggle\" ✓", cur: true},
+				{label: "Submit", keys: "down enter", submit: true}}},
+		{file: "claude-ask-preview.txt", kind: "question", q: "Which layout do you prefer for the page?", notes: true,
+			tabs: "Layout", cancel: "esc",
+			opts: []opt{{label: "Sidebar", keys: "enter", cur: true, text: "optional", textKeys: "n", preview: "│ Nav  │ Content   │"},
+				{label: "Top bar", keys: "down enter", text: "optional", textKeys: "down n"}}},
+		{file: "claude-ask-preview-notes.txt", kind: "question", q: "Which layout do you prefer for the page?", notes: true, focused: true,
+			sameSig: "claude-ask-preview.txt", tabs: "Layout",
+			opts: []opt{{label: "Sidebar", text: "optional"},
+				{label: "Top bar", keys: "enter", cur: true, text: "optional", draft: "centered \"logo\" ✓", preview: "│ Nav  Nav  Nav    │"}}},
+		{file: "claude-bash-amend.txt", kind: "permission", title: "Bash command", q: "Do you want to proceed?", cancel: "esc",
+			opts: []opt{{label: "Yes", keys: "1", cur: true, text: "optional", textKeys: "tab"},
+				{label: "Yes, and don’t ask again for: /home/dev/.config/demox/plugins/plugin/demo-reporters-0123456789ab/target/release/hemo-reporters *", keys: "2", always: true},
+				{label: "Yes, and switch to auto mode", keys: "3", always: true},
+				{label: "No", keys: "4", text: "optional", textKeys: "down down down tab"}}},
+		{file: "claude-bash-amend-typed.txt", kind: "permission", title: "Bash command", q: "Do you want to proceed?", focused: true, sameSig: "claude-bash-amend.txt",
+			opts: []opt{{label: "Yes", keys: "up up up enter", text: "optional"},
+				{label: "Yes, and don’t ask again for: /home/dev/.config/demox/plugins/plugin/demo-reporters-0123456789ab/target/release/hemo-reporters *", keys: "up up enter", always: true},
+				{label: "Yes, and switch to auto mode", keys: "up enter", always: true},
+				{label: "No", keys: "enter", cur: true, text: "optional", draft: "skip \"this\" — café ✓\nsecond line"}}},
+		{file: "claude-edit-amend.txt", kind: "permission", title: "Edit file", q: "Do you want to make this edit to notes.txt?", detail: "1 +hello world", focused: true,
+			opts: []opt{{label: "Yes", keys: "enter", cur: true, text: "optional", textKeys: ""},
+				{label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "down enter", always: true},
+				{label: "No", keys: "down down enter", text: "optional"}}},
+		{file: "claude-create.txt", kind: "permission", title: "Create file", q: "Do you want to create README.md?", detail: "2 A small demo of the poster page.", cancel: "esc",
+			opts: []opt{{label: "Yes", keys: "1", cur: true, text: "optional", textKeys: "tab"},
+				{label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", keys: "2", always: true},
+				{label: "No", keys: "3", text: "optional", textKeys: "down down tab"}}},
+		{file: "claude-plan.txt", kind: "plan", title: "Plan", q: "Claude has written up a plan and is ready to execute. Would you like to proceed?",
+			detail: "Plan: add README.md\n\nContext\n\nThe repo has no README. Add a minimal one containing the line \"Poster demo\".",
+			opts: []opt{{label: "Yes, and use auto mode", keys: "1", cur: true, always: true}, {label: "Yes, manually approve edits", keys: "2"},
+				{label: "Tell Claude what to change", keys: "3", text: "required", textKeys: "3"}}},
+		{file: "claude-plan-feedback.txt", kind: "plan", title: "Plan", focused: true, sameSig: "claude-plan.txt",
+			detail: "- Put the single line Poster demo in it.",
+			opts: []opt{{label: "Yes, and use auto mode", keys: "up up enter", always: true}, {label: "Yes, manually approve edits", keys: "up enter"},
+				{label: "Tell Claude what to change", keys: "enter", cur: true, text: "required", draft: "Use \"Poster demo ✓\"\nand add a 2nd line"}}},
+	}
+	parse := func(f string) *Prompt {
+		t.Helper()
+		b, err := os.ReadFile("testdata/prompts/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ParsePrompt(string(b), "claude")
+	}
+	for _, c := range cases {
+		t.Run(c.file, func(t *testing.T) {
+			p := parse(c.file)
+			if p == nil {
+				t.Fatal("no prompt parsed")
+			}
+			eq := func(what, got, want string) {
+				t.Helper()
+				if got != want {
+					t.Errorf("%s = %q, want %q", what, got, want)
+				}
+			}
+			eq("kind", p.Kind, c.kind)
+			eq("harness", p.Harness, "claude")
+			if c.title != "" {
+				eq("title", p.Title, c.title)
+			}
+			if c.q != "" {
+				eq("question", p.Question, c.q)
+			}
+			if c.detail != "" && !strings.Contains(p.Detail, c.detail) {
+				t.Errorf("detail %q lacks %q", p.Detail, c.detail)
+			}
+			var tabs []string
+			for _, tb := range p.Tabs {
+				s := tb.Label
+				if tb.Done {
+					s = "+" + s
+				}
+				if tb.Current {
+					s = "*" + s
+				}
+				tabs = append(tabs, s)
+			}
+			eq("tabs", strings.Join(tabs, " "), c.tabs)
+			eq("cancel", strings.Join(p.Cancel, " "), c.cancel)
+			eq("prev", strings.Join(p.Prev, " "), c.prev)
+			eq("next", strings.Join(p.Next, " "), c.next)
+			if p.Focused != c.focused || p.Multi != c.multi || p.Notes != c.notes {
+				t.Errorf("focused/multi/notes = %v/%v/%v", p.Focused, p.Multi, p.Notes)
+			}
+			if strings.ContainsAny(p.Question+p.Title, "☐☒✔┌│") {
+				t.Errorf("screen furniture in %q / %q", p.Title, p.Question)
+			}
+			if c.sameSig != "" {
+				if q := parse(c.sameSig); q == nil || q.Sig != p.Sig {
+					t.Errorf("sig differs from %s: typing changed the prompt", c.sameSig)
+				}
+			}
+			if len(p.Options) != len(c.opts) {
+				var ls []string
+				for _, o := range p.Options {
+					ls = append(ls, o.Label)
+				}
+				t.Fatalf("options %q, want %d", ls, len(c.opts))
+			}
+			for i, w := range c.opts {
+				o := p.Options[i]
+				eq("label", o.Label, w.label)
+				eq(w.label+" keys", strings.Join(o.Keys, " "), w.keys)
+				eq(w.label+" text", o.Text, w.text)
+				eq(w.label+" draft", o.Draft, w.draft)
+				if w.text != "" && w.draft == "" && !(c.focused && !w.cur) {
+					eq(w.label+" text keys", strings.Join(o.TextKeys, " "), w.textKeys)
+					if o.TextKeys == nil {
+						t.Errorf("%s: text cannot be reached", w.label)
+					}
+				} else if o.TextKeys != nil {
+					t.Errorf("%s: text keys %q where typing is not possible", w.label, o.TextKeys)
+				}
+				for _, k := range append(append([]string{}, o.Keys...), o.TextKeys...) {
+					if !allowedKeys[k] {
+						t.Errorf("%s: key %q not allowed", w.label, k)
+					}
+				}
+				if len(o.Keys) > maxKeys || len(o.TextKeys) > maxKeys {
+					t.Errorf("%s: too many keys", w.label)
+				}
+				if c.focused {
+					for _, k := range o.Keys {
+						if len(k) == 1 || k == "space" && w.cur || k == "tab" || k == "esc" || k == "left" || k == "right" {
+							t.Errorf("%s: %q would be typed into the focused field", w.label, k)
+						}
+					}
+				}
+				if o.Current != w.cur || o.Always != w.always || o.Submit != w.submit {
+					t.Errorf("%s: current/always/submit = %v/%v/%v", w.label, o.Current, o.Always, o.Submit)
+				}
+				ck := ""
+				if o.Checked != nil {
+					ck = map[bool]string{true: "on", false: "off"}[*o.Checked]
+				}
+				eq(w.label+" checked", ck, w.check)
+				if w.preview != "" && !strings.Contains(o.Preview, w.preview) {
+					t.Errorf("%s: preview %q lacks %q", w.label, o.Preview, w.preview)
+				}
+				if w.preview == "" && o.Preview != "" {
+					t.Errorf("%s: preview %q on a row the pane does not preview", w.label, o.Preview)
+				}
+				if strings.ContainsAny(o.Label, "┌│└") {
+					t.Errorf("%s: preview box in the label", w.label)
+				}
+			}
+		})
+	}
+}
+
+// 13: the summary names a plan by its first line.
+func TestPlanSummary(t *testing.T) {
+	b, _ := os.ReadFile("testdata/prompts/claude-plan.txt")
+	p := ParsePrompt(string(b), "claude")
+	if p == nil || p.Summary != "Plan: add README.md" {
+		t.Fatalf("got %+v", p)
 	}
 }

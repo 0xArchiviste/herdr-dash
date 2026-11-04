@@ -634,7 +634,8 @@ window.HDWin = (() => {
   // ---------------------------------------------------------------- open/close
   // open shows the window id, building it on first open. opts: { title,
   // short (tray label), cls, width, persist (reopened after a reload by its
-  // owner, see saved()), build(body, win), onClose(win) }.
+  // owner, see saved()), build(body, win), onClose(win), onEsc(event) -> true
+  // when the owner used Esc (else Esc closes the window) }.
   function open(id, opts = {}) {
     let w = wins.get(id);
     if (w) { restore(id); return w; }
@@ -646,7 +647,7 @@ window.HDWin = (() => {
       el("button", { type: "button", class: "hw-close", title: "Close (Esc)", "aria-label": "Close", text: "×", onclick: () => close(id) }));
     const node = el("section", { class: "hwin " + (opts.cls || ""), "data-win": id, role: "dialog", "aria-label": opts.title || id, tabindex: "-1" }, bar, body);
     if (opts.width) node.style.width = `min(${opts.width}px, calc(100vw - 16px))`;
-    w = { id, el: node, body, title: opts.title || id, short: opts.short, onClose: opts.onClose, min: false, at: 0, x: 0, y: 0, dock: null,
+    w = { id, el: node, body, title: opts.title || id, short: opts.short, onClose: opts.onClose, onEsc: opts.onEsc, min: false, at: 0, x: 0, y: 0, dock: null,
       setTitle(t, short) { w.title = t; if (short) w.short = short; title.textContent = t; node.setAttribute("aria-label", t); renderTray(); if (w.dock) renderDocks(); },
       setAttn(on) { w.attn = !!on; renderTray(); if (w.dock) renderDocks(); },
       close: () => close(id), focus: () => restore(id) };
@@ -783,6 +784,8 @@ window.HDWin = (() => {
       if (!(w.el.contains(a) || a === document.body || a == null)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      // The window's owner may use Esc first (a prompt's own Esc).
+      if (!w.min && w.onEsc?.(e)) return;
       close(w.id);
       return;
     }
