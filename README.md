@@ -243,6 +243,7 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--addr` | `HERDR_DASH_ADDR` | `127.0.0.1:8791` |
 | `--root` | `HERDR_DASH_ROOT`, then `HERDR_PROJECTS_ROOT` | `~/.herdr-projects` |
 | `--herdr-projects` | `HERDR_DASH_HERDR_PROJECTS` | on `PATH`, else the herdr plugin build under `~/.config/herdr/plugins/` |
+| `--read-model` | `HERDR_DASH_READ_MODEL` | `cli`: runs `herdr-projects list` and `thread list`; `go` reads the root in process (`internal/projects`, same output, about 20x faster) |
 | `--read-only` | `HERDR_DASH_READ_ONLY` | off: refuses every write when on |
 | `--auth` | `HERDR_DASH_AUTH` | `none` (the only mode so far) |
 | `--public-url` | `HERDR_DASH_PUBLIC_URL` | none; an `https://host[:port]` in front of this server, see Voice |
@@ -298,6 +299,12 @@ The state carries a build id (a hash of the embedded frontend). After
 
 State colors follow herdr-projects' own grouping (`group_token`), split into
 blocked vs waiting by the live pane status.
+
+With `--read-model go` the two `herdr-projects` reads above are replaced by
+`internal/projects`, a Go port of herdr-projects 0.2.35's read side (see
+`THIRD_PARTY_NOTICES.md`): it parses the same files and prints the same
+`list`, `overview`, `context` and `thread list --json` text, and asks each
+herdr session once per refresh instead of once per project. It never writes.
 
 ### Writes, and why they are safe
 
@@ -705,6 +712,17 @@ request shape, caching, timeouts, disabled and unavailable states, and that
 no credential reaches the page, the API or the log. Screenshots and the API snapshot land in
 `e2e/artifacts/`; `node e2e/screenshot.mjs URL DIR` screenshots a running
 instance.
+
+`make golden` (part of `make check`) is the cross-binary golden suite: it
+generates fictional projects roots covering every thread state, inbox kind,
+routine, profile and malformed file it could think of, runs the Rust
+herdr-projects 0.2.35 binary and `internal/projects` on them with the same
+stub herdr, and requires the same bytes (TOML parser error wording aside).
+It finds the binary in `HP_RUST_BIN`, else the installed herdr plugin, and
+skips with a message when there is no 0.2.35 build. `HP_RUST_BIN_OLD`
+adds a report of where another Rust build differs. Results land in
+`e2e/artifacts/golden/`; `e2e/readmodel.test.mjs` checks that Dash shows
+the same state with `--read-model go` as with the CLI.
 
 ## License
 

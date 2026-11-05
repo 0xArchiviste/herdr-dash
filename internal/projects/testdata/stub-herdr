@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stub herdr for the golden suite. Replies come from files in $STUB_DIR,
+# chosen by the socket the caller set (HERDR_SOCKET_PATH):
+#   <socket basename>.agent.json  reply to `agent list`
+#   <socket basename>.pane.json   reply to `pane list`
+#   sessions.json                 reply to `session list --json`
+#   machines.json                 reply to `machine list --json`
+# A missing reply file is an unreachable server.
+d="${STUB_DIR:?STUB_DIR is not set}"
+[ -n "${STUB_LOG:-}" ] && echo "herdr $* (socket ${HERDR_SOCKET_PATH:-}) (session ${HERDR_SESSION:-})" >> "$STUB_LOG"
+unreachable() { echo '{"error":{"code":"unreachable","message":"no server at the socket"}}' >&2; exit 1; }
+sock="$(basename "${HERDR_SOCKET_PATH:-none}")"
+case "$1 $2" in
+  "session list") if [ -f "$d/sessions.json" ]; then cat "$d/sessions.json"; else echo '{"sessions":[]}'; fi ;;
+  "machine list") if [ -f "$d/machines.json" ]; then cat "$d/machines.json"; else echo '[]'; fi ;;
+  "agent list"|"pane list")
+    f="$d/$sock.$1.json"
+    [ -f "$f" ] || unreachable
+    cat "$f" ;;
+  "status server") [ -f "$d/$sock.agent.json" ] || unreachable; echo '{"result":{}}' ;;
+  *) echo "{\"error\":{\"code\":\"unsupported\",\"message\":\"stub herdr: $1 $2\"}}" >&2; exit 2 ;;
+esac

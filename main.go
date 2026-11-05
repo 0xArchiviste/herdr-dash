@@ -62,6 +62,7 @@ func defineServerFlags() *serverOpts {
 	flag.StringVar(&o.addr, "addr", env("HERDR_DASH_ADDR", "127.0.0.1:8791"), "listen address, $HERDR_DASH_ADDR (use 0.0.0.0:8791 to serve other machines)")
 	flag.StringVar(&cfg.Root, "root", env("HERDR_DASH_ROOT", env("HERDR_PROJECTS_ROOT", filepath.Join(home, ".herdr-projects"))), "herdr-projects root, $HERDR_DASH_ROOT")
 	flag.StringVar(&cfg.HerdrProjects, "herdr-projects", env("HERDR_DASH_HERDR_PROJECTS", ""), "herdr-projects binary, $HERDR_DASH_HERDR_PROJECTS (default: on PATH, else the installed herdr plugin)")
+	flag.StringVar(&cfg.ReadModel, "read-model", env("HERDR_DASH_READ_MODEL", "cli"), "where thread state comes from, $HERDR_DASH_READ_MODEL: \"cli\" runs herdr-projects list and thread list; \"go\" reads the root in process (internal/projects)")
 	flag.StringVar(&cfg.Auth, "auth", env("HERDR_DASH_AUTH", "none"), "auth mode, $HERDR_DASH_AUTH; only \"none\" (trusted network) exists yet")
 	flag.StringVar(&cfg.PublicURL, "public-url", env("HERDR_DASH_PUBLIC_URL", ""), "HTTPS address of this dashboard (e.g. a tailscale serve URL), $HERDR_DASH_PUBLIC_URL; remote plain-http page loads redirect there, since browsers only allow the microphone over HTTPS")
 	flag.BoolVar(&cfg.ReadOnly, "read-only", env("HERDR_DASH_READ_ONLY", "") != "", "refuse every write action, $HERDR_DASH_READ_ONLY")
@@ -100,6 +101,9 @@ func (o *serverOpts) finish() error {
 	cfg.Memex = resolveMemex(cfg.Memex)
 	if cfg.HerdrProjects == "" {
 		cfg.HerdrProjects = defaultHerdrProjects(o.home)
+	}
+	if cfg.ReadModel != "cli" && cfg.ReadModel != "go" {
+		return fmt.Errorf("--read-model %q: use \"cli\" or \"go\"", cfg.ReadModel)
 	}
 	if cfg.Auth != "none" {
 		return fmt.Errorf("--auth %q is not implemented; only \"none\" is (the network is trusted)", cfg.Auth)

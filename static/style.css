@@ -220,9 +220,37 @@ body.dock-bottom #splitter { width: auto; height: 5px; cursor: row-resize; }
 .md td, .md th { border: 1px solid var(--g3); padding: 3px 6px; }
 .md.collapsed { max-height: 220px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .more { all: unset; cursor: pointer; color: var(--bblue); font-size: 12px; }
-.screen { background: #0b0b0b; color: #d7d0bd; border: 1px solid var(--g2); border-radius: 6px; padding: 8px; font-size: 11px;
-  line-height: 1.3; white-space: pre; overflow-x: auto; max-height: max(340px, calc(100dvh - 330px)); overflow-y: auto; overflow-anchor: none; }
+/* Screen boxes (static/scrollback.js, static/ansi.js): a pane as its
+   terminal draws it. Colours come inline from the escapes; .u spans hold
+   symbols, box drawing and wide characters at their cell width. */
+:root { --term: "JetBrains Mono", "Cascadia Mono", "SF Mono", ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace; }
+.screen { background: #0b0b0b; color: #d7d0bd; border: 1px solid var(--g2); border-radius: 6px; padding: 8px; font-size: 12px;
+  font-family: var(--term); font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; tab-size: 8;
+  line-height: 1.2; white-space: pre; overflow-x: auto; max-height: max(340px, calc(100dvh - 330px)); overflow-y: auto; overflow-anchor: none; }
 .screen:empty { display: none; }
+.screen:focus { outline: none; }
+.screen:focus-visible { outline: 1px solid var(--g4); }
+.screen .u { display: inline-block; white-space: pre; }
+.screen[data-wrap="fit"] { overflow-x: hidden; }
+.screen[data-wrap="wrap"], .screen[data-reader] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.screen[data-wrap="wrap"] .u, .screen[data-reader] .u { display: inline; width: auto !important; white-space: inherit; }
+.screen[data-reader] { font-size: max(12px, 1em); line-height: 1.45; color: var(--bwhite); }
+.screen .tl.raw { color: #a39d8f; }
+.screen .tl.hit { box-shadow: inset 2px 0 0 var(--yellow); }
+::highlight(hd-find) { background-color: rgba(251, 184, 41, .4); color: #fff; }
+::highlight(hd-find-cur) { background-color: var(--borange); color: #151515; }
+.screen-tools, .screen-find { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
+.screen-find[hidden] { display: none; }
+.screen-wrap:has(> .screen:empty) > .screen-tools { display: none; }
+.st-btn { all: unset; cursor: pointer; font-size: 11.5px; line-height: 18px; padding: 1px 7px; border-radius: 4px; color: var(--bblack);
+  background: var(--g1); border: 1px solid var(--g2); white-space: nowrap; }
+.st-btn:hover, .st-btn:focus-visible { color: var(--bwhite); background: var(--g3); }
+.st-btn[aria-pressed="true"] { color: var(--hard-black); background: var(--byellow); border-color: var(--byellow); }
+.st-btn:disabled { opacity: .4; cursor: default; }
+.st-gap { flex: 1; }
+.sf-input { flex: 1; min-width: 0; background: var(--hard-black); color: var(--bwhite); border: 1px solid var(--g3); border-radius: 4px;
+  padding: 2px 6px; font: 12px var(--term); }
+.sf-count { font-size: 11px; color: var(--bblack); min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
 .screen-wrap { position: relative; }
 .screen-top { font-size: 11px; color: var(--bblack); text-align: center; line-height: 16px; margin-bottom: 2px; }
 .screen-wrap:has(> .screen:empty) > .screen-top { display: none; }

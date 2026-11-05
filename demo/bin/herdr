@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
 # Demo stand-in for herdr: the pane list and fake agent screens in demo/.
+# With --format ansi the screens get the colours Claude Code draws them in.
 D="$(cd "$(dirname "$0")/.." && pwd)"
+E=$'\e'
+# Claude Code's palette: green tool bullets, grey results and borders, the
+# orange spinner, the pink mode line.
+colour() {
+  sed -e "s/^● /${E}[38;2;78;186;101m●${E}[0m /" \
+      -e "s/^\(  ⎿ .*\)$/${E}[38;2;153;153;153m\1${E}[0m/" \
+      -e "s/^\(✻ [^(]*\)\((.*)\)$/${E}[38;2;215;119;87m\1${E}[38;2;153;153;153m\2${E}[0m/" \
+      -e "s/^\([╭╰].*\)$/${E}[38;2;136;136;136m\1${E}[0m/" \
+      -e "s/^\(  ⏵⏵ [^(]*\)\(.*\)$/${E}[38;2;255;107;128m\1${E}[38;2;153;153;153m\2${E}[0m/" \
+      -e "s/\(✓\)/${E}[32m\1${E}[39m/g"
+}
 case "$1 $2" in
   "pane list") cat "$D/data/panes.json" ;;
+  "pane layout") printf '{"id":"cli:pane:layout","result":{"layout":{"panes":[{"pane_id":"%s","rect":{"height":40,"width":66,"x":0,"y":0}}]},"type":"pane_layout"}}\n' "$4" ;;
   "pane read")
     f="$D/screens/${3//:/_}.txt"
     s=$(( $(date +%s) % 600 ))
     if [ -f "$f" ]; then
       # A clock in the spinner line, so working agents look alive.
-      sed -e "s/{ELAPSED}/$((s / 60))m $((s % 60))s/" -e "s/{TOKENS}/$(( s / 7 + 1 )).$(( s % 10 ))/" "$f"
+      out="$(sed -e "s/{ELAPSED}/$((s / 60))m $((s % 60))s/" -e "s/{TOKENS}/$(( s / 7 + 1 )).$(( s % 10 ))/" "$f")"
     else
-      printf '● Done. The report is in the thread file.\n\n╭──────────────────────────────────────────────────────────────╮\n│ >                                                            │\n╰──────────────────────────────────────────────────────────────╯\n'
-    fi ;;
+      out="$(printf '● Done. The report is in the thread file.\n\n╭──────────────────────────────────────────────────────────────╮\n│ >                                                            │\n╰──────────────────────────────────────────────────────────────╯\n')"
+    fi
+    case " $* " in
+      *" --format ansi "*) printf '%s\n' "$out" | colour ;;
+      *) printf '%s\n' "$out" ;;
+    esac ;;
   *) echo "demo: unsupported: $*" >&2; exit 2 ;;
 esac
