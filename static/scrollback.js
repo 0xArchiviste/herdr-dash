@@ -70,7 +70,7 @@ window.HDScrollback = (() => {
       let t = plainOf(raw);
       if (STATUS.test(t) || SPIN.test(t) || PROMPT.test(t)) continue;
       if (/\S/.test(t) && CHROME.test(t)) continue;
-      t = t.replace(/^\s*[│┃║▌▐]\s?/, "").replace(/\s*[│┃║▌▐]\s*$/, "").replace(/\s+$/, "");
+      t = t.replace(/^\s*[│┃║▌▐▏▎▍▕]\s?/, "").replace(/\s*[│┃║▌▐▏▎▍▕]\s*$/, "").replace(/\s+$/, "");
       if (!/\S/.test(t) && (!out.length || !/\S/.test(out[out.length - 1]))) continue;
       out.push(t);
     }
@@ -245,8 +245,9 @@ window.HDScrollback = (() => {
       s.remove();
       return w;
     }
-    // The width to fit: the pane's own, else the widest row.
-    const widest = () => cols || buf.reduce((m, l) => Math.max(m, A ? A.width(plainOf(l)) : plainOf(l).length), 0);
+    // The width to fit: the pane's own (herdr's, up to a minute old), or the
+    // widest of the newest rows if one is wider.
+    const widest = () => buf.slice(-200).reduce((m, l) => Math.max(m, A ? A.width(plainOf(l)) : plainOf(l).length), cols);
     function fit() {
       let size = set.size;
       if (set.wrap === "fit" && !set.reader && pre.isConnected && pre.clientWidth) {
@@ -277,7 +278,7 @@ window.HDScrollback = (() => {
     if (window.ResizeObserver) new ResizeObserver(() => { if (set.wrap === "fit") fit(); }).observe(pre);
 
     // ---- copy
-    const text = () => (set.reader ? reader(buf) : buf.map(plainOf)).join("\n");
+    const text = () => (set.reader ? reader(buf) : buf.map((l) => plainOf(l).replace(/\s+$/, ""))).join("\n");
     copyB.addEventListener("click", async () => {
       const t = text();
       let ok = false;

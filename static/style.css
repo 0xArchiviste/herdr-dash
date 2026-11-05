@@ -233,7 +233,7 @@ body.dock-bottom #splitter { width: auto; height: 5px; cursor: row-resize; }
 .screen .u { display: inline-block; white-space: pre; }
 .screen[data-wrap="fit"] { overflow-x: hidden; }
 .screen[data-wrap="wrap"], .screen[data-reader] { white-space: pre-wrap; overflow-wrap: anywhere; }
-.screen[data-wrap="wrap"] .u, .screen[data-reader] .u { display: inline; width: auto !important; }
+.screen[data-wrap="wrap"] .u, .screen[data-reader] .u { display: inline; width: auto !important; white-space: inherit; }
 .screen[data-reader] { font-size: max(12px, 1em); line-height: 1.45; color: var(--bwhite); }
 .screen .tl.raw { color: #a39d8f; }
 .screen .tl.hit { box-shadow: inset 2px 0 0 var(--yellow); }

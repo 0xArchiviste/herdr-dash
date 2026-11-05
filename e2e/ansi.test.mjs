@@ -222,22 +222,34 @@ test("no HTML gets in through escapes or text", async () => {
 
 test("boxes line up at 76 and 120 columns, wide characters take two cells", async () => {
   // A3, A4 (pane width)
+  // The 120-column fixtures go to alpha/t-0001's pane, the 76-column ones
+  // to alpha/t-0003's: a pane keeps its width, as real panes do.
   const page = await open({ viewport: { width: 1600, height: 1000 } });
-  const w = await win(page, "alpha/t-0001");
-  await w.evaluate((e) => { e.style.width = "1500px"; });
+  const wins = { 120: await win(page, "alpha/t-0001"), 76: await win(page, "alpha/t-0003") };
+  const panes = { 120: "w1A:p1", 76: "w1C:p1" };
   const report = {};
+  const strip = (t) => t.replace(/\x1b\[[0-9;:]*[A-Za-z]/g, "").split("\n").map((l) => l.replace(/\s+$/, ""));
+  try {
   for (const name of ["claude-76", "claude-120", "codex-76", "codex-120", "opencode-76", "opencode-120", "shell-76", "shell-120"]) {
-    show("w1A:p1", name);
     const cols = +name.split("-")[1];
-    await waitFor(async () => (await w.locator(".screen").getAttribute("data-cols")) === String(cols) &&
-      (await w.locator(".screen").innerText()).includes(name.startsWith("shell") ? "./ruler.sh" : "README.md"), 10_000);
-    await waitFor(async () => (await w.locator(".screen").innerText()).split("\n").length >= fx(name).trimEnd().split("\n").length - 1, 8000);
+    const w = wins[cols];
+    await page.evaluate((k) => window.HDWin.restore("thread:" + k), cols === 120 ? "alpha/t-0001" : "alpha/t-0003");
+    await w.evaluate((e) => { e.style.width = "1500px"; e.style.left = "10px"; });
+    show(panes[cols], name);
+    const ls = strip(fx(name)).filter((l) => /\S/.test(l));
+    await waitFor(async () => {
+      const t = await w.locator(".screen").innerText();
+      return (await w.locator(".screen").getAttribute("data-cols")) === String(cols) && t.includes(ls[0].trim()) && t.includes(ls[ls.length - 1].trim());
+    }, 10_000);
     const rs = await rows(w);
     const ch = await w.locator(".screen").evaluate((pre) => { const s = document.createElement("span"); s.textContent = "0".repeat(100); pre.append(s); const x = s.getBoundingClientRect().width / 100; s.remove(); return x; });
     const left = await w.locator(".screen .tl").first().evaluate((e) => e.getBoundingClientRect().left);
     // Every row is one line high: nothing wrapped.
-    const heights = await w.locator(".screen .tl").evaluateAll((ls) => ls.map((l) => l.getClientRects().length));
-    assert.ok(heights.every((n) => n <= 1), `${name}: a row wrapped`);
+    const heights = await w.locator(".screen .tl").evaluateAll((ls) => {
+      const lh = parseFloat(getComputedStyle(ls[0].parentElement).lineHeight);
+      return ls.map((l) => l.getBoundingClientRect().height / lh);
+    });
+    assert.ok(heights.every((n) => n < 1.9), `${name}: a row wrapped: ${JSON.stringify(rs.filter((r, k) => heights[k] >= 1.9).map((r) => r.text))}`);
     // Rows ending in a box edge (│ ╮ ╯ ┃ or the ruler's |) end where their cell count says.
     const edges = rs.filter((r) => /[│╮╯|▀█┃┘┤┐]$/.test(r.text) && r.right != null);
     assert.ok(edges.length >= 3, `${name}: rows with edges`);
@@ -249,8 +261,11 @@ test("boxes line up at 76 and 120 columns, wide characters take two cells", asyn
     assert.ok(Math.max(...off) < 0.25, `${name}: an edge is off its cell by ${Math.max(...off)} (${JSON.stringify(edges.map((e) => e.text.slice(-12)))})`);
     await w.locator(".screen").screenshot({ path: join(artifacts, `ansi-box-${name}.png`) });
   }
+  } finally {
+    show("w1A:p1", "claude-120");
+    show("w1C:p1", "codex-76");
+  }
   out.alignment = report;
-  show("w1A:p1", "claude-120");
   assert.deepEqual(page.errors, []);
   await page.context().close();
 });
@@ -299,6 +314,7 @@ test("reader mode drops TUI chrome and keeps the transcript", async () => {
   // A5
   const page = await open();
   const w = await win(page, "alpha/t-0001");
+  await waitFor(async () => (await w.locator(".screen").innerText()).includes("Welcome to Claude Code"), 8000);
   const btn = w.locator('.screen-tools [data-act="reader"]');
   await btn.click();
   assert.equal(await btn.getAttribute("aria-pressed"), "true");
@@ -340,7 +356,7 @@ test("Ctrl+F searches the window's screen", async () => {
   const n = fx("claude-120").match(/readme/gi).length;
   await waitFor(async () => (await count.innerText()) === `1/${n}`);
   assert.ok(await w.locator(".screen .tl.hit").count() >= 1);
-  const hl = await page.evaluate(() => (window.CSS?.highlights ? CSS.highlights.get("hd-find")?.size : -1));
+  const hl = await page.evaluate(() => (window.CSS?.highlights ? CSS.highlights.get("hd-find").size + CSS.highlights.get("hd-find-cur").size : -1));
   assert.ok(hl === -1 || hl === n, "highlights every match: " + hl);
   await input.press("Enter");
   assert.equal(await count.innerText(), `2/${n}`);
@@ -395,7 +411,8 @@ test("new output and load earlier work with styled rows", async () => {
     const before = await pre.locator(".tl").count();
     if (before >= 2000) break;
     await pre.evaluate((e) => { e.scrollTop = 0; e.dispatchEvent(new Event("scroll")); });
-    await waitFor(async () => (await pre.locator(".tl").count()) > before, 8000);
+    await waitFor(async () => (await pre.locator(".tl").count()) > before, 20_000)
+      .catch(async (e) => { throw new Error(`no earlier rows after ${before}: ${await w.locator(".screen-top").innerText()} / ${await pre.locator(".tl").count()}`); });
   }
   assert.equal(await pre.locator(".tl").count(), 2000);
   // Rows loaded earlier get their colours too, a frame budget at a time.

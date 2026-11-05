@@ -996,7 +996,7 @@ test("history API: capped, cached, one read per pane at a time, refuses unreadab
 
   const big = await getJSON("/api/thread/alpha/t-0002/history?lines=999999");
   assert.equal(big.lines, 2000, "capped");
-  assert.ok(!logLines().some((l) => /--lines (\d{5,}|[3-9]\d{3}|2\d{3})/.test(l) && !/--lines 2000$/.test(l)), "no read past 2000");
+  assert.ok(!logLines().some((l) => /--lines (\d{5,}|[3-9]\d{3}|2\d{3})/.test(l) && !/--lines 2000( --format ansi)?$/.test(l)), "no read past 2000");
   for (const q of ["lines=abc", "lines=-5", "lines=1e9", "lines=10%20--raw"]) {
     assert.equal((await fetch(base + "/api/thread/alpha/t-0002/history?" + q)).status, 400, q);
   }
