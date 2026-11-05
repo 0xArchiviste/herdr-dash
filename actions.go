@@ -500,6 +500,8 @@ func (a *Actions) bulkAck(r *http.Request, body []byte) (any, error) {
 
 type screenEvent struct {
 	Screen     string  `json:"screen"`
+	ANSI       bool    `json:"ansi,omitempty"` // Screen keeps its escapes (asked with ?ansi=1)
+	Cols       int     `json:"cols,omitempty"` // the pane's width, with ANSI only
 	LiveStatus string  `json:"live_status"`
 	PaneAlive  bool    `json:"pane_alive"`
 	Prompt     *Prompt `json:"prompt,omitempty"`
@@ -589,13 +591,15 @@ func (a *Actions) history(w http.ResponseWriter, r *http.Request, target screenT
 	pane, alive, readable := target()
 	ev := map[string]any{"screen": "", "lines": n, "pane_alive": alive}
 	if readable {
-		ev["screen"] = a.col.History(r.Context(), pane, n)
+		ev["screen"] = a.col.History(r.Context(), pane, n, r.URL.Query().Get("ansi") == "1")
 	}
 	writeJSON(w, ev)
 }
 
 // screenEvents streams a pane's screen over SSE: read every few seconds
-// while someone watches, faster for a short burst after a write.
+// while someone watches, faster for a short burst after a write. With
+// ?ansi=1 the screen keeps its escapes (the same read: only the stripping
+// is skipped) and the event carries the pane's width.
 func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target screenTarget) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -611,6 +615,7 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 
+	ansi := r.URL.Query().Get("ansi") == "1"
 	var last []byte
 	var lastRead, lastWrite time.Time
 	tick := time.NewTicker(250 * time.Millisecond)
@@ -641,6 +646,9 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 		if readable {
 			var raw string
 			ev.Screen, raw = a.col.Screen(r.Context(), pane, every-100*time.Millisecond)
+			if ansi {
+				ev.Screen, ev.ANSI, ev.Cols = raw, true, a.col.paneCols(r.Context(), pane)
+			}
 			ev.LiveStatus = a.col.liveStatus(pane)
 			if ev.LiveStatus == "blocked" {
 				ev.Prompt = ParsePrompt(raw, a.col.paneAgent(pane))

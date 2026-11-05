@@ -272,6 +272,7 @@ type Collector struct {
 	owners     map[string]paneOwner // pane id -> thread or coordinator, for sys
 	screens    map[string]screenHit
 	history    map[string]screenHit
+	cols       map[string]colsHit     // pane -> its width, from herdr's layout
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
 	burst      map[string]time.Time   // pane -> read its screen fast until
 	prompts    map[string]*Prompt     // blocked pane -> the prompt it shows
@@ -296,7 +297,7 @@ type transcriptHit struct {
 
 type screenHit struct {
 	text  string
-	raw   string // with escapes (live reads), for the prompt parser
+	raw   string // with escapes, for the prompt parser and screen boxes
 	lines int    // lines asked for (history reads)
 	at    time.Time
 }
@@ -315,6 +316,7 @@ func NewCollector(cfg Config) *Collector {
 		owners:       map[string]paneOwner{},
 		screens:      map[string]screenHit{},
 		history:      map[string]screenHit{},
+		cols:         map[string]colsHit{},
 		paneLocks:    map[string]*sync.Mutex{},
 		burst:        map[string]time.Time{},
 		prompts:      map[string]*Prompt{},
@@ -1258,16 +1260,16 @@ func (c *Collector) lockPane(pane string) func() {
 	return l.Unlock
 }
 
-// cached returns the hit for pane in m if it is younger than maxAge and
-// holds at least lines lines (0: any).
-func (c *Collector) cached(m map[string]screenHit, pane string, maxAge time.Duration, lines int) (string, bool) {
+// cachedLines returns the hit for pane in m if it is younger than maxAge
+// and holds at least lines lines (0: any).
+func (c *Collector) cachedLines(m map[string]screenHit, pane string, maxAge time.Duration, lines int) (screenHit, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	h, ok := m[pane]
 	if !ok || time.Since(h.at) >= maxAge || h.lines < lines {
-		return "", false
+		return screenHit{}, false
 	}
-	return h.text, true
+	return h, true
 }
 
 func (c *Collector) store(m map[string]screenHit, pane string, h screenHit) {
@@ -1288,30 +1290,13 @@ func (c *Collector) store(m map[string]screenHit, pane string, h screenHit) {
 	}
 }
 
-// readPane reads the newest lines of a pane. "recent", not "visible":
-// visible is the pane's viewport, which misses the newest lines whenever
-// someone scrolled the pane up in herdr.
-// An alternate-screen agent (Codex) has no "recent" lines: then the screen
-// herdr's detection sees is all there is.
-func (c *Collector) readPane(ctx context.Context, pane string, lines int) string {
-	read := func(src string) string {
-		out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", src, "--lines", strconv.Itoa(lines))
-		if err != nil {
-			return ""
-		}
-		return stripANSI(string(out))
-	}
-	text := read("recent")
-	if strings.TrimSpace(text) == "" {
-		text = read("detection")
-	}
-	return text
-}
-
-// readPaneANSI is readPane keeping the escapes: the prompt parser needs
-// colours to see a highlight drawn only as a background (opencode). An
-// agent on the alternate screen (Codex) has no "recent" lines at all, so a
-// blank read falls back to the screen herdr's own detection sees.
+// readPaneANSI reads the newest lines of a pane with their escapes: the
+// prompt parser needs colours to see a highlight drawn only as a background
+// (opencode), and screen boxes render them; the plain text is stripped from
+// the same read. "recent", not "visible": visible is the pane's viewport,
+// which misses the newest lines whenever someone scrolled the pane up in
+// herdr. An agent on the alternate screen (Codex) has no "recent" lines at
+// all, so a blank read falls back to the screen herdr's own detection sees.
 func (c *Collector) readPaneANSI(ctx context.Context, pane string, lines int) string {
 	read := func(src string) string {
 		out, err := run(ctx, 4*time.Second, c.cfg.Herdr, "pane", "read", pane, "--source", src, "--lines", strconv.Itoa(lines), "--format", "ansi")
@@ -1340,7 +1325,9 @@ func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duratio
 	}
 	raw := c.readPaneANSI(ctx, pane, liveLines)
 	text := stripANSI(raw)
-	c.store(c.screens, pane, screenHit{text: text, raw: raw, at: time.Now()})
+	if ctx.Err() == nil { // a cancelled read is not the pane's screen
+		c.store(c.screens, pane, screenHit{text: text, raw: raw, at: time.Now()})
+	}
 	return text, raw
 }
 
@@ -1400,7 +1387,9 @@ func (c *Collector) refreshPrompts(ctx context.Context) {
 func (c *Collector) FreshPrompt(ctx context.Context, pane, agent string) *Prompt {
 	defer c.lockPane(pane)()
 	raw := c.readPaneANSI(ctx, pane, liveLines)
-	c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
+	if ctx.Err() == nil {
+		c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
+	}
 	return c.longPrompt(ctx, pane, agent, ParsePrompt(raw, agent))
 }
 
@@ -1440,19 +1429,28 @@ func (c *Collector) paneAgent(pane string) string {
 }
 
 // History reads the last n lines of a pane (n capped at maxHistory) for a
-// reader scrolling up. A recent read of at least n lines is reused.
-func (c *Collector) History(ctx context.Context, pane string, n int) string {
+// reader scrolling up, with escapes if ansi. A recent read of at least n
+// lines is reused, whichever format it was asked in: one read keeps both.
+func (c *Collector) History(ctx context.Context, pane string, n int, ansi bool) string {
 	n = max(1, min(n, maxHistory))
-	text, ok := c.cached(c.history, pane, historyAge, n)
+	h, ok := c.cachedLines(c.history, pane, historyAge, n)
 	if !ok {
 		unlock := c.lockPane(pane)
-		if text, ok = c.cached(c.history, pane, historyAge, n); !ok {
-			text = c.readPane(ctx, pane, n)
-			c.store(c.history, pane, screenHit{text: text, lines: n, at: time.Now()})
+		if h, ok = c.cachedLines(c.history, pane, historyAge, n); !ok {
+			raw := c.readPaneANSI(ctx, pane, n)
+			h = screenHit{text: stripANSI(raw), raw: raw, lines: n, at: time.Now()}
+			// A read cut short by the asker leaving is not the pane's
+			// history: the next asker would get it blank.
+			if ctx.Err() == nil {
+				c.store(c.history, pane, h)
+			}
 		}
 		unlock()
 	}
-	return lastLines(text, n)
+	if ansi {
+		return lastLinesANSI(h.raw, n)
+	}
+	return lastLines(h.text, n)
 }
 
 // lastLines is the last n lines of s, trailing blank lines dropped.
@@ -1465,6 +1463,69 @@ func lastLines(s string, n int) string {
 	return strings.Join(ls[max(0, len(ls)-n):], "\n")
 }
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r`)
+// lastLinesANSI is lastLines of text with escapes: a line is blank when
+// nothing but escapes and spaces are on it.
+func lastLinesANSI(s string, n int) string {
+	ls := strings.Split(s, "\n")
+	for len(ls) > 0 && strings.TrimSpace(stripANSI(ls[len(ls)-1])) == "" {
+		ls = ls[:len(ls)-1]
+	}
+	return strings.Join(ls[max(0, len(ls)-n):], "\n")
+}
+
+// paneCols is a pane's width in columns from herdr's layout of its tab, 0
+// if unknown. Asked at most once a minute per pane, and only for screens
+// shown with their escapes.
+func (c *Collector) paneCols(ctx context.Context, pane string) int {
+	c.mu.Lock()
+	h, ok := c.cols[pane]
+	c.mu.Unlock()
+	if ok && time.Since(h.at) < colsAge {
+		return h.cols
+	}
+	cols := 0
+	if out, err := run(ctx, 3*time.Second, c.cfg.Herdr, "pane", "layout", "--pane", pane); err == nil {
+		var doc struct {
+			Result struct {
+				Layout struct {
+					Panes []struct {
+						ID   string `json:"pane_id"`
+						Rect struct {
+							Width int `json:"width"`
+						} `json:"rect"`
+					} `json:"panes"`
+				} `json:"layout"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(out, &doc) == nil {
+			for _, p := range doc.Result.Layout.Panes {
+				if p.ID == pane && p.Rect.Width > 0 && p.Rect.Width < 2000 {
+					cols = p.Rect.Width
+				}
+			}
+		}
+	}
+	c.mu.Lock()
+	c.cols[pane] = colsHit{cols: cols, at: time.Now()}
+	for k, h := range c.cols {
+		if time.Since(h.at) > 5*colsAge {
+			delete(c.cols, k)
+		}
+	}
+	c.mu.Unlock()
+	return cols
+}
+
+const colsAge = time.Minute
+
+type colsHit struct {
+	cols int
+	at   time.Time
+}
+
+// ansiRe matches the escapes in a pane read: CSI (SGR in either the ; or
+// the : form), strings (OSC titles and links, DCS, APC, PM, SOS) and the
+// short ESC sequences.
+var ansiRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()*+#%].|\x1b[^\[\]P_^X()*+#%]|\r`)
 
 func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }

@@ -76,6 +76,6 @@ export function stubLogger(path) {
   return {
     lines,
     mark: () => lines().length,
-    since: (m) => lines().slice(m).filter((l) => !/ (list|pane read|pr list|progress --pane|safety show)( |$)/.test(l)),
+    since: (m) => lines().slice(m).filter((l) => !/ (list|pane read|pane layout|pr list|progress --pane|safety show)( |$)/.test(l)),
   };
 }

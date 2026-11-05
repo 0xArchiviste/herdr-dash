@@ -178,7 +178,7 @@ async function post(path, body, { headers = {}, url = base } = {}) {
 // Lines the stubs logged since mark().
 const logLines = () => readFileSync(stubLog, "utf8").split("\n").filter(Boolean);
 const mark = () => logLines().length;
-const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pr list|progress --pane|safety show)( |$)/.test(l));
+const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pane layout|pr list|progress --pane|safety show)( |$)/.test(l));
 
 async function getJSON(path) {
   const r = await fetch(base + path);
@@ -996,7 +996,7 @@ test("history API: capped, cached, one read per pane at a time, refuses unreadab
 
   const big = await getJSON("/api/thread/alpha/t-0002/history?lines=999999");
   assert.equal(big.lines, 2000, "capped");
-  assert.ok(!logLines().some((l) => /--lines (\d{5,}|[3-9]\d{3}|2\d{3})/.test(l) && !/--lines 2000$/.test(l)), "no read past 2000");
+  assert.ok(!logLines().some((l) => /--lines (\d{5,}|[3-9]\d{3}|2\d{3})/.test(l) && !/--lines 2000( --format ansi)?$/.test(l)), "no read past 2000");
   for (const q of ["lines=abc", "lines=-5", "lines=1e9", "lines=10%20--raw"]) {
     assert.equal((await fetch(base + "/api/thread/alpha/t-0002/history?" + q)).status, 400, q);
   }
@@ -1286,6 +1286,7 @@ test("only allow-listed commands were run", () => {
     /^herdr-projects --root \S+ list$/,
     /^herdr-projects --root \S+ thread list \S+ --json$/,
     /^herdr pane list$/,
+    /^herdr pane layout --pane \S+$/,
     /^herdr pane read \S+ --source recent --lines \d+( --format ansi)?$/,
     /^gh pr list --repo \S+ --state all --limit \d+ --json number,url,state,headRefName$/,
     // Writes, through herdr-projects only:
