@@ -21,6 +21,7 @@ vet:
 	node --check static/terminal.js
 	node --check static/threads.js
 	node --check static/routing.js
+	node --check static/fleet.js
 	node --check static/attach.js
 
 test:

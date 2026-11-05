@@ -255,6 +255,7 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--pprof-addr` | `HERDR_DASH_PPROF_ADDR` | off; a loopback address such as `127.0.0.1:6060` serves Go's profiler |
 | `--proc` | `HERDR_DASH_PROC` | `/proc`; `off` hides machine and process numbers (see [System](#system)) |
 | `--routing-config` | `HERDR_DASH_ROUTING_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/routing.toml`, else `~/.config/herdr-projects/routing.toml` (see [Agent routing](#agent-routing-preview)) |
+| `--fleet-config` | `HERDR_DASH_FLEET_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/fleet.toml`, else `~/.config/herdr-projects/fleet.toml` (see [Master window](#master-window)) |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -535,6 +536,33 @@ Samples ride the collector's pane tick (`--poll`) and run only while some
 page holds the event stream open. Pages close it while hidden. A frame goes
 out only when it changed. Without `/proc` (macOS, Windows) or with `--proc off`,
 the strip says the numbers are unavailable; agents and the queue still show.
+
+## Master window
+
+The **Master** button (filter bar) opens the whole fleet in one window,
+read-only: a ranked **Attention** list on top (blocked or waiting
+coordinators, threads waiting on you, failed or stuck launches, missing or
+exited coordinators, review piles of 10 or more unacked reports; priority
+projects rank first within a kind), and a table with one row per project:
+coordinator state, threads per stage, needs-you count, unacked reports,
+failed or stuck launches, the priority flag, CPU and RAM of its agents (from
+the System strip) and last activity. Sort by any column, filter by state or
+name; the project focus applies. Click a row to open that coordinator's
+window; tick rows (Shift for a range) to copy a plain-text summary. A narrow
+window or a phone shows cards. It is a dockable window like the others.
+
+`GET /api/fleet` serves it from what Dash already holds (the snapshot and
+the last `/proc` frame), so it runs no command; the page refetches when the
+snapshot or the system frame changes. The table is built by
+`internal/fleet` against a small `Source` interface, so the planned Go read
+model can feed it directly. The priority flag comes from `fleet.toml`
+(display only for now):
+
+```toml
+version = 1
+[projects.my-project]
+priority = true
+```
 
 ## Agent routing (preview)
 
