@@ -7,7 +7,9 @@ echo "herdr-projects $*" >> "${STUB_LOG:-/dev/null}"
 [ "$1" = "--root" ] && shift 2
 logstdin() { local s; s="$(cat)"; printf 'stdin: %s\n' "${s//$'\n'/\\n}" >> "${STUB_LOG:-/dev/null}"; }
 case "$1 $2" in
-  "list "*|"list") printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tpaused\tWorking: 1\n' ;;
+  "list "*|"list")
+    # A generated fleet (e2e/fleet-fixtures.mjs) brings its own list.
+    if [ -f "$D/list.tsv" ]; then cat "$D/list.tsv"; else printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tpaused\tWorking: 1\n'; fi ;;
   "thread list")
     f="$D/thread-list-$3.json"
     [ -f "$f" ] || { echo "error: no project $3" >&2; exit 1; }

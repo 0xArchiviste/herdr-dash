@@ -24,6 +24,7 @@ type Config struct {
 	SessionProfiles string
 	OpencodeDB      string
 	RoutingConfig   string // routing.toml (internal/routing); stage 1 previews only
+	FleetConfig     string // fleet.toml (internal/fleet); the Master window reads it
 
 	Auth          string
 	ReadOnly      bool
@@ -226,6 +227,8 @@ type Thread struct {
 	Prompt       *Prompt  `json:"prompt,omitempty"`
 	// Images says whether the chat box may send images, and why not.
 	Images ImageSupport `json:"images"`
+
+	hasReport bool // a report to acknowledge (the Master window counts unacked ones)
 }
 
 type Snapshot struct {
@@ -972,8 +975,9 @@ func (c *Collector) rebuild() {
 				PaneID: t.PaneID, TabID: t.TabID, PaneAlive: alive, Branch: t.Branch,
 				PR: t.PR, PRState: t.PRState, Created: t.Created, Updated: t.Updated,
 				Note: t.Note, Error: t.Error, Next: t.Next,
-				Acked:  t.ReportHash != "" && t.ReportHash == t.AckedReportHash,
-				Images: threadImageTarget(slug, t).support(),
+				Acked:     t.ReportHash != "" && t.ReportHash == t.AckedReportHash,
+				hasReport: t.ReportHash != "",
+				Images:    threadImageTarget(slug, t).support(),
 			}
 			profile := t.Profile
 			if profile == "" {
