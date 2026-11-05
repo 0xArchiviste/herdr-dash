@@ -430,6 +430,7 @@ test("only allow-listed commands ran; coordinator keys only on its pane", () => 
   const allowed = [
     /^herdr-projects --root \S+ (list|thread list \S+ --json|progress --pane \S+|safety show \S+)$/,
     /^herdr pane list$/,
+    /^herdr pane layout --pane \S+$/,
     /^herdr pane read \S+ --source (recent|detection) --lines \d+( --format ansi)?$/,
     /^gh pr list /,
     /^herdr-projects --root \S+ thread keys [a-z]+ t-\d{4}( (enter|esc|up|down|left|right|tab|space|backspace|y|n|\d))+( --text=.*)?$/,

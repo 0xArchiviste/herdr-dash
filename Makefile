@@ -8,6 +8,7 @@ vet:
 	GOOS=windows go vet -tags desktop,production .
 	node --check static/app.js
 	node --check static/search.js
+	node --check static/ansi.js
 	node --check static/scrollback.js
 	node --check static/usage.js
 	node --check static/voice.js

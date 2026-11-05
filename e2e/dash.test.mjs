@@ -178,7 +178,7 @@ async function post(path, body, { headers = {}, url = base } = {}) {
 // Lines the stubs logged since mark().
 const logLines = () => readFileSync(stubLog, "utf8").split("\n").filter(Boolean);
 const mark = () => logLines().length;
-const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pr list|progress --pane|safety show)( |$)/.test(l));
+const since = (m) => logLines().slice(m).filter((l) => !/ (list|pane read|pane layout|pr list|progress --pane|safety show)( |$)/.test(l));
 
 async function getJSON(path) {
   const r = await fetch(base + path);
@@ -1286,6 +1286,7 @@ test("only allow-listed commands were run", () => {
     /^herdr-projects --root \S+ list$/,
     /^herdr-projects --root \S+ thread list \S+ --json$/,
     /^herdr pane list$/,
+    /^herdr pane layout --pane \S+$/,
     /^herdr pane read \S+ --source recent --lines \d+( --format ansi)?$/,
     /^gh pr list --repo \S+ --state all --limit \d+ --json number,url,state,headRefName$/,
     // Writes, through herdr-projects only:

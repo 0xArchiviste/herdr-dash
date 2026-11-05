@@ -1,0 +1,26 @@
+[32mdev@box[0m:[34m~/acme-widgets[0m$ ls -la --color=always[0m
+total 16
+drwxr-xr-x 3 dev dev 4096 Nov  4 10:00 [01;34m.[0m
+drwxr-xr-x 9 dev dev 4096 Nov  4 10:00 [01;34m..[0m
+-rwxr-xr-x 1 dev dev   48 Nov  4 10:00 [01;32mbuild.sh[0m
+-rw-r--r-- 1 dev dev   20 Nov  4 10:00 README.md
+[32mdev@box[0m:[34m~/acme-widgets[0m$ git log --oneline --decorate -2[0m
+[33m4f2c9e1 ([1;36mHEAD -> [1;32mmain[33m)[m Add widgets[0m
+[33m1a0b3c7[m init demo[0m
+[32mdev@box[0m:[34m~/acme-widgets[0m$ git diff[0m
+[1mdiff --git a/main.go b/main.go[m[0m
+[36m@@ -1,3 +1,3 @@[m[0m
+[31m-func main() { println("hello") }[m[0m
+[32m+func main() { println("hello, widgets") }[m[0m
+[32mdev@box[0m:[34m~/acme-widgets[0m$ ./attrs.sh[0m
+[1mbold[0m [2mdim[0m [3mitalic[0m [4munder[0m [7minverse[0m [9mstrike[0m [38;5;208m256-orange[0m
+[38;2;100;200;255mtruecolor[0m [44;97mon-blue[0m [30mblack-on-default[0m [1;31mbold-red[0m
+[38;5;34mcube-green[0m [38;5;244mgrey-244[0m [48;5;52m bg-52 [0m [38:2::255:0:255mcolon-magenta[0m
+	TAB|after one tab
+日本語 wide 🙂 emoji|
+abcdefgh wide 12345 emoji|
+[32mdev@box[0m:[34m~/acme-widgets[0m$ grep -n main main.go[0m
+[32m[K3[m[K[36m[K:[m[Kfunc [01;31m[Kmain[m[K() { println("hello") }[0m
+[32mdev@box[0m:[34m~/acme-widgets[0m$ ./ruler.sh[0m
+---------------------------------------------------------------------------|
+[32mdev@box[0m:[34m~/acme-widgets[0m$ [0m

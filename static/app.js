@@ -1040,7 +1040,7 @@
       detailTimer = setInterval(() => loadProject(slug), 10000);
       // Always streamed while open: the server re-identifies the pane on each
       // read, so a coordinator that starts later shows up, and none is guessed.
-      screenES = new EventSource(`/api/project/${encodeURIComponent(slug)}/screen`);
+      screenES = new EventSource(`/api/project/${encodeURIComponent(slug)}/screen?ansi=1`);
       screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
       return;
     }
@@ -1048,7 +1048,7 @@
     const t = state.threads.find((x) => x.key === key);
     if (t && t.pane_alive && t.state !== "resolved") {
       // The screen streams over SSE: every few seconds, faster after a send.
-      screenES = new EventSource(tpath(key, "screen"));
+      screenES = new EventSource(tpath(key, "screen") + "?ansi=1");
       screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
     }
   }
@@ -1142,7 +1142,7 @@
     return term.el;
   }
   function screenBox(historyURL, key) {
-    screen = HDScrollback.box((n) => `${historyURL}?lines=${n}`, () => selected === key);
+    screen = HDScrollback.box((n) => `${historyURL}?lines=${n}`, () => selected === key, "panel");
     return screen.el;
   }
 
@@ -1151,7 +1151,7 @@
   function showScreen(d) {
     const box = $("#p-chat");
     if (!box?.querySelector(".screen") || !screen) return;
-    screen.live(d.screen);
+    screen.live(d.screen, d);
     live = d.live_status || "";
     const blocked = live === "blocked";
     promptCtl?.update(blocked ? d.prompt : null);

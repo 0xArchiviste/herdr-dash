@@ -536,7 +536,7 @@ test("intent API is rate limited", async () => {
   assert.ok(codes.includes(429), codes.join(","));
   assert.equal(codes[0], 200);
   // No herdr-projects writes outside the allow-list happened in this file.
-  const allowed = [/ list$/, / thread list \S+ --json$/, /^herdr pane (list|read)/, /^gh pr list/, / progress --pane /, / safety show /,
+  const allowed = [/ list$/, / thread list \S+ --json$/, /^herdr pane (list|read|layout --pane)/, /^gh pr list/, / progress --pane /, / safety show /,
     / thread (ack|resolve) alpha t-000[36]$/, / thread prompt alpha t-0001 --text-file -$/, /^stdin: please add tests$/];
   for (const c of log.lines()) assert.ok(allowed.some((re) => re.test(c)), "unexpected: " + c);
   writeFileSync(join(artifacts, "voice-calls.log"), readFileSync(stubLog, "utf8"));

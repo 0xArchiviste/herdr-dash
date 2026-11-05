@@ -92,5 +92,11 @@ case "$1 $2" in
       printf '%s\n' "$4" | tr -d '\000-\010\013-\037' | sed 's/\[20[01]~//g' | sed 's/^/$ /' >> "$f"
     fi
     echo "ok" ;;
+  "pane layout")
+    # The pane's tab layout: STUB_SCREENS/<pane>.cols is the pane's width (80 if none).
+    [ "$3" = "--pane" ] || { echo "stub: layout needs --pane" >&2; exit 2; }
+    pane="$4"; c="${STUB_SCREENS:-/nonexistent}/${pane/:/_}.cols"
+    w=80; [ -f "$c" ] && w="$(cat "$c")"
+    printf '{"id":"cli:pane:layout","result":{"layout":{"area":{"height":40,"width":%s,"x":0,"y":0},"focused_pane_id":"%s","panes":[{"focused":true,"pane_id":"%s","rect":{"height":40,"width":%s,"x":0,"y":0}}],"splits":[],"tab_id":"x:t1","workspace_id":"x","zoomed":false},"type":"pane_layout"}}\n' "$w" "$pane" "$pane" "$w" ;;
   *) echo "stub: unsupported: $*" >&2; exit 2 ;;
 esac

@@ -103,7 +103,7 @@ window.HDThreadWin = (() => {
         send.addEventListener("click", go);
         input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
         const card = el("div", { class: "tw-prompt" });
-        screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id));
+        screen = window.HDScrollback.box((n) => `${P.history}?lines=${n}`, () => HDWin.has(id), id);
         const chatRow = a.live || key.startsWith("hub:") ? el("div", { class: "chat-row" }, input, att?.button, send) : el("p", { class: "muted", text: "No live pane: nothing to chat with." });
         // A pane whose agent exited: a command line and the way back (static/terminal.js).
         const term = a.live || key.startsWith("hub:") ? window.HDTerm?.mount(key, { onExited: (x) => { chatRow.hidden = x; } }) : null;
@@ -136,10 +136,10 @@ window.HDThreadWin = (() => {
         const start = () => {
           paused.hidden = true;
           if (es || document.hidden || !(a.live || key.startsWith("hub:"))) return;
-          es = new EventSource(P.screen);
+          es = new EventSource(P.screen + "?ansi=1");
           es.addEventListener("screen", (e) => {
             const d = JSON.parse(e.data);
-            screen.live(d.screen);
+            screen.live(d.screen, d);
             blocked = d.live_status === "blocked";
             quick.hidden = !blocked;
             ctl?.update(blocked ? d.prompt : null);

@@ -171,6 +171,12 @@ test("demo page: blocked thread shows its prompt and quick replies, hub opens th
   await page.locator('#needs .group[data-state="blocked"] .chip:not(.coord)').first().click();
   await page.waitForSelector("#panel.open .quick:not([hidden])");
   assert.match(await page.locator("#panel .screen").innerText(), /Do you want to proceed\?/);
+  // The screen in the colours its agent draws (static/ansi.js): green tool bullets.
+  const bullet = await page.locator("#panel .screen span").evaluateAll((ss) => {
+    const s = ss.find((x) => x.textContent === "●");
+    return s && getComputedStyle(s).color;
+  });
+  assert.equal(bullet, "rgb(78, 186, 101)");
 
   // 6: a quick reply lands on the demo stub and says so.
   await page.locator('#panel .quick button[data-key="1"]').click();

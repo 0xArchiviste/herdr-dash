@@ -1,0 +1,32 @@
+[2m╭──────────────────────────────────────────────────────────────────────────╮[0m
+[2m│[0m [1m>_ OpenAI Codex[0m [2m(v0.0.0)[0m                                                 [2m│[0m
+[2m│[0m                                                                          [2m│[0m
+[2m│[0m [2mmodel:[0m     gpt-demo   [36m/model[0m [2mto change[0m                                   [2m│[0m
+[2m│[0m [2mdirectory:[0m ~/src/acme-widgets                                            [2m│[0m
+[2m╰──────────────────────────────────────────────────────────────────────────╯[0m
+
+[48;5;236m› Read README.md and main.go, then summarise them.[K[0m
+
+[32m•[0m [1mExplored[0m
+  [2m└[0m [36mRead[0m README.md, main.go[0m
+
+[32m•[0m [1mRan[0m [35mwc -l README.md main.go[0m
+  [2m│[0m        2 README.md[0m
+  [2m│[0m        3 main.go[0m
+  [2m└[0m        5 total[0m
+
+[32m•[0m Two small files:[0m
+
+  [1m| File      | Lines |[0m
+  | --------- | ----- |
+  | README.md | 2     |
+  | main.go   | 3     |
+
+  [4mmain.go[24m prints [33mhello[39m; README names the demo.[0m
+  [9mold note[29m [7m inverse [27m [31merror[0m [91mbright red[0m
+
+[33m•[0m [1mWorking[0m [2m(8s • esc to interrupt)[0m
+
+[1m›[0m [2mAsk Codex to do anything[0m
+
+  [2m? for shortcuts[0m                                          [2m100% context left[0m
