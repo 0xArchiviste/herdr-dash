@@ -95,3 +95,55 @@
   .fl-scroll { display: none; }
   .fl-cards { display: flex; }
 }
+
+/* Stage 1b: views, bulk actions, the preview dialog, the queue, the audit. */
+.fl-tabs { display: flex; gap: 4px; }
+.fl-tabs button { all: unset; cursor: pointer; padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--bblack); border: 1px solid transparent; }
+.fl-tabs button.on { color: var(--bwhite); background: var(--g1); border-color: var(--g4); }
+.fl-tabs button:focus-visible { outline: 2px solid var(--bblue); }
+.fl-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.fl-actions button[data-tier="2"]::after { content: " ·2"; color: var(--borange); font-size: 10px; }
+.fl-mode { display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 999px; vertical-align: middle; margin-right: 4px; border: 1px dashed var(--bcyan); color: var(--bcyan); }
+.fl-mode[data-mode="off"] { border-color: var(--g5); color: var(--bblack); }
+
+.fl-queue-box h3 { color: var(--s-waiting); }
+.fl-queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.fl-queue li { display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 6px; background: var(--g1); min-width: 0; }
+.fl-qwhy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--white); }
+
+.fl-dlg { position: absolute; inset: 34px 6px 6px; z-index: 5; overflow: auto; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--g4); border-radius: 9px; background: var(--black); box-shadow: 0 10px 30px #0009; font-size: 13px; }
+.fl-dlg-head { display: flex; align-items: center; gap: 10px; }
+.fl-dlg-head b { flex: 1; min-width: 0; }
+.fl-form { display: flex; flex-direction: column; gap: 5px; }
+.fl-form.fl-row { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.fl-form textarea, .fl-form input, .fl-form select, .fl-confirm input { background: var(--g1); color: var(--bwhite); border: 1px solid var(--g4); border-radius: 6px; padding: 4px 7px; font: inherit; min-width: 0; max-width: 100%; }
+.fl-form textarea { resize: vertical; width: 100%; box-sizing: border-box; }
+.fl-hint { margin: 0; font-size: 12px; color: var(--bblack); overflow-wrap: anywhere; }
+.fl-hint q, .fl-sendtext { color: var(--bwhite); }
+.fl-sum { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; font-size: 12px; }
+.fl-tier { color: var(--borange); }
+.fl-tier[data-tier="0"] { color: var(--s-working); }
+.fl-hash, .fl-expiry { color: var(--bblack); font-variant-numeric: tabular-nums; }
+.fl-plan, .fl-results { width: 100%; border-collapse: collapse; }
+.fl-plan td, .fl-results td { padding: 4px 6px; border-bottom: 1px solid var(--g2); vertical-align: top; }
+.fl-plan td:first-child, .fl-results td:first-child { white-space: nowrap; }
+.fl-plan small { display: block; color: var(--bblack); font-size: 11px; }
+.fl-what code { font-size: 11.5px; color: var(--bwhite); overflow-wrap: anywhere; }
+.fl-change { color: var(--white); font-size: 12px; }
+.fl-reason { color: var(--bblack); font-size: 12px; }
+.fl-bad { color: var(--bred); }
+.fl-undo-note { color: var(--bcyan); font-size: 11.5px; }
+.fl-out { margin: 2px 0 0; white-space: pre-wrap; font-size: 11.5px; color: var(--white); max-height: 8em; overflow: auto; }
+.fl-verdict { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--g5); white-space: nowrap; }
+.fl-verdict[data-verdict="will"], .fl-verdict[data-result="ok"] { border-color: var(--s-working); color: var(--s-working); }
+.fl-verdict[data-verdict="queue"], .fl-verdict[data-result="queued"] { border-color: var(--s-waiting); color: var(--s-waiting); }
+.fl-verdict[data-verdict="refuse"], .fl-verdict[data-result="refused"], .fl-verdict[data-result="not-attempted"] { color: var(--bblack); border-style: dashed; }
+.fl-verdict[data-result="failed"] { border-color: var(--red); color: var(--bred); }
+.fl-verdict[data-result="pending"] { color: var(--bblack); }
+.fl-dlg-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.fl-go { font-weight: 700; }
+.fl-go:disabled { opacity: .45; cursor: not-allowed; }
+.fl-audit td { white-space: normal; vertical-align: top; }
+.fl-audit tbody tr { cursor: default; }
+.fl-form #fl-preview { align-self: flex-start; }

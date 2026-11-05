@@ -25,6 +25,8 @@ type Config struct {
 	OpencodeDB      string
 	RoutingConfig   string // routing.toml (internal/routing); stage 1 previews only
 	FleetConfig     string // fleet.toml (internal/fleet); the Master window reads it
+	FleetAudit      string // the fleet audit log; default <root>/.fleet/audit.jsonl
+	FleetConfirmTTL time.Duration
 
 	Auth          string
 	ReadOnly      bool
@@ -150,16 +152,19 @@ type coordRecord struct {
 type Coordinator struct {
 	Session SessionDetails `json:"session"`
 
-	PaneID       string       `json:"pane_id"`
-	TabID        string       `json:"tab_id"`
-	Agent        string       `json:"agent"`
-	LiveStatus   string       `json:"live_status"`
-	State        string       `json:"state"`
-	Activity     string       `json:"activity"`
-	LastActivity string       `json:"last_activity"`
-	NeedsYou     bool         `json:"needs_you"`
-	Prompt       *Prompt      `json:"prompt,omitempty"`
-	Images       ImageSupport `json:"images"`
+	PaneID       string `json:"pane_id"`
+	TabID        string `json:"tab_id"`
+	Agent        string `json:"agent"`
+	LiveStatus   string `json:"live_status"`
+	State        string `json:"state"`
+	Activity     string `json:"activity"`
+	LastActivity string `json:"last_activity"`
+	// StateSince: when its live state last changed (the ticker's
+	// pair_since), for the Master window's "quiet for 60 s" check.
+	StateSince string       `json:"state_since,omitempty"`
+	NeedsYou   bool         `json:"needs_you"`
+	Prompt     *Prompt      `json:"prompt,omitempty"`
+	Images     ImageSupport `json:"images"`
 	// AgentExited: the pane is there but its agent is not (crashed, quit);
 	// Resumable: `open` would resume the recorded session.
 	AgentExited bool `json:"agent_exited,omitempty"`
@@ -732,6 +737,9 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 		co.Prompt = c.prompts[pane.PaneID]
 	}
 	last := parseTime(since)
+	if !last.IsZero() {
+		co.StateSince = last.UTC().Format(time.RFC3339)
+	}
 	if v := c.lastTranscript(pane); v.After(last) {
 		last = v
 	}

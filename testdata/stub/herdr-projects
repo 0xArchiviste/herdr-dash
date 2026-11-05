@@ -4,9 +4,43 @@
 # way the real binary does so the UI's error paths can be driven.
 D="$(cd "$(dirname "$0")" && pwd)"
 echo "herdr-projects $*" >> "${STUB_LOG:-/dev/null}"
-[ "$1" = "--root" ] && shift 2
+ROOT=""
+[ "$1" = "--root" ] && { ROOT="$2"; shift 2; }
 logstdin() { local s; s="$(cat)"; printf 'stdin: %s\n' "${s//$'\n'/\\n}" >> "${STUB_LOG:-/dev/null}"; }
+# The Master window's bulk actions (stage 1b): a file fail-<command>-<slug>
+# next to this script makes that command fail for that project, so the E2E
+# can trip the circuit breaker.
+for c in pause resume set sweep open coordinator; do
+  if [ "$1" = "$c" ]; then
+    s="$2"; [ "$c" = coordinator ] && s="$3"
+    if [ -f "$D/fail-$c-$s" ]; then [ "$c" = coordinator ] && logstdin; echo "herdr-projects: stub fails $c for $s" >&2; exit 1; fi
+  fi
+done
+# setstatus SLUG STATUS rewrites a generated fleet's list.tsv, so a pause or
+# resume shows in the next `list`, and touches PROJECT.md as the real one
+# writes it (Dash re-lists when a PROJECT.md changes).
+setstatus() { [ -f "$D/list.tsv" ] && sed -i "s#^$1\t[a-z]*\t#$1\t$2\t#" "$D/list.tsv"; [ -n "$ROOT" ] && touch "$ROOT/$1/PROJECT.md"; }
 case "$1 $2" in
+  "pause "*)
+    setstatus "$2" paused
+    echo "paused $2" ;;
+  "resume "*)
+    setstatus "$2" active
+    echo "resumed $2" ;;
+  "set "*)
+    # Writes PROJECT.md's front matter like the real one: replace the key, or
+    # add it before the closing +++.
+    f="$ROOT/$2/PROJECT.md"
+    [ -f "$f" ] || { echo "error: no project $2" >&2; exit 1; }
+    case "$3" in
+      max_parallel_threads|nudge|mute) ;;
+      *) echo "error: unknown setting $3" >&2; exit 1 ;;
+    esac
+    if grep -q "^$3 = " "$f"; then sed -i "s#^$3 = .*#$3 = $4#" "$f"; else awk -v l="$3 = $4" 'NR>1 && /^\+\+\+$/ && !d {print l; d=1} {print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi
+    echo "$2: $3 = $4" ;;
+  "sweep "*)
+    [ "$3" = "--dry-run" ] || { echo "stub: sweep without --dry-run refused" >&2; exit 2; }
+    echo "$2: would remove worktree hp/$2/t-0001 (merged), tab $2:t9 (no pane)" ;;
   "list "*|"list")
     # A generated fleet (e2e/fleet-fixtures.mjs) brings its own list.
     if [ -f "$D/list.tsv" ]; then cat "$D/list.tsv"; else printf 'alpha\tactive\tWorking: 1\nbeta\tactive\tLanding: 1\ngamma\tpaused\tWorking: 1\n'; fi ;;

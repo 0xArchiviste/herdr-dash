@@ -23,7 +23,7 @@
 //      coordinator window; clicking a checkbox opens it.
 //  M7. Multi-select: shift-click does not select a range, select-all takes
 //      rows hidden by a filter, the copied summary lacks a selected project
-//      or includes one not selected. No bulk action exists in 1a.
+//      or includes one not selected.
 //  M8. Phone: a table that scrolls sideways instead of cards.
 //  M9. The window costs CLI calls: /api/fleet or the open window runs
 //      herdr-projects, herdr or gh, or the page polls /api/fleet on a timer
@@ -273,9 +273,12 @@ test("multi-select and copy a summary (M7)", async () => {
   const sel = () => page.$$eval(`${W} #fl-table tr[data-slug].sel`, (rs) => rs.map((r) => r.dataset.slug));
   assert.deepEqual(await sel(), range);
   assert.match(await page.textContent(`${W} #fl-count`), /5 selected/);
-  // No bulk actions in 1a: the only selection action is the copy.
+  // The selection bar copies and clears; the bulk actions (stage 1b,
+  // fleet-actions.test.mjs) sit in their own toolbar, none of them tier 3.
   const acts = await page.$$eval(`${W} .fl-selbar button`, (bs) => bs.map((b) => b.id));
   assert.deepEqual(acts.sort(), ["fl-clear", "fl-copy"]);
+  const bulk = await page.$$eval(`${W} .fl-actions button`, (bs) => bs.map((b) => b.dataset.op));
+  assert.deepEqual(bulk.sort(), ["message", "nudge", "open", "pause", "priority", "resume", "set", "sweep"]);
   await page.click(`${W} #fl-copy`);
   const text = await page.evaluate(() => navigator.clipboard.readText());
   for (const s of range) assert.ok(text.includes(s), `${s} in the summary`);
@@ -327,7 +330,7 @@ test("no extra CLI calls (M9)", async () => {
     await sleep(1500); // the first tick's prompt reads settle
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const fleetGets = [];
-    page.on("request", (r) => { if (r.url().includes("/api/fleet")) fleetGets.push(Date.now()); });
+    page.on("request", (r) => { if (new URL(r.url()).pathname === "/api/fleet") fleetGets.push(Date.now()); });
     await page.goto(u + "/");
     await page.waitForFunction(() => window.hd?.state().projects.length === 30);
     await sleep(1500);

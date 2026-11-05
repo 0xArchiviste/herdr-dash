@@ -13,18 +13,32 @@ import (
 )
 
 type Fleet struct {
+	// queued lists the broadcasts waiting for a busy coordinator
+	// (fleet_actions.go), served with the table.
+	queued func() []queued
+	col    *Collector
 	src    fleet.Source
 	policy *fleet.PolicyFile
 	now    func() time.Time
 }
 
 func NewFleet(cfg Config, col *Collector) *Fleet {
-	return &Fleet{src: collectorFleet{col}, policy: &fleet.PolicyFile{Path: cfg.FleetConfig}, now: time.Now}
+	return &Fleet{col: col, src: collectorFleet{col}, policy: &fleet.PolicyFile{Path: cfg.FleetConfig}, now: time.Now}
 }
 
 func (f *Fleet) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/fleet", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, f.table())
+		var q []queued
+		if f.queued != nil {
+			q = f.queued()
+		}
+		if q == nil {
+			q = []queued{}
+		}
+		writeJSON(w, struct {
+			fleet.Table
+			Queue []queued `json:"queue"`
+		}{f.table(), q})
 	})
 }
 
@@ -63,7 +77,7 @@ func (c collectorFleet) Projects() []fleet.Project {
 		}
 		out = append(out, fleet.Project{
 			Slug: p.Slug, Name: p.Name, Status: p.Status, Inbox: p.Inbox, Error: p.Error, Threads: byProject[p.Slug],
-			Coordinator: fleet.Coordinator{State: st, Activity: p.Coordinator.Activity, LastActivity: parseTime(p.Coordinator.LastActivity)},
+			Coordinator: fleet.Coordinator{State: st, Activity: p.Coordinator.Activity, LastActivity: parseTime(p.Coordinator.LastActivity), StateSince: parseTime(p.Coordinator.StateSince)},
 		})
 	}
 	return out
@@ -92,4 +106,3 @@ func (c collectorFleet) Usage() map[string]fleet.Usage {
 	}
 	return out
 }
-
