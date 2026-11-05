@@ -50,6 +50,9 @@ type Coordinator struct {
 	State        string
 	Activity     string
 	LastActivity time.Time
+	// StateSince is when its live state last changed (the ticker's
+	// pair_since); zero when unknown.
+	StateSince time.Time
 }
 
 // Thread states (Dash's): working waiting blocked review landing idle resolved.
@@ -94,6 +97,7 @@ type RowCoordinator struct {
 	State        string `json:"state"`
 	Activity     string `json:"activity,omitempty"`
 	LastActivity string `json:"last_activity,omitempty"`
+	StateSince   string `json:"state_since,omitempty"`
 }
 
 type Launches struct {
@@ -116,6 +120,7 @@ type Row struct {
 	Inbox         int            `json:"inbox"`
 	Launches      Launches       `json:"launches"`
 	Priority      bool           `json:"priority"`
+	Mode          string         `json:"mode"` // full, read-only, off (fleet.toml)
 	CPU           *float64       `json:"cpu"`
 	RSS           uint64         `json:"rss"`
 	Agents        int            `json:"agents"`
@@ -187,6 +192,7 @@ func Build(projects []Project, usage map[string]Usage, pol Policy, now time.Time
 	t := Table{GeneratedAt: now.UTC().Format(time.RFC3339), Rows: []Row{}, Attention: []Item{}, Policy: pol}
 	for _, p := range projects {
 		row, items := build(p, usage[p.Slug], pol.Priority[p.Slug])
+		row.Mode = pol.Mode(p.Slug)
 		t.Rows = append(t.Rows, row)
 		t.Attention = append(t.Attention, items...)
 	}
@@ -219,7 +225,7 @@ func stamp(t time.Time) string {
 
 func build(p Project, u Usage, prio bool) (Row, []Item) {
 	r := Row{Slug: p.Slug, Name: p.Name, Status: p.Status, Inbox: p.Inbox, Priority: prio, CPU: u.CPU, RSS: u.RSS, Agents: u.Agents, Error: p.Error,
-		Coordinator: RowCoordinator{State: p.Coordinator.State, Activity: p.Coordinator.Activity, LastActivity: stamp(p.Coordinator.LastActivity)},
+		Coordinator: RowCoordinator{State: p.Coordinator.State, Activity: p.Coordinator.Activity, LastActivity: stamp(p.Coordinator.LastActivity), StateSince: stamp(p.Coordinator.StateSince)},
 		Launches:    Launches{Errors: []string{}}}
 	if r.Name == "" {
 		r.Name = p.Slug

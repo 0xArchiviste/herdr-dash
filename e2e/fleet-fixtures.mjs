@@ -72,6 +72,20 @@ const GROUP = { working: ["working", "Working"], waiting: ["waiting-on-you", "Wa
   review: ["ready-for-review", "Ready for review"], acked: ["ready-for-review", "Ready for review"], landing: ["landing", "Landing"],
   idle: ["idle", "Idle"], resolved: ["resolved", "Resolved"], failed: ["idle", "Idle"], stuck: ["working", "Working"] };
 
+// The fleet's opt-outs (stage 1b): one read-only project (standing in for a
+// production one) and one opted out of bulk actions.
+export const MODES = { "tundra-maps": "read-only", "umber-chat": "off" };
+
+// fleetTomlText is the fixture's fleet.toml; limits overrides [limits]. The
+// E2E raises actions_per_minute so many batches can run in one minute; the
+// rate-limit test lowers it.
+export function fleetTomlText(limits = { actions_per_minute: 1000 }, extra = "") {
+  const lim = Object.entries(limits).map(([k, v]) => `${k} = ${v}`).join("\n");
+  const proj = NAMES.filter((s) => SPEC[s].priority || MODES[s]).map((slug) =>
+    `[projects.${slug}]\n` + (SPEC[slug].priority ? "priority = true\n" : "") + (MODES[slug] ? `mode = "${MODES[slug]}"\n` : "")).join("\n");
+  return `version = 1\n${extra}\n[limits]\n${lim}\n\n${proj}`;
+}
+
 // fleet() writes the whole fleet to a temp dir: { tmp, root, stubDir, log,
 // panesFile, fleetToml, procs: [[pid, comm, {cpu, rss, env}]] }.
 export function fleet() {
@@ -129,6 +143,6 @@ export function fleet() {
   const panesFile = join(tmp, "panes.json");
   writeFileSync(panesFile, JSON.stringify({ id: "cli:pane:list", result: { panes } }));
   const fleetToml = join(tmp, "fleet.toml");
-  writeFileSync(fleetToml, `version = 1\n\n${Object.entries(SPEC).filter(([, s]) => s.priority).map(([slug]) => `[projects.${slug}]\npriority = true\n`).join("\n")}`);
+  writeFileSync(fleetToml, fleetTomlText());
   return { tmp, root, stubDir, log, proc, panesFile, fleetToml, procs };
 }

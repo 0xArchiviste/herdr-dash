@@ -256,6 +256,8 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--proc` | `HERDR_DASH_PROC` | `/proc`; `off` hides machine and process numbers (see [System](#system)) |
 | `--routing-config` | `HERDR_DASH_ROUTING_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/routing.toml`, else `~/.config/herdr-projects/routing.toml` (see [Agent routing](#agent-routing-preview)) |
 | `--fleet-config` | `HERDR_DASH_FLEET_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/fleet.toml`, else `~/.config/herdr-projects/fleet.toml` (see [Master window](#master-window)) |
+| `--fleet-audit` | `HERDR_DASH_FLEET_AUDIT` | `<root>/.fleet/audit.jsonl`; the bulk actions' audit log |
+| `--fleet-confirm-ttl` | | `2m`; how long a bulk-action preview can be run |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -539,8 +541,7 @@ the strip says the numbers are unavailable; agents and the queue still show.
 
 ## Master window
 
-The **Master** button (filter bar) opens the whole fleet in one window,
-read-only: a ranked **Attention** list on top (blocked or waiting
+The **Master** button (filter bar) opens the whole fleet in one window: a ranked **Attention** list on top (blocked or waiting
 coordinators, threads waiting on you, failed or stuck launches, missing or
 exited coordinators, review piles of 10 or more unacked reports; priority
 projects rank first within a kind), and a table with one row per project:
@@ -548,8 +549,9 @@ coordinator state, threads per stage, needs-you count, unacked reports,
 failed or stuck launches, the priority flag, CPU and RAM of its agents (from
 the System strip) and last activity. Sort by any column, filter by state or
 name; the project focus applies. Click a row to open that coordinator's
-window; tick rows (Shift for a range) to copy a plain-text summary. A narrow
-window or a phone shows cards. It is a dockable window like the others.
+window; tick rows (Shift for a range) to copy a plain-text summary or act on
+them. A narrow window or a phone shows cards. It is a dockable window like
+the others.
 
 `GET /api/fleet` serves it from what Dash already holds (the snapshot and
 the last `/proc` frame), so it runs no command; the page refetches when the
@@ -560,9 +562,68 @@ model can feed it directly. The priority flag comes from `fleet.toml`
 
 ```toml
 version = 1
+enabled = true          # false: previews only, nothing executes
+
+[limits]                # the defaults
+batch_without_confirm = 5
+batch_max = 30
+actions_per_minute = 10 # fleet-wide
+broadcast_cooldown_minutes = 10
+
 [projects.my-project]
 priority = true
+
+[projects.production-node]
+mode = "read-only"      # reads and nudges only; "off" hides it from bulk actions
 ```
+
+A `fleet.toml` that does not parse turns bulk actions off.
+
+### Bulk actions
+
+With rows ticked, the action bar offers **Nudge**, **Message…**, **Open
+coordinator**, **Pause**, **Resume**, **Set…** (`max_parallel_threads`,
+`nudge`, `mute`), **Priority…** and **Sweep (dry run)**. Nothing else
+exists: no merge, resolve, delete, rename, archive, key press, safety or
+profile change, update, coordinator stop or hibernation, and sweep never
+removes anything.
+
+Every action first shows a **dry-run plan**: per project the exact
+`herdr-projects` command (or the `fleet.toml` change), what changes, its
+undo, or why it is refused (opted out, read-only, paused, archived, busy
+coordinator, already in that state, over a limit) or queued. A preview runs
+no command. **Run** needs the preview's token: single use, valid for two
+minutes (`--fleet-confirm-ttl`), and bound to the plan's hash, which is
+recomputed at run time; if the fleet changed in between, the run is refused
+and a fresh plan is shown. Tiers:
+
+- **Tier 0** (nudge, sweep dry run): runs without a typed confirmation, also
+  on read-only projects.
+- **Tier 1** (open, pause, resume, set, priority): reversible; each project
+  records its undo (the previous value for a setting). **Undo…** on the
+  results previews the inverse and refuses projects that changed since.
+- **Tier 2**: any message, more than `batch_without_confirm` projects, or
+  raising `max_parallel_threads`: you type the count back to run it.
+
+Steps run one at a time with live per-project results; three failures in a
+row stop the batch (the rest is "not attempted"). Runs pass the same guard
+as every other write (`--read-only`, same-origin JSON, the write bucket).
+
+**Message…** shows the exact text, prefixed `[fleet master, relaying the
+user]`, and the recipients. It is typed only into a coordinator that is idle
+(or done) and whose state has not changed for 60 seconds; a working or
+blocked one, or one that just changed, is **queued**, listed above the table
+with **Send now** (which still refuses a busy coordinator). One coordinator
+gets at most one broadcast per cooldown. The nudge is a fixed line, typed
+only into idle coordinators.
+
+The **Audit** tab shows the log, filterable by action, result, project or
+batch and day, and exports JSON. It is append-only JSONL at
+`<root>/.fleet/audit.jsonl` (`--fleet-audit`), one line per project per
+action with who, when, the command, the preview hash and token, the result
+and the undo; lines older than 90 days are dropped. The actions run through
+an `Actuator` interface (`internal/fleet`): today herdr-projects
+subcommands, later the Go manager natively.
 
 ## Agent routing (preview)
 

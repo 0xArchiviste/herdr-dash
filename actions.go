@@ -46,7 +46,7 @@ var allowedKeys = map[string]bool{
 }
 
 // codeRe pulls the machine-readable refusal out of a herdr-projects error.
-var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|draft_in_field|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked|agent_alive)\b`)
+var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|draft_in_field|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked|agent_alive|confirm_unknown|confirm_used|confirm_expired|confirm_count|plan_changed)\b`)
 
 type Actions struct {
 	cfg    Config
@@ -150,11 +150,26 @@ func (a *Actions) guard(h func(r *http.Request, body []byte) (any, error)) http.
 
 // guardN is guard with a body of up to limit(r) bytes; a longer one is refused.
 func (a *Actions) guardN(limitOf func(*http.Request) int64, h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
+	return a.guardFull(limitOf, false, h)
+}
+
+// guardOpt is guard with a fixed body limit; readOK serves the request in
+// --read-only mode too (a POST that only reads, such as a fleet preview).
+func (a *Actions) guardOpt(limit int64, readOK bool, h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
+	return a.guardFull(func(*http.Request) int64 { return limit }, readOK, h)
+}
+
+func (a *Actions) guardFull(limitOf func(*http.Request) int64, readOK bool, h func(r *http.Request, body []byte) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		limit := limitOf(r)
 		target := strings.TrimPrefix(r.URL.Path, "/api/")
-		err := a.precheck(r)
+		var err error
+		if readOK {
+			err = sameOriginJSON(r)
+		} else {
+			err = a.precheck(r)
+		}
 		var out any
 		if err == nil {
 			var body []byte
