@@ -17,6 +17,10 @@ else
 fi
 noagent() { sed -E '/"pane_id":"'"$1"'"/{s/"agent":"[a-z]*",//;s/"agent_session":\{[^}]*\},//;s/"agent_status":"[a-z]*"/"agent_status":"unknown"/}'; }
 case "$1 $2" in
+  # herdr-projects and the in-process read model ask for agents and sessions:
+  # the agents are the panes' agents, and there is no named session.
+  "agent list") sed 's/"panes":\[/"agents":[/' "${STUB_PANES:-$D/panes.json}" ;;
+  "session list") echo '{"sessions":[]}' ;;
   "pane list")
     # STUB_SCREENS/<pane>.status overrides a pane's agent_status.
     out="$(cat "${STUB_PANES:-$D/panes.json}")"

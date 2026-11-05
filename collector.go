@@ -31,6 +31,7 @@ type Config struct {
 	WritePerMin   int
 	Root          string
 	HerdrProjects string
+	ReadModel     string // "cli": run herdr-projects list/thread list; "go": internal/projects in process
 	Herdr         string
 	GH            string
 	ClaudeDir     string
@@ -254,6 +255,7 @@ type Collector struct {
 	files        map[string]decodedFile // config files, see decoded
 
 	cfg Config
+	rm  readModel // --read-model go
 
 	mu         sync.Mutex
 	projects   map[string]*projectRaw
@@ -497,7 +499,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 	c.mu.Unlock()
 	if out == nil {
 		var err error
-		out, err = run(ctx, 10*time.Second, c.cfg.HerdrProjects, "--root", c.cfg.Root, "list")
+		out, err = c.hpList(ctx)
 		if err != nil {
 			log.Printf("list: %v", err)
 			return
@@ -556,7 +558,7 @@ func (c *Collector) refreshThreads(ctx context.Context, all bool) {
 			c.mu.Unlock()
 			continue
 		}
-		tout, terr := run(ctx, 10*time.Second, c.cfg.HerdrProjects, "--root", c.cfg.Root, "thread", "list", slug, "--json")
+		tout, terr := c.hpThreadList(ctx, slug)
 		var rows []RawThread
 		if terr == nil {
 			terr = json.Unmarshal(tout, &rows)
