@@ -412,7 +412,7 @@ test("new output and load earlier work with styled rows", async () => {
     if (before >= 2000) break;
     await pre.evaluate((e) => { e.scrollTop = 0; e.dispatchEvent(new Event("scroll")); });
     await waitFor(async () => (await pre.locator(".tl").count()) > before, 20_000)
-      .catch(async (e) => { throw new Error(`no earlier rows after ${before}: ${await w.locator(".screen-top").innerText()} / ${await pre.locator(".tl").count()}`); });
+      .catch(async (e) => { throw new Error(`no earlier rows after ${before}: ${await w.locator(".screen-top").innerText()} / ${await pre.locator(".tl").count()} / reads: ${readFileSync(stubLog, "utf8").split("\n").filter((l) => /w1A:p1 .*--lines (?!60 )/.test(l)).slice(-4).join(" | ")}`); });
   }
   assert.equal(await pre.locator(".tl").count(), 2000);
   // Rows loaded earlier get their colours too, a frame budget at a time.

@@ -1323,7 +1323,9 @@ func (c *Collector) Screen(ctx context.Context, pane string, maxAge time.Duratio
 	}
 	raw := c.readPaneANSI(ctx, pane, liveLines)
 	text := stripANSI(raw)
-	c.store(c.screens, pane, screenHit{text: text, raw: raw, at: time.Now()})
+	if ctx.Err() == nil { // a cancelled read is not the pane's screen
+		c.store(c.screens, pane, screenHit{text: text, raw: raw, at: time.Now()})
+	}
 	return text, raw
 }
 
@@ -1383,7 +1385,9 @@ func (c *Collector) refreshPrompts(ctx context.Context) {
 func (c *Collector) FreshPrompt(ctx context.Context, pane, agent string) *Prompt {
 	defer c.lockPane(pane)()
 	raw := c.readPaneANSI(ctx, pane, liveLines)
-	c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
+	if ctx.Err() == nil {
+		c.store(c.screens, pane, screenHit{text: stripANSI(raw), raw: raw, at: time.Now()})
+	}
 	return c.longPrompt(ctx, pane, agent, ParsePrompt(raw, agent))
 }
 
@@ -1433,7 +1437,11 @@ func (c *Collector) History(ctx context.Context, pane string, n int, ansi bool) 
 		if h, ok = c.cachedLines(c.history, pane, historyAge, n); !ok {
 			raw := c.readPaneANSI(ctx, pane, n)
 			h = screenHit{text: stripANSI(raw), raw: raw, lines: n, at: time.Now()}
-			c.store(c.history, pane, h)
+			// A read cut short by the asker leaving is not the pane's
+			// history: the next asker would get it blank.
+			if ctx.Err() == nil {
+				c.store(c.history, pane, h)
+			}
 		}
 		unlock()
 	}
