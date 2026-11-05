@@ -1,4 +1,4 @@
-.PHONY: build vet test e2e check install demo screenshots clean stt-install stt-fetch stt-check desktop-linux desktop-windows desktop-darwin desktop-smoke install-desktop
+.PHONY: build vet test golden e2e check install demo screenshots clean stt-install stt-fetch stt-check desktop-linux desktop-windows desktop-darwin desktop-smoke install-desktop
 
 build:
 	go build -o bin/herdr-dash .
@@ -32,9 +32,15 @@ e2e/node_modules: e2e/package.json
 e2e: build e2e/node_modules
 	cd e2e && npm test
 
-# Local gate (AGENTS.md): vet + parser tests + E2E against fixtures with stubbed herdr/gh,
-# then the desktop build in a virtual X display.
-check: vet test e2e desktop-smoke
+# Local gate (AGENTS.md): vet + parser tests + the golden suite + E2E against
+# fixtures with stubbed herdr/gh, then the desktop build in a virtual X display.
+check: vet test golden e2e desktop-smoke
+
+# Cross-binary golden suite: internal/projects against the Rust herdr-projects
+# 0.2.35 on generated roots (skipped with a message when no 0.2.35 binary is
+# found; HP_RUST_BIN names one). The format-freeze guard for the Go manager.
+golden:
+	scripts/golden.sh
 
 # Desktop app (Wails v2, see docs/desktop.md). The plain build above stays the
 # server alone; the desktop build adds a native window to the same code.
