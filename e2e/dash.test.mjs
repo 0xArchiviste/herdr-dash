@@ -304,7 +304,8 @@ test("page renders graph, needs-you strip, panel and filters", async () => {
   await page.waitForSelector("svg g.node.thread");
   // Let the force layout settle a little for the screenshot.
   await page.waitForTimeout(2500);
-  assert.equal(await page.locator("svg g.node.thread").count(), 10);
+  // Open threads only: the resolved one shows on demand (stream.test.mjs).
+  assert.equal(await page.locator("svg g.node.thread").count(), 9);
   assert.equal(await page.locator("svg g.node.hub").count(), 3);
   // Acked alpha/t-0007 is hidden by default; alpha's and beta's
   // coordinators need you too.
@@ -718,7 +719,7 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:alpha"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await page.waitForSelector("#panel.open");
   assert.equal(await page.locator("#panel h2.title").innerText(), "Alpha Project");
-  assert.equal(await page.locator("svg g.node.thread").count(), 10, "no filter applied");
+  assert.equal(await page.locator("svg g.node.thread").count(), 9, "no filter applied");
   assert.equal(await page.locator("svg g.node.hub.selected").count(), 1);
   await page.waitForSelector("#p-chat .screen:not(:empty)");
   assert.match(await page.locator("#p-chat .screen").innerText(), /screen of w1Z:p1/);

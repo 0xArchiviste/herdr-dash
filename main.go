@@ -223,6 +223,7 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, col.Snapshot())
 	})
+	mux.HandleFunc("GET /api/threads", resolvedHTTP(col))
 	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
 		fl, ok := w.(http.Flusher)
 		if !ok {
@@ -231,8 +232,8 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
-		// A snapshot is large and mostly repeats itself: gzip cuts it ~10x on
-		// the wire, which matters to a phone that gets one every few seconds.
+		// The first snapshot is large and repetitive: gzip cuts it ~10x on
+		// the wire, which matters to a phone that reconnects on every unhide.
 		var out io.Writer = w
 		flush := fl.Flush
 		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -243,17 +244,21 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 			out = gz
 			flush = func() { gz.Flush(); fl.Flush() }
 		}
-		sub := col.Subscribe()
+		sub, first, last := col.SubscribeLive()
 		defer col.Unsubscribe(sub)
-		first, _ := json.Marshal(col.Snapshot())
 		sendEv := func(ev string, b []byte) bool {
 			_, err := io.WriteString(out, "event: "+ev+"\ndata: "+string(b)+"\n\n")
 			flush()
 			return err == nil
 		}
-		send := func(b []byte) bool { return sendEv("state", b) }
-		if !send(first) {
+		if !sendEv("state", first) {
 			return
+		}
+		// A fresh snapshot, when this stream fell behind.
+		resync := func() bool {
+			b, v := col.LiveSnapshot()
+			last = v
+			return sendEv("state", b)
 		}
 		// System numbers: sample now if nobody watched lately, and again a
 		// second later so CPU shares need not wait for the next pane tick.
@@ -272,8 +277,21 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 			select {
 			case <-r.Context().Done():
 				return
-			case b := <-sub.State:
-				if !send(b) {
+			case m := <-sub.Delta:
+				if m.version <= last {
+					continue // already in a snapshot this stream sent
+				}
+				ok := false
+				if m.base == last {
+					ok, last = sendEv("delta", m.data), m.version
+				} else {
+					ok = resync()
+				}
+				if !ok {
+					return
+				}
+			case <-sub.Resync:
+				if !resync() {
 					return
 				}
 			case b := <-sub.System:

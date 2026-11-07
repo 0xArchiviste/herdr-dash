@@ -101,9 +101,14 @@
     return inFocus(t.project) && matches(t);
   }
   const drawn = (t) => (filters.fade || inFocus(t.project)) && matches(t);
+  // Resolved threads are not in the live stream: they show (and are
+  // fetched, once) for the Resolved filter, a time window other than the
+  // default "Open threads" (Any time, Last hour…) and a search.
+  const resolvedShown = () => filters.state === "resolved" || !!filters.window || !!filters.q;
   function matches(t) {
+    if (t.state === "resolved" && !resolvedShown()) return false;
     if (filters.state === "needs" ? !t.needs_you : filters.state && t.state !== filters.state) return false;
-    if (filters.window && ageSec(t) > +filters.window) return false;
+    if (filters.window && filters.window !== "all" && ageSec(t) > +filters.window) return false;
     if (filters.q && !dash.contentMode) {
       const p = state.projects.find((p) => p.slug === t.project);
       const hay = [t.title, t.key, t.activity, t.branch, t.agent, p && p.name].join(" ").toLowerCase();
@@ -496,14 +501,19 @@
   const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
 
   // ---------------------------------------------------------------- header, strip
+  let legendSig = "";
   function renderLegend(threads) {
-    const counts = d3.rollup(state.threads, (v) => v.length, (t) => t.state);
+    const counts = d3.rollup(state.threads.filter((t) => t.state !== "resolved"), (v) => v.length, (t) => t.state);
+    const nResolved = d3.sum(state.projects, (p) => p.resolved || 0);
+    if (nResolved) counts.set("resolved", nResolved);
+    const total = d3.sum([...counts.values()]);
     const box = $("#legend");
-    box.replaceChildren(...ORDER.filter((s) => counts.get(s)).map((s) =>
+    const sig = JSON.stringify([filters.state, ORDER.map((s) => counts.get(s) || 0)]);
+    if (sig !== legendSig) legendSig = sig, box.replaceChildren(...ORDER.filter((s) => counts.get(s)).map((s) =>
       el("button", { class: filters.state === s ? "active" : "", "aria-pressed": String(filters.state === s), "aria-label": `${STATES[s].label}: ${counts.get(s)} threads`, title: "Filter: " + STATES[s].label, onclick: () => {
         filters.state = filters.state === s ? "" : s; $("#f-state").value = filters.state; saveFilters(); render();
       } }, el("span", { class: "dot", style: `background:${STATES[s].color}` }), el("span", { class: "lbl", text: STATES[s].label }), el("span", { class: "n", text: counts.get(s) }))));
-    $("#shown").textContent = `${threads.length} of ${state.threads.length} threads`;
+    $("#shown").textContent = `${threads.length} of ${total} threads`;
     $("#updated").textContent = state.generated_at ? "updated " + nyTime(state.generated_at) : "";
   }
 
@@ -547,6 +557,7 @@
     }));
   }
 
+  let needsSig = "";
   function renderNeeds() {
     const list = needsList();
     const hidden = state.threads.filter((t) => t.needs_you && inFocus(t.project)).length + coordItems().length - list.length;
@@ -554,7 +565,10 @@
     $("#needs-n").textContent = (list.length || "") + (hidden > 0 && $("#needs-filter").value === "active" ? ` (+${hidden} parked)` : "");
     const by = d3.group(list, (t) => t.state);
     for (const k of [...picked]) if (!list.some((t) => t.key === k)) picked.delete(k);
-    $("#needs").replaceChildren(...STRIP.filter((s) => by.get(s)).map((s) => {
+    // A delta that changes nothing here leaves the strip's DOM alone.
+    const sig = JSON.stringify([selecting, readOnly, [...picked], [...collapsed], list.map((t) =>
+      [t.key, t.state, t.title, t.coord ? 1 : 0, parked(t) ? 1 : 0, t.acked ? 1 : 0, isSnoozed(t) ? 1 : 0, t.prompt?.summary || "", names[t.project] || t.project])]);
+    if (sig !== needsSig) needsSig = sig, $("#needs").replaceChildren(...STRIP.filter((s) => by.get(s)).map((s) => {
       const ts = by.get(s);
       const closed = collapsed.has(s);
       const head = el("button", { class: "group-head", "aria-expanded": String(!closed), "aria-label": `${STATES[s].label}: ${ts.length} items. ${closed ? "Show" : "Hide"} group`, title: (closed ? "Show " : "Hide ") + STATES[s].label,
@@ -883,6 +897,7 @@
 
   function render() {
     updateEff();
+    if (resolvedShown()) needResolved();
     const threads = state.threads.filter(visible);
     $("#reset-filters").hidden = !anyFilter();
     $("#graph-empty").hidden = threads.length > 0;
@@ -1024,6 +1039,17 @@
       buildCoordPanel(slug);
       loadProject(slug);
       startFeeds(key);
+      return;
+    }
+    // A resolved thread the page has not loaded: fetch its project's first.
+    if (!state.threads.some((t) => t.key === key)) {
+      buildPanel(key);
+      needResolved(key.split("/")[0]).then(() => {
+        if (selected !== key) return;
+        buildPanel(key);
+        loadDetail(key);
+        startFeeds(key);
+      });
       return;
     }
     buildPanel(key);
@@ -1519,10 +1545,82 @@
   }
 
   // ---------------------------------------------------------------- live data
+  // The stream (stream.go): a snapshot when it connects, then deltas, each
+  // naming the version it follows (base). A gap means a missed delta: the
+  // page reconnects for a fresh snapshot instead of patching stale state.
+  // Resolved threads are not in the snapshot; needResolved fetches them when
+  // a view shows them, and later deltas keep them current.
   let raw = state;
-  function apply(s) {
-    raw = s;
+  let version = -1;
+  const liveT = new Map(); // key -> thread, not resolved
+  const doneT = new Map(); // key -> resolved thread, as fetched or streamed
+  const touched = new Map(); // key -> version of the last delta that carried it
+  const doneLoaded = { all: false, slugs: new Set(), pending: new Map() };
+  function rebuildRaw() {
+    const threads = [...liveT.values()];
+    for (const [k, t] of doneT) if (!liveT.has(k)) threads.push(t);
+    raw = { ...raw, version, threads };
+  }
+  function applySnapshot(s) {
+    liveT.clear();
+    touched.clear();
+    for (const t of s.threads) {
+      if (t.state === "resolved") doneT.set(t.key, t);
+      else { liveT.set(t.key, t); doneT.delete(t.key); }
+    }
+    // What was fetched may have changed while this page was away: fetched
+    // again when a view next needs it.
+    doneLoaded.all = false;
+    doneLoaded.slugs.clear();
+    version = s.version ?? -1;
+    raw = { ...s, threads: [] };
+    rebuildRaw();
     reapply();
+  }
+  function applyDelta(d) {
+    if (d.version <= version) return; // already in the snapshot
+    if (d.base !== version) { connect(); return; } // missed one: resync
+    const projects = new Map(raw.projects.map((p) => [p.slug, p]));
+    for (const p of d.projects || []) projects.set(p.slug, p);
+    for (const slug of d.projects_removed || []) projects.delete(slug);
+    const order = d.project_order || raw.projects.map((p) => p.slug).concat((d.projects || []).map((p) => p.slug));
+    const list = [];
+    for (const slug of new Set(order)) if (projects.has(slug)) list.push(projects.get(slug));
+    for (const t of d.threads || []) {
+      touched.set(t.key, d.version);
+      if (t.state === "resolved") { liveT.delete(t.key); doneT.set(t.key, t); }
+      else { doneT.delete(t.key); liveT.set(t.key, t); }
+    }
+    for (const k of d.threads_removed || []) { touched.set(k, d.version); liveT.delete(k); doneT.delete(k); }
+    version = d.version;
+    raw = { ...raw, projects: list, generated_at: d.generated_at || raw.generated_at };
+    if (d.errors) raw.errors = d.errors;
+    if (d.prs_checked != null) raw.prs_checked = d.prs_checked;
+    rebuildRaw();
+    reapply();
+  }
+  // needResolved fetches the resolved threads (of one project, or all of
+  // them) once; it resolves when they are in the state.
+  function needResolved(slug) {
+    if (doneLoaded.all || (slug && doneLoaded.slugs.has(slug))) return Promise.resolve();
+    const k = slug || "";
+    if (doneLoaded.pending.has(k)) return doneLoaded.pending.get(k);
+    const p = fetch("/api/threads?state=resolved" + (slug ? "&project=" + encodeURIComponent(slug) : ""))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((res) => {
+        for (const t of res.threads) {
+          if ((touched.get(t.key) ?? -1) > res.version) continue; // a later delta wins
+          liveT.delete(t.key);
+          doneT.set(t.key, t);
+        }
+        slug ? doneLoaded.slugs.add(slug) : (doneLoaded.all = true);
+        rebuildRaw();
+        reapply();
+      })
+      .catch(() => {})
+      .finally(() => doneLoaded.pending.delete(k));
+    doneLoaded.pending.set(k, p);
+    return p;
   }
   function reapply() {
     state = { ...raw, threads: raw.threads.map(effective) };
@@ -1531,12 +1629,16 @@
     window.HDThreads?.state();
     window.HDFleet?.state();
   }
+  function onStream(type, d) {
+    if (type === "state") { $("#live").className = "live on"; checkBuild(d.build); applySnapshot(d); }
+    else if (type === "delta") applyDelta(d);
+    else if (type === "system") { window.HDSystem?.frame(d); window.HDFleet?.frame(); }
+  }
   let stream = null;
   function connect() {
     stream?.close();
     const es = (stream = new EventSource("/api/events"));
-    es.addEventListener("state", (e) => { $("#live").className = "live on"; const s = JSON.parse(e.data); checkBuild(s.build); apply(s); });
-    es.addEventListener("system", (e) => { window.HDSystem?.frame(JSON.parse(e.data)); window.HDFleet?.frame(); });
+    for (const type of ["state", "delta", "system"]) es.addEventListener(type, (e) => { if (es === stream) onStream(type, JSON.parse(e.data)); });
     es.onerror = () => { $("#live").className = "live off"; };
   }
   // A hidden page parses and draws nothing: the stream closes (the server
@@ -1593,6 +1695,11 @@
   // The page's hooks for static/voice.js (and other add-ons).
   window.hd = {
     state: () => state,
+    version: () => version,
+    // Resolved threads for a view that shows them (one project's, or all).
+    needResolved,
+    // The stream's handler, for tests: (type, data) as if it came in.
+    streamEvent: onStream,
     selected: () => selected,
     select,
     needs: needsList,

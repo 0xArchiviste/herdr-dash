@@ -56,7 +56,8 @@ after(async () => {
 });
 
 const slugs = () => st.projects.map((p) => p.slug);
-const threadsOf = (ps) => st.threads.filter((t) => ps.includes(t.project)).length;
+// The map shows open threads by default (resolved ones on demand: stream.test.mjs).
+const threadsOf = (ps) => st.threads.filter((t) => ps.includes(t.project) && t.state !== "resolved").length;
 const hubs = (page) => page.locator("svg g.node.hub:not(.leaving)").evaluateAll((ns) => ns.map((n) => n.dataset.key.slice(4)).sort());
 const nThreads = (page) => page.locator("svg g.node.thread:not(.leaving)").count();
 const needProjects = (page) => page.locator("#needs .chip").evaluateAll((cs) => [...new Set(cs.map((c) => c.dataset.key.replace(/^hub:/, "").split("/")[0]))].sort());
@@ -149,8 +150,8 @@ test("select two, deselect one, None/All, Only this, graph clicks", async () => 
   await waitFor(async () => (await page.locator("svg g.node.hub.faded").count()) === 2, 3000);
   // F9: faded, not hidden; Needs-you still only the focus.
   assert.equal(await page.locator("svg g.node.hub").count(), 3);
-  assert.equal(await nThreads(page), st.threads.length);
-  assert.equal(await page.locator("svg g.node.thread.faded").count(), st.threads.length - threadsOf([a]));
+  assert.equal(await nThreads(page), threadsOf(slugs()));
+  assert.equal(await page.locator("svg g.node.thread.faded").count(), threadsOf(slugs()) - threadsOf([a]));
   for (const p of await needProjects(page)) assert.equal(p, a, "fade mode: Needs-you only the focus");
   await page.screenshot({ path: join(artifacts, "focus-fade.png") });
   await hubClick(b, { ctrlKey: true });

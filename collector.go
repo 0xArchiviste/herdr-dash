@@ -186,6 +186,9 @@ type Project struct {
 	Summary string         `json:"summary"`
 	Counts  map[string]int `json:"counts"`
 	Inbox   int            `json:"inbox"`
+	// Resolved counts the project's resolved threads: the live stream
+	// leaves them out (stream.go), the page still shows how many.
+	Resolved int `json:"resolved"`
 	// MaxParallel is max_parallel_threads from PROJECT.md (herdr-projects
 	// warns past it; it does not hold threads back).
 	MaxParallel int    `json:"max_parallel"`
@@ -244,6 +247,7 @@ type Snapshot struct {
 	Threads     []Thread  `json:"threads"`
 	PRsChecked  bool      `json:"prs_checked"`
 	Errors      []string  `json:"errors"`
+	Version     uint64    `json:"version"` // the live stream's (stream.go)
 }
 
 type projectRaw struct {
@@ -273,8 +277,8 @@ type Collector struct {
 	prs        map[string]ghPR // repo + "#" + branch
 	prsChecked bool
 	transcript map[string]transcriptHit
-	snapJSON   []byte
 	snap       Snapshot
+	stream     streamState // what the live stream last sent (stream.go)
 	subs       map[*Sub]struct{}
 	sys        *SysMon
 	owners     map[string]paneOwner // pane id -> thread or coordinator, for sys
@@ -959,6 +963,11 @@ func (c *Collector) rebuild() {
 		pr.Error = p.listError
 		pr.Coordinator = c.coordinator(p)
 		pr.EventsSig = fmt.Sprintf("%s.%d", p.inboxSig, c.progressN[slug])
+		for _, t := range p.threads {
+			if t.Status == "resolved" {
+				pr.Resolved++
+			}
+		}
 		if p.listError != "" {
 			snap.Errors = append(snap.Errors, p.listError)
 		}
@@ -1044,33 +1053,17 @@ func (c *Collector) rebuild() {
 		}
 	}
 	c.owners = owners
-	body, _ := json.Marshal(struct {
-		Projects []Project `json:"projects"`
-		Threads  []Thread  `json:"threads"`
-		E        []string  `json:"errors"`
-		P        bool      `json:"prs_checked"`
-	}{snap.Projects, snap.Threads, snap.Errors, snap.PRsChecked})
-	changed := !bytes.Equal(body, c.snapJSON)
+	// Only what changed goes out (stream.go); nothing at all when nothing did.
+	d, changed := c.diffStream(&snap)
 	if changed || c.snap.GeneratedAt == "" {
-		c.snapJSON = body
-		snap.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+		snap.GeneratedAt = nowRFC3339()
 		c.snap = snap
 	}
 	if changed {
-		// The stream's payload is body with the header fields in front: the
-		// snapshot is marshalled once, not twice.
-		head, _ := json.Marshal(struct {
-			Build       string `json:"build"`
-			GeneratedAt string `json:"generated_at"`
-		}{c.snap.Build, c.snap.GeneratedAt})
-		payload := append(append(head[:len(head)-1:len(head)-1], ','), body[1:]...)
-		for s := range c.subs {
-			select {
-			case s.State <- payload:
-			default: // slow client: it gets the next one
-			}
-		}
+		d.GeneratedAt = c.snap.GeneratedAt
+		c.publish(d)
 	}
+	c.snap.Version = c.stream.version
 	c.mu.Unlock()
 }
 
@@ -1085,16 +1078,13 @@ func (c *Collector) Snapshot() Snapshot {
 // Sub is one event-stream client: snapshots, and System frames while it
 // is subscribed.
 type Sub struct {
-	State  chan []byte
+	Delta  chan streamMsg
+	Resync chan struct{} // a delta was dropped: send a fresh snapshot
 	System chan []byte
 }
 
-func (c *Collector) Subscribe() *Sub {
-	s := &Sub{State: make(chan []byte, 1), System: make(chan []byte, 1)}
-	c.mu.Lock()
-	c.subs[s] = struct{}{}
-	c.mu.Unlock()
-	return s
+func newSub() *Sub {
+	return &Sub{Delta: make(chan streamMsg, 16), Resync: make(chan struct{}, 1), System: make(chan []byte, 1)}
 }
 
 func (c *Collector) Unsubscribe(s *Sub) {

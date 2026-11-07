@@ -264,6 +264,8 @@ window.HDThreads = (() => {
     if (!v.root.isConnected) { views.delete(v); return; }
     const slug = v.slug;
     ensure(slug);
+    // Done needs the project's resolved threads, which the live stream leaves out.
+    window.hd?.needResolved?.(slug);
     const all = st().threads.filter((t) => t.project === slug);
     const by = Object.fromEntries(STAGES.map((s) => [s.id, []]));
     for (const t of all) by[stageOf(t)].push(t);
