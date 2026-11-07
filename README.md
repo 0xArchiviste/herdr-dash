@@ -40,7 +40,9 @@ always through `herdr-projects` and its safety checks.
 - **Live over SSE.** One shared collector polls herdr; every open tab updates
   at once. No file watchers, no database.
 - **Filters** by state, time window and free-text search. Times show in
-  the viewer's time zone.
+  the viewer's time zone. The map shows open threads by default; resolved
+  ones (counted in the legend) show for the Resolved filter, **Any time**
+  or another time window, and a search.
 - **Project focus** on any number of projects at once: tick them in the
   picker (**P** opens it, type to filter; All, None, Only), or Ctrl/Cmd or
   Shift+click a project on the map. Chips show the focus, × removes one;
@@ -292,8 +294,16 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `threads/t-NNNN{.task,,.next}.md`, `PROJECT.md`, `TASKS.md`, `MEMORY.md` | content search | on search only (stat, re-read when the mtime changed) |
 | `memex search --non-interactive --mode lexical …` (opt-in) | content search in transcripts | on search only |
 
-A hidden page closes its stream and panel feeds and reconnects when shown
-again; the stream is gzipped for browsers that accept it.
+The stream is incremental: a page gets one snapshot when it connects, then
+a `delta` event per change carrying only the projects and threads that
+changed, were added or were removed, numbered so that a page that missed
+one reconnects for a fresh snapshot. Nothing is sent while nothing changes.
+The snapshot leaves resolved threads out (each project still counts them);
+a view that shows them fetches `GET /api/threads?state=resolved[&project=SLUG]`
+once and later deltas keep them current. `GET /api/state` still returns
+every thread. A hidden page closes its stream and panel feeds and
+reconnects when shown again; the stream is gzipped for browsers that accept
+it.
 
 The state carries a build id (a hash of the embedded frontend). After
 `make install`, open pages see it change when the stream reconnects, show
