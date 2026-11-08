@@ -3,13 +3,24 @@
 // keeps a longer buffer by merging each new tail into it, loads earlier
 // rows on demand when the reader scrolls to the top, and renders rows with
 // static/ansi.js: new rows only, at most BUDGET a frame, the rest as plain
-// text until their turn. Above the screen: font size, wrap mode (the
+// text until their turn. An update that only adds rows appends them; the
+// rows on screen are left alone.
+//
+// Two modes (setMode), chosen by the window: "view" (the default) keeps the
+// reader's place: output that arrives while they are scrolled up is counted
+// on "↓ Jump to latest (N new)" (End too), a burst bigger than one live read
+// is bridged with one history read instead of replacing the buffer, and a
+// screen that cannot be bridged waits until they come back down. "raw"
+// follows the pane like a terminal: every update goes to the newest row. Above the screen: font size, wrap mode (the
 // pane's width with sideways scrolling, fit to the window, or wrapped),
 // reader mode (TUI chrome dropped), find (Ctrl/Cmd+F in the window) and
 // copy as plain text. Settings are kept per window in this browser.
 window.HDScrollback = (() => {
   "use strict";
-  const CAP = 2000; // rows kept, and the most one load asks for (server caps too)
+  const CAP = 2000; // the most one load asks for (the server caps too)
+  const KEEP = 10000; // rows kept: live output adds up past what one read returns
+  const BRIDGE = 40; // newest buffered rows looked for in a bridging read
+  const BRIDGE_PAUSE = 30000; // ms without bridging after one found no overlap
   const FIRST = 200; // first load; each next one asks for twice as many
   const NEAR_TOP = 40; // px from the top that starts a load
   const BUDGET = 250; // rows parsed and styled per frame
@@ -115,7 +126,7 @@ window.HDScrollback = (() => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || (e.key !== "f" && e.key !== "F")) return;
     for (const b of boxes) {
       if (!b.wrap.isConnected) { boxes.delete(b); continue; }
-      if (b.wrap.offsetParent === null) continue;
+      if (b.wrap.offsetParent === null || b.raw()) continue;
       const scope = b.wrap.closest(".hwin, #panel") || b.wrap;
       if (scope.contains(e.target)) { e.preventDefault(); e.stopPropagation(); b.openFind(); return; }
     }
@@ -142,7 +153,7 @@ window.HDScrollback = (() => {
     const set = loadSet(id);
     const top = el("div", { class: "screen-top" });
     const pre = el("pre", { class: "screen", tabindex: "0" });
-    const jump = el("button", { class: "new-output", hidden: "", text: "↓ New output" });
+    const jump = el("button", { class: "new-output", hidden: "", text: "↓ Jump to latest", title: "Go to the newest output (End)" });
     const tool = (act, text, title, extra = {}) => el("button", { type: "button", class: "st-btn", "data-act": act, text, title, ...extra });
     const smaller = tool("smaller", "A−", "Smaller text");
     const bigger = tool("bigger", "A+", "Bigger text");
@@ -161,7 +172,11 @@ window.HDScrollback = (() => {
     let shown = []; // rows on screen now: [{raw, el}] (reader: plain rows)
     let cols = 0; // the pane's width, from herdr (0: unknown)
     let asked = 0; // lines the last load asked for
-    let loading = false, start = false, capped = false;
+    let loading = false, start = false, capped = false, limit = 0;
+    let mode = "view";
+    let unseen = 0; // rows added while the reader was scrolled up
+    let held = null; // view mode: a screen that replaces the buffer, held while the reader is up
+    let bridging = false, nextTail = null, noBridgeUntil = 0, retried = false;
 
     const atBottom = () => pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
     const toBottom = () => { pre.scrollTop = pre.scrollHeight; };
@@ -169,14 +184,15 @@ window.HDScrollback = (() => {
 
     function note() {
       if (loading) top.replaceChildren("Loading earlier lines…");
-      else if (capped) top.replaceChildren(`Showing the last ${CAP} lines`);
+      else if (limit) top.replaceChildren(`Herdr reads back at most ${limit} lines: nothing earlier to load`);
+      else if (capped) top.replaceChildren(buf.length > CAP ? `Showing ${buf.length} lines kept by this window` : `Showing the last ${CAP} lines`);
       else if (start) top.replaceChildren("Start of the pane's history");
       else top.replaceChildren(el("button", { text: "↑ Load earlier", onclick: load }));
     }
 
-    // Keep at most CAP lines; returns how many were cut from the top.
+    // Keep at most KEEP lines; returns how many were cut from the top.
     function trim() {
-      const cut = Math.max(0, buf.length - CAP);
+      const cut = Math.max(0, buf.length - KEEP);
       if (cut) { buf = buf.slice(cut); capped = true; }
       return cut;
     }
@@ -211,6 +227,32 @@ window.HDScrollback = (() => {
       pre.replaceChildren(frag);
       if (!set.reader && A && rows.some((r) => r.el.classList.contains("raw"))) upgradeSoon();
       fit();
+      if (!findBar.hidden) find(false);
+    }
+    // patch brings the screen up to buf when buf is the rows on screen with
+    // `cut` gone from the top and the end replaced: only the rows that
+    // changed are removed and added.
+    function patch(cut) {
+      if (set.reader || !shown.length) return render();
+      const drop = (r, k) => { const s = k ? r.el.previousSibling : r.el.nextSibling; if (s?.nodeType === 3) s.remove(); r.el.remove(); };
+      for (let k = 0; k < Math.min(cut, shown.length); k++) drop(shown[k], 0);
+      shown = shown.slice(cut);
+      let p = 0;
+      while (p < shown.length && p < buf.length && shown[p].raw === buf[p]) p++;
+      if (p === 0) return render();
+      for (let k = shown.length - 1; k >= p; k--) drop(shown[k], k);
+      shown.length = p;
+      const frag = document.createDocumentFragment();
+      let budget = BUDGET, plain = false;
+      for (let k = p; k < buf.length; k++) {
+        const raw = buf[k];
+        const e = A && budget-- > 0 ? A.line(raw) : placeholder(raw);
+        plain ||= e.classList.contains("raw");
+        frag.append("\n", e);
+        shown.push({ raw, el: e });
+      }
+      pre.append(frag);
+      if (plain && A) upgradeSoon();
       if (!findBar.hidden) find(false);
     }
     function upgradeSoon() {
@@ -359,55 +401,134 @@ window.HDScrollback = (() => {
 
     // A new live tail: replace the buffer from where the tail starts in it.
     // No overlap (more output than the tail holds, or a full-screen redraw):
-    // replace the buffer rather than glue unrelated screens together.
+    // view mode reads further back to bridge the gap; failing that (and in
+    // raw mode) the tail replaces the buffer rather than glue unrelated
+    // screens together, at once at the bottom, when the reader comes back
+    // down otherwise.
     function live(textIn, ev) {
       if (ev && ev.cols > 0 && ev.cols !== cols) { cols = ev.cols; pre.dataset.cols = String(cols); fit(); }
       const tail = split(textIn);
+      if (bridging) { nextTail = tail; return; }
       const first = !pre.dataset.n;
-      const stick = first || atBottom();
-      const old = buf;
+      pre.dataset.n = (+pre.dataset.n || 0) + 1;
+      const stick = first || mode === "raw" || atBottom();
+      if (held && !stick) { held = tail; return; }
+      held = null;
       const i = overlap(buf, tail, buf.length);
-      if (i < 0) { buf = tail; start = capped = false; asked = 0; }
-      else buf = buf.slice(0, i).concat(tail);
+      if (i < 0 && !first && mode === "view" && buf.length && Date.now() > noBridgeUntil) { bridge(tail); return; }
+      if (i < 0 && !first && !stick) { held = tail; unseen += tail.length; showJump(); return; }
+      merge(i < 0 ? null : buf.slice(0, i).concat(tail), tail, stick, first);
+    }
+    // merge puts next (or, null, the tail alone) in the buffer and on screen.
+    function merge(next, tail, stick, first) {
+      const old = buf;
+      if (!next) { buf = tail; start = capped = false; limit = 0; asked = 0; }
+      else buf = next;
       const cut = trim();
       const changed = buf.length !== old.length || buf.some((l, k) => l !== old[k]);
       const y = pre.scrollTop;
-      if (changed || first) render();
-      pre.dataset.n = (+pre.dataset.n || 0) + 1;
+      if (first || !next) render();
+      else if (changed) patch(cut);
       if (stick) {
+        unseen = 0;
         toBottom();
         // Again after layout: the box may have just appeared (was :empty).
         requestAnimationFrame(toBottom);
+        jump.hidden = true;
       } else {
         pre.scrollTop = Math.max(0, y - cut * lineH());
-        if (changed) jump.hidden = false;
+        const added = buf.length + cut - old.length;
+        if (added > 0) { unseen += added; showJump(); }
       }
       note();
+    }
+    function showJump() {
+      jump.textContent = unseen > 0 ? `↓ Jump to latest (${unseen} new)` : "↓ Jump to latest";
+      jump.hidden = false;
+    }
+    // bridge reads as far back as herdr goes to find where the buffer ends
+    // in it, and adds what came after; the newest tail goes on top of that.
+    async function bridge(tail) {
+      bridging = true;
+      let older = null;
+      try {
+        const r = await fetch(history(1000) + "&ansi=1");
+        if (r.ok) older = split((await r.json()).screen);
+      } catch {}
+      bridging = false;
+      if (!current()) return;
+      const stick = mode === "raw" || atBottom();
+      const late = nextTail;
+      nextTail = null;
+      const k = Math.min(BRIDGE, buf.length);
+      const j = older?.length ? overlap(older, buf.slice(-k), older.length) : -1;
+      // The read must lead up to the newest tail too: a cached read from
+      // before the burst would bridge nothing.
+      let next = null;
+      if (j >= 0) {
+        next = buf.slice(0, buf.length - k).concat(older.slice(j));
+        for (const t of late ? [tail, late] : [tail]) {
+          const i = overlap(next, t, next.length);
+          if (i < 0) { next = null; break; }
+          next = next.slice(0, i).concat(t);
+        }
+      }
+      if (!next) {
+        noBridgeUntil = Date.now() + BRIDGE_PAUSE;
+        if (stick) merge(null, late || tail, true, false);
+        else { held = late || tail; unseen += held.length; showJump(); }
+        return;
+      }
+      merge(next, tail, stick, false);
+    }
+    // jumpLatest goes to the newest row, with a held screen put in first.
+    function jumpLatest() {
+      if (held) { const t = held; held = null; merge(null, t, true, false); }
+      toBottom();
+      unseen = 0;
+      jump.hidden = true;
+    }
+    // setMode: "view" or "raw" (see the top of this file).
+    function setMode(m) {
+      mode = m === "raw" ? "raw" : "view";
+      wrap.dataset.mode = mode;
+      if (mode === "raw") jumpLatest();
     }
 
     // Earlier lines: ask for more than the buffer holds, up to CAP, and
     // prepend what precedes the buffer without moving the reader's place.
     async function load() {
-      if (loading || start || capped || !buf.length) return;
+      if (loading || start || capped || limit || !buf.length || mode === "raw") return;
+      if (buf.length >= CAP) { capped = true; note(); return; }
       let n = asked ? asked * 2 : FIRST;
       while (n <= buf.length) n *= 2;
       n = Math.min(CAP, n);
       asked = n;
       loading = true;
       note();
-      let older = null;
+      let older = null, lim = 0;
       try {
         const r = await fetch(history(n) + "&ansi=1");
-        if (r.ok) older = split((await r.json()).screen);
+        if (r.ok) { const d = await r.json(); older = split(d.screen); lim = d.limit || 0; }
       } catch {}
       loading = false;
       if (!current()) return;
       if (older?.length) {
         const i = overlap(older, buf, older.length - buf.length);
         const fromBottom = pre.scrollHeight - pre.scrollTop;
-        if (i < 0) buf = older; // the pane changed past recognition
-        else buf = older.slice(0, i).concat(buf);
-        if (older.length < n) start = true;
+        // No overlap: the read is older than the screen (a cached read
+        // from before a redraw) or the pane changed past recognition.
+        // Either way it does not lead up to what is shown: keep the screen.
+        if (i < 0) {
+          asked = n / 2;
+          if (!retried) { retried = true; setTimeout(() => { if (current() && pre.scrollTop < NEAR_TOP) load(); }, 1500); }
+          note();
+          return;
+        }
+        retried = false;
+        buf = older.slice(0, i).concat(buf);
+        if (lim) limit = lim;
+        else if (older.length < n) start = true;
         else if (n >= CAP) capped = true;
         trim();
         render();
@@ -417,17 +538,23 @@ window.HDScrollback = (() => {
     }
 
     pre.addEventListener("scroll", () => {
-      if (atBottom()) jump.hidden = true;
+      if (atBottom()) { if (held) jumpLatest(); unseen = 0; jump.hidden = true; }
       if (pre.scrollTop < NEAR_TOP) load();
     }, { passive: true });
     // A box too short to scroll still loads on a wheel or swipe up.
     pre.addEventListener("wheel", (e) => { if (e.deltaY < 0 && pre.scrollTop === 0) load(); }, { passive: true });
-    jump.addEventListener("click", () => { toBottom(); jump.hidden = true; });
+    jump.addEventListener("click", jumpLatest);
+    // End goes to the newest row (view mode; raw mode sends it to the pane).
+    wrap.addEventListener("keydown", (e) => {
+      if (e.key !== "End" || e.ctrlKey || e.altKey || e.metaKey || mode === "raw" || e.target.closest("input, textarea")) return;
+      e.preventDefault();
+      jumpLatest();
+    });
 
     apply();
-    const self = { wrap, openFind };
+    const self = { wrap, openFind, raw: () => mode === "raw" };
     boxes.add(self);
-    return { el: wrap, live };
+    return { el: wrap, pre, live, setMode, jumpLatest };
   }
 
   return { box, CAP };

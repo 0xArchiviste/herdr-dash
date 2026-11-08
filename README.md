@@ -133,7 +133,21 @@ always through `herdr-projects` and its safety checks.
   thread…**, and a command line for the shell left in the pane: Enter runs
   the text as one bracketed paste, Shift+Enter adds a line, ↑/↓ walk the
   history, Ctrl+C (button, or in the empty field) interrupts. **Keys mode**
-  forwards every key press; on a live agent it asks first.
+  (the panel) forwards every key press; on a live agent it asks first.
+- **View and Raw** (thread and coordinator windows; the header's switch or
+  `Alt+Shift+R`, kept per window, View by default). **View** is made for a
+  browser: nothing reaches the pane but what the input box sends (Enter;
+  Shift+Enter adds a line; ↑/↓ walk what you sent) and prompt answers you
+  click. Scrolling is the page's own, over everything loaded: scroll to the
+  top to load earlier lines (herdr reads back at most 1000 lines; the window
+  keeps up to 10,000 it saw arrive). Output that arrives while you are
+  scrolled up never moves you: **↓ Jump to latest (N new)** or `End` takes
+  you there, and a burst bigger than one live read is filled in from
+  history. **Raw** is a terminal: every key goes to the pane (arrows, Tab,
+  Ctrl keys, Esc), the view follows the pane, an orange border and a RAW
+  badge show it, and `Esc Esc` or the switch leaves. herdr takes no mouse
+  input, so the wheel only scrolls the page's copy. Raw mode on a working
+  agent asks first.
 - Task, latest report (sanitized markdown), PR and branch links, and
   copyable jump commands (`herdr agent focus …`) to reach the pane in your
   terminal.

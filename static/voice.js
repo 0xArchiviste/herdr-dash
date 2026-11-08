@@ -768,7 +768,10 @@
       ["Alt+Shift+M", "Minimise all windows, docks and the panel; again to restore them"],
       ["Alt+Shift+Arrows", "Resize the focused floating window (→ ↓ grow, ← ↑ shrink); or drag its edges and corners"],
       ["Double-click a title bar", "Maximise a floating window, or restore it"],
-      ["Ctrl+Enter", "Send the chat box"],
+      ["Ctrl+Enter", "Send the chat box (in a thread window: Enter; Shift+Enter adds a line, ↑ ↓ walk what you sent)"],
+      ["Alt+Shift+R", "Thread window: View mode (browse, only the input box sends) ⇄ Raw mode (every key goes to the pane)"],
+      ["Esc Esc", "Leave Raw mode (one Esc goes to the pane)"],
+      ["End", "View mode: jump to the newest output"],
     ];
     const cmds = [
       ["open nebula api / show beta", "open a project's panel"],

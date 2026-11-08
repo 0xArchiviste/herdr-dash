@@ -58,6 +58,33 @@ window.HDTerm = (() => {
   }
   const keyLabel = (k) => k.replace(/^ctrl\+(.)$/, (_, c) => "Ctrl+" + c.toUpperCase());
 
+  // sender(key, opts): a queue of key presses for key's pane, batched for a
+  // moment and sent in order. opts.pane() names the pane the page showed
+  // (the server refuses a write once another pane took its place);
+  // opts.report(ok, text) hears each batch's outcome.
+  function sender(key, opts = {}) {
+    const B = base(key);
+    let queue = [], timer = null;
+    async function flush() {
+      timer = null;
+      if (!queue.length) return;
+      const seq = [];
+      for (const it of queue.splice(0, 64)) {
+        const last = seq[seq.length - 1];
+        if (it.text && last?.text) last.text += it.text;
+        else seq.push({ ...it });
+      }
+      if (queue.length) timer = setTimeout(flush, 120);
+      const pane = opts.pane?.();
+      const r = await post(B + "/term", pane ? { mode: "keys", seq, pane } : { mode: "keys", seq });
+      opts.report?.(r.ok, r.ok ? "Sent " + seq.map((x) => x.text != null ? `“${x.text}”` : keyLabel(x.key)).join(" ") : r.data.error || "HTTP " + r.status);
+    }
+    const push = (it) => { queue.push(it); if (!timer) timer = setTimeout(flush, 120); };
+    // paste: text from the clipboard, a line at a time with Enter between.
+    const paste = (t) => (t || "").split(/\r?\n/).forEach((part, i) => { if (i) push({ key: "enter" }); if (part) push({ text: part.replace(/[\u0000-\u001f\u007f]/g, "") }); });
+    return { push, paste };
+  }
+
   // mount(key, opts): returns { el, update(ev) }. ev is a screen event
   // ({agent_exited, shell, foreground, live_status, pane_alive}); onExited
   // is told when the pane flips between an agent and none.
@@ -78,7 +105,8 @@ window.HDTerm = (() => {
     const mode = el("button", { type: "button", class: "tbtn ht-mode", "aria-pressed": "false", text: "Keys mode", title: "Send every key you press to the pane" });
     const pad = el("div", { class: "ht-keys", tabindex: "0", hidden: "", role: "textbox", "aria-label": "Keys mode: keys typed here go to the pane",
       text: "Keys mode: click here and type. Every key goes to the pane as you press it (Esc and Ctrl+C too)." });
-    const modes = el("div", { class: "ht-modes w" }, mode);
+    // Windows have their own Raw mode (static/threadwin.js) instead.
+    const modes = el("div", { class: "ht-modes w" }, opts.noKeys ? null : mode);
     const root = el("section", { class: "hd-term", hidden: "" }, banner, acts, line, modes, pad, logBox);
 
     // ---- command line
@@ -123,32 +151,17 @@ window.HDTerm = (() => {
     });
 
     // ---- keys mode: presses are batched for a moment, then sent in order.
-    let queue = [], timer = null;
-    function flush() {
-      timer = null;
-      if (!queue.length) return;
-      const seq = [];
-      for (const it of queue.splice(0, 64)) {
-        const last = seq[seq.length - 1];
-        if (it.text && last?.text) last.text += it.text;
-        else seq.push({ ...it });
-      }
-      send({ mode: "keys", seq }, "Sent " + seq.map((x) => x.text != null ? `“${x.text}”` : keyLabel(x.key)).join(" "));
-      if (queue.length) timer = setTimeout(flush, 120);
-    }
+    const keys = sender(key, { report: (ok, text) => msg(text, ok ? "ok" : "err") });
     pad.addEventListener("keydown", (e) => {
       const it = keyItem(e);
       if (!it) return;
       e.preventDefault();
       e.stopPropagation();
-      queue.push(it);
-      if (!timer) timer = setTimeout(flush, 120);
+      keys.push(it);
     });
     pad.addEventListener("paste", (e) => {
-      const t = e.clipboardData?.getData("text") || "";
       e.preventDefault();
-      t.split(/\r?\n/).forEach((part, i) => { if (i) queue.push({ key: "enter" }); if (part) queue.push({ text: part.replace(/[\u0000-\u001f\u007f]/g, "") }); });
-      if (!timer) timer = setTimeout(flush, 120);
+      keys.paste(e.clipboardData?.getData("text"));
     });
     async function setKeys(on) {
       if (on && !exited) {
@@ -221,13 +234,13 @@ window.HDTerm = (() => {
       root.hidden = false;
       root.classList.toggle("exited", now);
       banner.hidden = acts.hidden = line.hidden = !now;
-      (now ? ctls : modes).append(mode);
-      modes.hidden = now;
+      if (!opts.noKeys) (now ? ctls : modes).append(mode);
+      modes.hidden = now || !!opts.noKeys;
       if (now) actions(about());
       else if (keysOn) setKeys(false);
       opts.onExited?.(now);
     }
     return { el: root, update, refresh: () => exited && actions(about()) };
   }
-  return { mount };
+  return { mount, sender, keyItem, keyLabel };
 })();

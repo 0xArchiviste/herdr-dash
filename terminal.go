@@ -134,6 +134,10 @@ type termReq struct {
 	Text string     `json:"text"` // line: the command
 	Keys []string   `json:"keys"` // line: control keys only (ctrl+c), no text
 	Seq  []termItem `json:"seq"`  // keys: text and keys in order
+	// The pane the page showed (its screen event's pane_id), if it knows:
+	// a write for another pane is refused, so keys never follow a thread or
+	// coordinator to a pane the user did not see.
+	Pane string `json:"pane"`
 }
 
 // termTarget is a pane a terminal write may reach, and whose it is.
@@ -176,6 +180,9 @@ func (a *Actions) term(tg termTarget, body []byte) (any, error) {
 	var req termReq
 	if err := decode(body, &req); err != nil {
 		return nil, err
+	}
+	if req.Pane != "" && req.Pane != tg.pane {
+		return nil, fail(http.StatusConflict, "the pane changed: %s now runs in %s, not %s; look again", tg.who, tg.pane, req.Pane)
 	}
 	var payload string // bytes for a dead pane
 	var steps []termItem
