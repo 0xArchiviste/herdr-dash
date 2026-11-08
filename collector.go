@@ -200,7 +200,10 @@ type Project struct {
 	// thread's live panes (leftover.go).
 	Orphans   []LeftoverPane `json:"orphans,omitempty"`
 	Leftovers int            `json:"leftovers,omitempty"`
-	Error     string         `json:"error,omitempty"`
+	// LeftoverAgents: those of Leftovers with an agent still in them (the
+	// rest are shells left after the agent exited).
+	LeftoverAgents int    `json:"leftover_agents,omitempty"`
+	Error          string `json:"error,omitempty"`
 	// EventsSig changes when the project's thread timelines may have
 	// (timeline.go): pages refetch /api/project/{slug}/timeline then.
 	EventsSig string `json:"events_sig"`
@@ -982,9 +985,14 @@ func (c *Collector) rebuild() {
 		pr.EventsSig = fmt.Sprintf("%s.%d", p.inboxSig, c.progressN[slug])
 		if set := lo[slug]; set != nil {
 			pr.Orphans = set.orphans
-			pr.Leftovers = len(set.orphans)
+			pr.Leftovers, pr.LeftoverAgents = len(set.orphans), len(set.orphans)
 			for _, ps := range set.threads {
 				pr.Leftovers += len(ps)
+				for _, l := range ps {
+					if l.Agent != "" {
+						pr.LeftoverAgents++
+					}
+				}
 			}
 		}
 		for _, t := range p.threads {

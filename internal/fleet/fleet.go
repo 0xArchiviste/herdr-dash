@@ -35,9 +35,11 @@ type Project struct {
 	Threads     []Thread
 	Error       string // the read model could not list it
 	// Leftovers counts live panes of resolved threads and orphan agent
-	// panes; LeftoverRSS is their memory (0: not sampled).
-	Leftovers   int
-	LeftoverRSS uint64
+	// panes, LeftoverAgents those with an agent still in them (the rest
+	// are shells); LeftoverRSS is their memory (0: not sampled).
+	Leftovers      int
+	LeftoverAgents int
+	LeftoverRSS    uint64
 }
 
 // Coordinator states, as the table shows them.
@@ -358,7 +360,14 @@ func build(p Project, u Usage, prio bool) (Row, []Item) {
 	// Closing them is the user's call, pane by pane, in the project's
 	// Threads view: never a bulk action here.
 	if p.Leftovers > 0 {
-		text := plural(p.Leftovers, "leftover agent", "leftover agents")
+		var parts []string
+		if p.LeftoverAgents > 0 {
+			parts = append(parts, plural(p.LeftoverAgents, "leftover agent", "leftover agents"))
+		}
+		if shells := p.Leftovers - p.LeftoverAgents; shells > 0 {
+			parts = append(parts, plural(shells, "leftover pane", "leftover panes")+" (agent exited)")
+		}
+		text := strings.Join(parts, ", ")
 		if p.LeftoverRSS > 0 {
 			text += fmt.Sprintf(" · %.1f GB", float64(p.LeftoverRSS)/(1<<30))
 		}

@@ -83,7 +83,7 @@ func (c collectorFleet) Projects() []fleet.Project {
 		}
 		out = append(out, fleet.Project{
 			Slug: p.Slug, Name: p.Name, Status: p.Status, Inbox: p.Inbox, Error: p.Error, Threads: byProject[p.Slug],
-			Leftovers: p.Leftovers, LeftoverRSS: rss[p.Slug],
+			Leftovers: p.Leftovers, LeftoverAgents: p.LeftoverAgents, LeftoverRSS: rss[p.Slug],
 			Coordinator: fleet.Coordinator{State: st, Activity: p.Coordinator.Activity, LastActivity: parseTime(p.Coordinator.LastActivity), StateSince: parseTime(p.Coordinator.StateSince)},
 		})
 	}
