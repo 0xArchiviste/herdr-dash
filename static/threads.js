@@ -35,13 +35,15 @@ window.HDThreads = (() => {
     { id: "working", label: "Working", ico: "▸" },
     { id: "queued", label: "Queued · starting", ico: "◷" },
     { id: "idle", label: "Idle", ico: "◌" },
+    // Resolved threads whose agents still run, and orphan agent panes.
+    { id: "leftover", label: "Resolved · still running", ico: "⏻" },
     { id: "review", label: "Review · PR open", ico: "⇡" },
     { id: "done", label: "Done", ico: "✓" },
   ];
   const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]));
   const CHIP = {
     blocked: "Blocked", waiting: "Waiting on you", review: "Ready for review", landing: "Landing",
-    working: "Working", idle: "Idle", resolved: "Resolved",
+    working: "Working", idle: "Idle", resolved: "Resolved", leftover: "Resolved · running",
   };
   const LAUNCH = { placing: "Placing", queued: "Queued", launching: "Launching", briefing: "Briefing", stuck: "Brief stuck", failed: "Launch failed" };
   // Timeline event types: an icon and a colour class each (threads.css).
@@ -54,6 +56,7 @@ window.HDThreads = (() => {
   };
   const stageOf = (t) => {
     if (t.state === "resolved") return "done";
+    if (t.state === "leftover") return "leftover";
     if (t.state === "blocked" || t.state === "waiting") return "needs";
     if (t.state === "review" || t.state === "landing") return "review";
     if (t.launch) return "queued";
@@ -74,6 +77,76 @@ window.HDThreads = (() => {
   const TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const when = (iso) => (iso ? TIME.format(new Date(iso)) : "");
   const prNum = (u) => (u && u.match(/\/pull\/(\d+)/)?.[1]) || "";
+  const bytes = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
+  // A pane's RSS in the last System frame (null: not sampled).
+  const rssOf = (pane) => { const p = window.HDSystem?.frameNow?.()?.procs?.find((x) => x.pane === pane); return p ? p.rss : null; };
+  const rssText = (pane) => { const b = rssOf(pane); return b == null ? "RSS …" : bytes(b); };
+
+  // ---------------------------------------------------------------- leftovers
+  // Closing a leftover agent: one pane at a time, or every leftover of a
+  // project with its count typed back. The server re-checks each pane with
+  // herdr and refuses a working agent or a pane that changed (leftover.go).
+  const enc2 = encodeURIComponent;
+  const describe = (l) => [
+    ["Thread", l.thread ? `${l.thread}${l.title ? " · " + l.title : ""}` : "none (orphan agent pane)"],
+    ["Pane", `${l.pane}${l.workspace ? " · workspace " + l.workspace : ""}`],
+    ["Agent", `${l.agent || "none (a shell is left)"} · ${l.status || "unknown"}`],
+    ["Cwd", l.deleted ? l.cwd.replace(/ \(deleted\)$/, "") + "  (folder deleted)" : l.cwd],
+    ["RSS", rssOf(l.pane) == null ? "not sampled yet" : bytes(rssOf(l.pane))],
+  ];
+  const want = (l) => ({ pane: l.pane, thread: l.thread || "", agent: l.agent || "", cwd: l.cwd || "", workspace: l.workspace || "" });
+  async function post(slug, body) {
+    try {
+      const r = await fetch(`/api/project/${enc2(slug)}/leftovers/close`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      return { ok: r.ok, status: r.status, data };
+    } catch (e) { return { ok: false, status: 0, data: { error: "network error: " + e.message } }; }
+  }
+  const toast = (m, k) => window.hd?.toast?.(m, k);
+  const titleOf = (slug, id) => st().threads.find((t) => t.key === slug + "/" + id)?.title || "";
+  async function closeLeftover(slug, l) {
+    l = { ...l, title: l.thread ? titleOf(slug, l.thread) : "" };
+    const dl = el("dl", { class: "lo-dl" }, ...describe(l).flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: v })]));
+    const warn = l.status === "working" ? el("p", { class: "msg warn", text: "The agent is working right now: Dash will refuse to close it. Wait until it is idle." }) : null;
+    const note = el("p", { class: "muted", text: "herdr closes the pane, which stops its agent. The thread stays resolved; its report and library are kept. The action is logged in the audit log." });
+    const ok = await window.hd.confirm(l.thread ? `Close the leftover agent of ${l.thread}${l.title ? ` “${l.title}”` : ""}?` : `Close the orphan agent pane ${l.pane}?`,
+      [dl, warn, note].filter(Boolean), "Close pane");
+    if (!ok) return;
+    const r = await post(slug, { panes: [want(l)] });
+    const res = r.data.results?.[0];
+    if (res?.result === "ok") toast(`Closed pane ${l.pane}${l.thread ? ` (${l.thread})` : ""}`);
+    else toast(`Not closed: ${res?.error || r.data.error || "HTTP " + r.status}`, "err");
+  }
+  function leftoversOf(slug) {
+    const ts = st().threads.filter((t) => t.project === slug && t.state === "leftover").sort((a, b) => a.id.localeCompare(b.id));
+    const p = st().projects.find((x) => x.slug === slug);
+    return [...ts.flatMap((t) => (t.leftover || []).map((l) => ({ ...l, thread: t.id, title: t.title }))), ...(p?.orphans || []).map((o) => ({ ...o, thread: "" }))];
+  }
+  async function closeAll(slug) {
+    const all = leftoversOf(slug);
+    if (!all.length) return;
+    const n = all.length;
+    const p = st().projects.find((x) => x.slug === slug);
+    const rows = el("ol", { class: "lo-all" }, ...all.map((l) => el("li", { "data-pane": l.pane },
+      el("b", { text: l.thread ? `${l.thread} · ${l.title || ""}` : "orphan agent pane" }),
+      el("span", { class: "mono", text: ` ${l.pane} · ${l.agent || "no agent"} (${l.status || "?"}) · ${l.cwd} · ${rssText(l.pane)}` }))));
+    const working = all.filter((l) => l.status === "working").length;
+    const input = el("input", { id: "leftover-count", type: "text", inputmode: "numeric", autocomplete: "off", "aria-label": `Type ${n} to confirm` });
+    const okBtn = document.getElementById("dlg-ok");
+    const sync = () => { okBtn.disabled = input.value.trim() !== String(n); };
+    input.addEventListener("input", sync);
+    const ok = await window.hd.confirm(`Close all ${n} leftover pane${n === 1 ? "" : "s"} of ${p?.name || slug}?`, [rows,
+      working ? el("p", { class: "msg warn", text: `${working} of them ${working === 1 ? "is" : "are"} working: Dash refuses those and closes the rest.` }) : null,
+      el("p", { class: "muted", text: "herdr closes each pane, which stops its agent. Each one is checked again first and logged in the audit log." }),
+      el("label", { class: "lo-count" }, `Type ${n} to confirm `, input)].filter(Boolean), `Close ${n} pane${n === 1 ? "" : "s"}`, () => { sync(); input.focus(); });
+    okBtn.disabled = false;
+    if (!ok) return;
+    const r = await post(slug, { all: true, count: n, panes: all.map(want) });
+    if (!r.data.results) { toast(`Not closed: ${r.data.error || "HTTP " + r.status}`, "err"); return; }
+    const bad = r.data.results.filter((x) => x.result !== "ok");
+    toast(`Closed ${r.data.closed} of ${n} leftover pane${n === 1 ? "" : "s"}` + (bad.length ? `; not closed: ${bad.map((x) => `${x.pane} (${x.error})`).join("; ")}` : ""), bad.length ? "err" : "");
+  }
 
   // ---------------------------------------------------------------- read state
   const SEEN_KEY = "hd-tv-seen";
@@ -188,10 +261,12 @@ window.HDThreads = (() => {
     for (const s of STAGES) {
       const head = [el("span", { class: "tv-dot", "aria-hidden": "true" }), el("span", { class: "tv-sh-label", text: s.label }), el("span", { class: "tv-sh-n" })];
       const list = el("div", { class: "tv-list" });
+      const all = s.id === "leftover" ? el("button", { type: "button", class: "tbtn danger tv-close-all", hidden: "", title: "Close every leftover agent of this project; asks first, with the count typed back",
+        text: "Close all leftovers in this project…", onclick: () => closeAll(slug) }) : null;
       const node = s.id === "done"
         ? el("details", { class: "tv-stage", "data-stage": s.id }, el("summary", { class: "tv-sh" }, ...head), list)
-        : el("section", { class: "tv-stage", "data-stage": s.id, "aria-label": s.label }, el("h4", { class: "tv-sh" }, ...head), list);
-      v.stages.set(s.id, { node, list, n: head[2] });
+        : el("section", { class: "tv-stage", "data-stage": s.id, "aria-label": s.label }, el("h4", { class: "tv-sh" }, ...head, all), list);
+      v.stages.set(s.id, { node, list, n: head[2], all });
     }
     v.empty = el("div", { class: "tv-empty", hidden: "" });
     v.root = el("div", { class: "tv" + (opts.compact ? " compact" : "") }, v.sum,
@@ -210,13 +285,41 @@ window.HDThreads = (() => {
     return hay.includes(v.q);
   }
 
+  // The live panes of a resolved thread (or an orphan): what runs where,
+  // how much memory it holds, and the close button.
+  function leftoverRows(slug, ls, thread) {
+    return el("ul", { class: "tv-lo" }, ...ls.map((l) => el("li", { "data-pane": l.pane },
+      el("span", { class: "tv-leftover-badge", title: "herdr still runs this pane", text: l.agent ? "agent still running" : "pane still open" }),
+      el("span", { class: "tv-lo-what", text: `${l.agent || "shell"} · ${l.status || "?"} · pane ${l.pane}` }),
+      el("span", { class: "tv-rss", title: "Memory (RSS) of the pane's processes", text: rssText(l.pane) }),
+      el("span", { class: "tv-lo-cwd", title: l.cwd, text: l.deleted ? l.cwd.replace(/ \(deleted\)$/, "") : l.cwd }),
+      l.deleted ? el("span", { class: "tv-lo-del", text: "folder deleted" }) : null,
+      el("button", { type: "button", class: "tbtn danger tv-close-leftover", title: `Close pane ${l.pane}; asks first`, text: "Close leftover agent…",
+        onclick: () => closeLeftover(slug, { ...l, thread: thread || "" }) }))));
+  }
+  function orphanCard(v, o) {
+    const sig = JSON.stringify([o, rssText(o.pane)]);
+    let c = v.cards.get("pane:" + o.pane);
+    if (c && c.dataset.sig === sig) return c;
+    if (!c) { c = el("article", { class: "tv-card tv-orphan", "data-pane": o.pane }); v.cards.set("pane:" + o.pane, c); }
+    c.dataset.sig = sig;
+    c.dataset.stage = "leftover";
+    c.replaceChildren(el("div", { class: "tv-top" },
+      el("span", { class: "tv-chip s-leftover", text: "Orphan agent" }),
+      el("span", { class: "tv-id", text: o.pane }),
+      el("span", { class: "tv-title", title: o.name || "", text: o.name || "Agent pane with this project's tokens, matching no thread" })),
+    leftoverRows(v.slug, [o], ""));
+    return c;
+  }
+
   function card(v, t) {
     const evs = tl.get(v.slug)?.threads?.[t.id] || [];
     const n = unread(v.slug, t.id);
     const open = v.open.has(t.id);
     const chip = chipOf(t);
     const pr = prNum(t.pr);
-    const sig = JSON.stringify([t.state, t.title, t.percent, t.activity, t.launch, t.pr, t.pr_state, t.last_activity, model(t), evs.length, evs[0]?.at, n, open, Math.floor(Date.now() / 60000)]);
+    const sig = JSON.stringify([t.state, t.title, t.percent, t.activity, t.launch, t.pr, t.pr_state, t.last_activity, model(t), evs.length, evs[0]?.at, n, open, Math.floor(Date.now() / 60000),
+      t.leftover, (t.leftover || []).map((l) => rssText(l.pane))]);
     let c = v.cards.get(t.id);
     if (c && c.dataset.sig === sig) return c;
     if (!c) { c = el("article", { class: "tv-card", "data-id": t.id, "data-key": t.key }); v.cards.set(t.id, c); }
@@ -249,7 +352,8 @@ window.HDThreads = (() => {
         el("span", { class: "tv-acts" },
           el("button", { type: "button", class: "tbtn tv-report", title: `Open ${t.id}'s report in a window`, "aria-label": `Report of ${t.id}`, text: "Report", onclick: () => openReport(t.key) }),
           el("button", { type: "button", class: "tbtn tv-open", title: `Open ${t.id}'s panel`, "aria-label": `Open ${t.id}`, text: "Open", onclick: () => window.hd?.select(t.key) }))),
-      t.state === "resolved" ? null : bar(t),
+      t.state === "resolved" || t.state === "leftover" ? null : bar(t),
+      t.state === "leftover" ? leftoverRows(t.project, t.leftover || [], t.id) : null,
       el("div", { class: "tv-meta" },
         model(t) ? el("span", { text: model(t) }) : null,
         el("span", { title: "Age: since the thread started", text: "age " + age(t.created) }),
@@ -269,19 +373,21 @@ window.HDThreads = (() => {
     const all = st().threads.filter((t) => t.project === slug);
     const by = Object.fromEntries(STAGES.map((s) => [s.id, []]));
     for (const t of all) by[stageOf(t)].push(t);
+    const orphans = st().projects.find((p) => p.slug === slug)?.orphans || [];
     const rank = { blocked: 0, waiting: 1, landing: 0, review: 1 };
     const recent = (t) => -(Date.parse(t.last_activity || t.updated || t.created || "") || 0);
     for (const k of Object.keys(by)) by[k].sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || recent(a) - recent(b));
     // Summary: counts that filter, overall progress, what is blocked on you.
-    const csig = JSON.stringify([STAGES.map((s) => by[s.id].length), [...v.filter]]);
+    const nOf = (id) => by[id].length + (id === "leftover" ? orphans.length : 0);
+    const csig = JSON.stringify([STAGES.map((s) => nOf(s.id)), [...v.filter]]);
     if (v.counts.dataset.sig !== csig) {
       v.counts.dataset.sig = csig;
       v.counts.replaceChildren(...STAGES.map((s) => el("button", { type: "button", class: "tv-count s-" + s.id, "data-stage": s.id, "aria-pressed": String(v.filter.has(s.id)),
         title: v.filter.has(s.id) ? `Showing ${s.label}: click to show every stage` : `Show only ${s.label}`,
         onclick: () => { v.filter.has(s.id) ? v.filter.delete(s.id) : v.filter.add(s.id); render(v); } },
-      el("span", { class: "tv-dot", "aria-hidden": "true" }), el("span", { class: "lbl", text: s.label }), el("span", { class: "n", text: String(by[s.id].length) }))));
+      el("span", { class: "tv-dot", "aria-hidden": "true" }), el("span", { class: "lbl", text: s.label }), el("span", { class: "n", text: String(nOf(s.id)) }))));
     }
-    const open = all.filter((t) => t.state !== "resolved");
+    const open = all.filter((t) => t.state !== "resolved" && t.state !== "leftover");
     const avg = open.length ? Math.round(open.reduce((a, t) => a + Math.max(0, Math.min(100, t.percent || 0)), 0) / open.length) : 0;
     const totalNew = all.reduce((a, t) => a + unread(slug, t.id), 0);
     v.overall.replaceChildren(...[
@@ -308,14 +414,16 @@ window.HDThreads = (() => {
       const g = v.stages.get(s.id);
       const want = !v.filter.size || v.filter.has(s.id);
       const list = want ? by[s.id].filter((t) => matches(v, t)) : [];
-      shown += list.length;
-      g.node.hidden = !list.length;
-      g.n.textContent = String(list.length);
+      const orph = want && s.id === "leftover" ? orphans.filter((o) => !v.q || [o.pane, o.name, o.agent, o.cwd, "orphan"].join("\n").toLowerCase().includes(v.q)) : [];
+      shown += list.length + orph.length;
+      g.node.hidden = !list.length && !orph.length;
+      g.n.textContent = String(list.length + orph.length);
       if (s.id === "done" && v.filter.has("done") && !g.node.open) g.node.open = true;
-      const cards = list.map((t) => card(v, t));
+      if (g.all) g.all.hidden = list.length + orph.length < 2;
+      const cards = [...list.map((t) => card(v, t)), ...orph.map((o) => orphanCard(v, o))];
       if (cards.length !== g.list.childElementCount || cards.some((c, i) => g.list.children[i] !== c)) g.list.replaceChildren(...cards);
     }
-    for (const id of v.cards.keys()) if (!all.some((t) => t.id === id)) v.cards.delete(id);
+    for (const id of v.cards.keys()) if (id.startsWith("pane:") ? !orphans.some((o) => "pane:" + o.pane === id) : !all.some((t) => t.id === id)) v.cards.delete(id);
     v.empty.hidden = shown > 0;
     if (!shown) {
       const filtered = v.q || v.filter.size;
@@ -358,5 +466,9 @@ window.HDThreads = (() => {
   // Relative times age even when nothing else changes.
   setInterval(() => { if (!document.hidden) refreshAll(); }, 60000);
 
-  return { mount, mountThread, state: refreshAll, openReport, stageOf, STAGES };
+  // A System frame: re-render only views that show a leftover's RSS.
+  function frame() {
+    if (st().threads.some((t) => t.state === "leftover") || st().projects.some((p) => p.orphans?.length)) refreshAll();
+  }
+  return { mount, mountThread, state: refreshAll, frame, openReport, stageOf, STAGES, closeLeftover, closeAll };
 })();

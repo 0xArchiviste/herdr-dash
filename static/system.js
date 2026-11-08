@@ -59,20 +59,22 @@
   // ------------------------------------------------------------ derived
   function agents() {
     const s = st(), per = new Map();
-    for (const p of s.projects) if (inFocus(p.slug)) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0, exited: 0 });
-    const tot = { working: 0, waiting: 0, idle: 0, exited: 0 };
+    for (const p of s.projects) if (inFocus(p.slug)) per.set(p.slug, { slug: p.slug, name: p.name || p.slug, max: p.max_parallel || 10, open: 0, working: 0, waiting: 0, idle: 0, exited: 0, leftover: p.leftovers || 0 });
+    const tot = { working: 0, waiting: 0, idle: 0, exited: 0, leftover: 0 };
+    // Agents left running by resolved threads, and orphan agent panes.
+    for (const p of per.values()) tot.leftover += p.leftover;
     // Agents that exited, leaving a shell in their pane: threads and coordinators.
     for (const p of s.projects) if (per.has(p.slug) && p.coordinator?.agent_exited) { per.get(p.slug).exited++; tot.exited++; }
     for (const t of s.threads) {
       const p = per.get(t.project);
-      if (!p || t.state === "resolved") continue;
+      if (!p || t.state === "resolved" || t.state === "leftover") continue;
       // herdr-projects counts open and starting threads against the limit.
       if (!t.launch || t.launch.stage !== "failed") p.open++;
       if (!t.pane_alive) continue;
       const k = t.agent_exited ? "exited" : t.needs_you ? "waiting" : t.state === "working" ? "working" : "idle";
       p[k]++; tot[k]++;
     }
-    const rows = [...per.values()].filter((p) => p.open || p.working || p.waiting || p.idle || p.exited);
+    const rows = [...per.values()].filter((p) => p.open || p.working || p.waiting || p.idle || p.exited || p.leftover);
     for (const p of rows) p.level = level((100 * p.open) / p.max);
     return { tot, rows };
   }
@@ -196,13 +198,16 @@
         el("span", { "data-k": "working", text: `${a.tot.working} working` }), " · ",
         el("span", { "data-k": "waiting", text: `${a.tot.waiting} waiting on you` }), " · ",
         el("span", { "data-k": "idle", text: `${a.tot.idle} idle` }),
-        a.tot.exited ? " · " : null, a.tot.exited ? el("span", { "data-k": "exited", text: `${a.tot.exited} exited` }) : null)];
+        a.tot.exited ? " · " : null, a.tot.exited ? el("span", { "data-k": "exited", text: `${a.tot.exited} exited` }) : null,
+        a.tot.leftover ? " · " : null, a.tot.leftover ? el("span", { "data-k": "leftover", title: "Agents still running for resolved threads, and orphan agent panes", text: `${a.tot.leftover} leftover` }) : null)];
     if (!a.rows.length) body.push(el("div", { class: "snote", text: "No open threads." }));
     else body.push(el("div", { class: "sprojs" }, ...a.rows.map((p) =>
       el("div", { class: "sproj", "data-slug": p.slug },
-        el("button", { type: "button", class: "spn", text: p.name, title: `Go to ${p.name} on the map`,
+        el("span", { class: "spn-wrap" },
+          el("button", { type: "button", class: "spn", text: p.name, title: `Go to ${p.name} on the map`,
           onclick: () => { close(); window.dash.goProject?.(p.slug); },
           onmouseenter: () => window.dash.light?.(p.slug), onmouseleave: () => window.dash.light?.(null) }),
+          p.leftover ? el("span", { class: "sc", "data-k": "leftover", title: "leftover: agents still running for resolved threads, and orphan agent panes", text: `${p.leftover} leftover` }) : null),
         el("span", { class: "sc", "data-k": "working", title: "working", text: String(p.working) }),
         el("span", { class: "sc", "data-k": "waiting", title: "waiting on you", text: String(p.waiting) }),
         el("span", { class: "sc", "data-k": "idle", title: "idle", text: String(p.idle) }),
@@ -217,9 +222,11 @@
     if (p.kind === "voice") return "Voice sidecar";
     if (p.kind === "coordinator") return `${s.projects.find((x) => x.slug === p.project)?.name || p.project} · coordinator`;
     if (p.kind === "thread") return `${p.thread} ${s.threads.find((t) => t.key === p.key)?.title || ""}`.trim();
+    // A resolved thread's agent still running, or an orphan agent pane.
+    if (p.kind === "leftover") return p.thread ? `${p.thread} ${s.threads.find((t) => t.key === p.key)?.title || ""} · leftover`.replace("  ", " ") : `pane ${p.pane} · leftover (orphan)`;
     return `pane ${p.pane}`;
   }
-  const opens = (p) => p.kind === "thread" || p.kind === "coordinator";
+  const opens = (p) => p.kind === "thread" || p.kind === "coordinator" || (p.kind === "leftover" && !!p.thread);
 
   function procsSec() {
     const body = [el("h3", { text: "Processes" })];
@@ -232,7 +239,7 @@
         title: `${p.n} process${p.n === 1 ? "" : "es"}, busiest ${p.top}` + (opens(p) ? " · open" : ""),
         onclick: opens(p) ? () => { close(); window.dash.open(p.key); } : null,
       },
-        el("span", { class: "spname" }, p.project && p.kind === "thread" ? el("span", { class: "spproj", text: p.project }) : null, procName(p)),
+        el("span", { class: "spname" }, p.project && (p.kind === "thread" || p.kind === "leftover") ? el("span", { class: "spproj", text: p.project }) : null, procName(p)),
         el("span", { class: "spagent", text: (p.exited ? "agent exited · " + p.top : [p.agent, p.top !== p.agent ? p.top : null].filter(Boolean).join(" · ")) + ` (${p.n})` }),
         el("span", { class: "spcpu", text: p.cpu == null ? "…" : pct(p.cpu) }),
         el("span", { class: "sprss", text: bytes(p.rss) })));
@@ -266,7 +273,7 @@
       el("div", { class: "stop" }, el("b", { text: "System" }),
         frame?.at ? el("time", { class: "snote", datetime: frame.at, text: `sampled ${new Date(frame.at).toLocaleTimeString()}` }) : null,
         el("button", { class: "close", type: "button", "aria-label": "Close system details", text: "×", onclick: close })),
-      machine(), focusNote(), agentsSec(), queueSec(), procsSec());
+      ...[machine(), focusNote(), agentsSec(), queueSec(), procsSec()].filter(Boolean));
     pop.querySelector(`.ssec[data-id="${focus}"]`)?.classList.add("focus");
     const r = $("#top").getBoundingClientRect();
     pop.style.top = `${Math.round(r.bottom + 4)}px`;

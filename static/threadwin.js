@@ -93,7 +93,7 @@ window.HDThreadWin = (() => {
     const t = st.threads.find((x) => x.key === key);
     if (!t) window.hd?.needResolved?.(key.split("/")[0]); // a resolved thread
     const p = t && st.projects.find((x) => x.slug === t.project);
-    return { name: t?.title || key, sub: t ? `${p?.name || t.project} · ${t.id} · ${t.state}` : "", short: t?.id || key, live: !!(t && t.pane_alive && t.state !== "resolved") };
+    return { name: t?.title || key, sub: t ? `${p?.name || t.project} · ${t.id} · ${t.state}` : "", short: t?.id || key, live: !!(t && t.pane_alive && t.state !== "resolved" && t.state !== "leftover") };
   }
 
   // imagesOf is whether key's chat box takes images (images.go), from the state.

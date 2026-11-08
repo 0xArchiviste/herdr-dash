@@ -34,6 +34,10 @@ type Project struct {
 	Coordinator Coordinator
 	Threads     []Thread
 	Error       string // the read model could not list it
+	// Leftovers counts live panes of resolved threads and orphan agent
+	// panes; LeftoverRSS is their memory (0: not sampled).
+	Leftovers   int
+	LeftoverRSS uint64
 }
 
 // Coordinator states, as the table shows them.
@@ -55,7 +59,8 @@ type Coordinator struct {
 	StateSince time.Time
 }
 
-// Thread states (Dash's): working waiting blocked review landing idle resolved.
+// Thread states (Dash's): working waiting blocked review landing idle
+// resolved, and leftover (resolved, its agent still running: not open).
 type Thread struct {
 	ID           string
 	Title        string
@@ -125,7 +130,8 @@ type Row struct {
 	RSS           uint64         `json:"rss"`
 	Agents        int            `json:"agents"`
 	LastActivity  string         `json:"last_activity"`
-	Score         int            `json:"score"` // its highest attention score, 0 for none
+	Leftovers     int            `json:"leftovers"` // agents left running by resolved threads, and orphans
+	Score         int            `json:"score"`     // its highest attention score, 0 for none
 	Error         string         `json:"error,omitempty"`
 }
 
@@ -140,6 +146,7 @@ const (
 	KindCoordMissing   = "coordinator-missing"
 	KindCoordExited    = "coordinator-exited"
 	KindReviewPile     = "review-pile"
+	KindLeftovers      = "leftovers"
 )
 
 // Base scores. The bands are far enough apart that the priority bonus moves
@@ -155,6 +162,7 @@ var base = map[string]int{
 	KindCoordMissing:   600,
 	KindCoordExited:    550,
 	KindReviewPile:     300,
+	KindLeftovers:      250,
 }
 
 const (
@@ -224,7 +232,7 @@ func stamp(t time.Time) string {
 }
 
 func build(p Project, u Usage, prio bool) (Row, []Item) {
-	r := Row{Slug: p.Slug, Name: p.Name, Status: p.Status, Inbox: p.Inbox, Priority: prio, CPU: u.CPU, RSS: u.RSS, Agents: u.Agents, Error: p.Error,
+	r := Row{Slug: p.Slug, Name: p.Name, Status: p.Status, Inbox: p.Inbox, Priority: prio, Leftovers: p.Leftovers, CPU: u.CPU, RSS: u.RSS, Agents: u.Agents, Error: p.Error,
 		Coordinator: RowCoordinator{State: p.Coordinator.State, Activity: p.Coordinator.Activity, LastActivity: stamp(p.Coordinator.LastActivity), StateSince: stamp(p.Coordinator.StateSince)},
 		Launches:    Launches{Errors: []string{}}}
 	if r.Name == "" {
@@ -245,7 +253,7 @@ func build(p Project, u Usage, prio bool) (Row, []Item) {
 		if th.LastActivity.After(last) {
 			last = th.LastActivity
 		}
-		if th.State == "resolved" {
+		if th.State == "resolved" || th.State == "leftover" {
 			continue
 		}
 		r.Open++
@@ -345,6 +353,16 @@ func build(p Project, u Usage, prio bool) (Row, []Item) {
 	}
 	if r.Unacked >= ReviewPileMin {
 		add(KindReviewPile, plural(r.Unacked, "unacked report", "unacked reports"), hub, oldestUnacked, r.Unacked)
+	}
+	// Agents left running after their threads were resolved hold memory.
+	// Closing them is the user's call, pane by pane, in the project's
+	// Threads view: never a bulk action here.
+	if p.Leftovers > 0 {
+		text := plural(p.Leftovers, "leftover agent", "leftover agents")
+		if p.LeftoverRSS > 0 {
+			text += fmt.Sprintf(" · %.1f GB", float64(p.LeftoverRSS)/(1<<30))
+		}
+		add(KindLeftovers, text, hub, time.Time{}, p.Leftovers)
 	}
 	return r, items
 }

@@ -108,7 +108,10 @@ type Pane struct {
 	AgentStatus   string `json:"agent_status"`
 	Cwd           string `json:"cwd"`
 	ForegroundCwd string `json:"foreground_cwd"`
-	AgentSession  *struct {
+	// DisplayAgent is the pane's name in herdr's sidebar; herdr-projects
+	// names a thread's pane "t-NNNN · title" (leftover.go).
+	DisplayAgent string `json:"display_agent"`
+	AgentSession *struct {
 		Agent string `json:"agent"`
 		Value string `json:"value"`
 	} `json:"agent_session"`
@@ -191,8 +194,13 @@ type Project struct {
 	Resolved int `json:"resolved"`
 	// MaxParallel is max_parallel_threads from PROJECT.md (herdr-projects
 	// warns past it; it does not hold threads back).
-	MaxParallel int    `json:"max_parallel"`
-	Error       string `json:"error,omitempty"`
+	MaxParallel int `json:"max_parallel"`
+	// Orphans are agent panes carrying the project's hp tokens that match
+	// none of its threads; Leftovers counts them and every resolved
+	// thread's live panes (leftover.go).
+	Orphans   []LeftoverPane `json:"orphans,omitempty"`
+	Leftovers int            `json:"leftovers,omitempty"`
+	Error     string         `json:"error,omitempty"`
 	// EventsSig changes when the project's thread timelines may have
 	// (timeline.go): pages refetch /api/project/{slug}/timeline then.
 	EventsSig string `json:"events_sig"`
@@ -234,6 +242,9 @@ type Thread struct {
 	Error        string   `json:"error,omitempty"`
 	Next         []string `json:"next"`
 	Prompt       *Prompt  `json:"prompt,omitempty"`
+	// Leftover: the live panes of a resolved thread (state "leftover"),
+	// whose agents still run and hold memory (leftover.go).
+	Leftover []LeftoverPane `json:"leftover,omitempty"`
 	// Images says whether the chat box may send images, and why not.
 	Images ImageSupport `json:"images"`
 
@@ -292,6 +303,8 @@ type Collector struct {
 	listSig    uint64    // root files and panes as of the last `list`
 	listAt     time.Time // when `list` last ran
 	listOut    []byte
+	panesHash  uint64        // the last pane list's bytes, for the leftover cache
+	leftover   leftoverCache // leftover.go
 
 	// Thread timelines (timeline.go): progress changes seen between thread
 	// lists, the count per project (part of EventsSig), built answers.
@@ -450,6 +463,9 @@ func (c *Collector) refreshPanes(ctx context.Context) {
 		return
 	}
 	c.panesErr = ""
+	h := fnv.New64a()
+	h.Write(out)
+	c.panesHash = h.Sum64()
 	c.panes = map[string]Pane{}
 	live := map[string]bool{}
 	for _, p := range doc.Result.Panes {
@@ -954,6 +970,7 @@ func (c *Collector) rebuild() {
 	if c.panesErr != "" {
 		snap.Errors = append(snap.Errors, c.panesErr)
 	}
+	lo := c.leftovers()
 	for _, slug := range c.order {
 		p := c.projects[slug]
 		if p == nil {
@@ -963,6 +980,13 @@ func (c *Collector) rebuild() {
 		pr.Error = p.listError
 		pr.Coordinator = c.coordinator(p)
 		pr.EventsSig = fmt.Sprintf("%s.%d", p.inboxSig, c.progressN[slug])
+		if set := lo[slug]; set != nil {
+			pr.Orphans = set.orphans
+			pr.Leftovers = len(set.orphans)
+			for _, ps := range set.threads {
+				pr.Leftovers += len(ps)
+			}
+		}
 		for _, t := range p.threads {
 			if t.Status == "resolved" {
 				pr.Resolved++
@@ -1030,6 +1054,10 @@ func (c *Collector) rebuild() {
 			if th.Prompt != nil && th.State != "resolved" {
 				th.State = "blocked"
 			}
+			// Resolved, but its agent still runs somewhere: not done yet.
+			if set := lo[slug]; set != nil && t.Status == "resolved" && len(set.threads[t.ID]) > 0 {
+				th.State, th.Leftover = "leftover", set.threads[t.ID]
+			}
 			switch th.State {
 			case "waiting", "blocked", "review", "landing":
 				th.NeedsYou = true
@@ -1048,8 +1076,19 @@ func (c *Collector) rebuild() {
 		}
 	}
 	for _, th := range snap.Threads {
-		if th.PaneID != "" && th.State != "resolved" {
+		if th.PaneID != "" && th.State != "resolved" && th.State != "leftover" {
 			owners[th.PaneID] = paneOwner{key: th.Key, kind: "thread", project: th.Project, thread: th.ID, agent: th.Agent, exited: th.AgentExited}
+		}
+	}
+	// Leftovers last: a pane is a leftover only when no live owner claims it.
+	for _, th := range snap.Threads {
+		for _, l := range th.Leftover {
+			owners[l.Pane] = paneOwner{key: th.Key, kind: "leftover", project: th.Project, thread: th.ID, agent: l.Agent}
+		}
+	}
+	for _, pr := range snap.Projects {
+		for _, l := range pr.Orphans {
+			owners[l.Pane] = paneOwner{key: "pane:" + l.Pane, kind: "leftover", project: pr.Slug, agent: l.Agent}
 		}
 	}
 	c.owners = owners

@@ -96,3 +96,7 @@ button.sproc:hover, button.sproc:focus-visible, .squeue:hover, .squeue:focus-vis
   .sys-pop { left: 10px; right: 10px; width: auto; }
 }
 [data-k="exited"] { color: var(--s-exited, #f75341); }
+[data-k="leftover"] { color: var(--s-leftover, #9a7fc4); }
+.sproc[data-kind="leftover"] .spname { font-style: italic; }
+.spn-wrap { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.spn-wrap .sc[data-k="leftover"] { flex: none; }
