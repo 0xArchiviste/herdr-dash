@@ -8,11 +8,15 @@
     review: { label: "Ready for review", color: "#68a8e4" },
     landing: { label: "Landing", color: "#2be4d0" },
     idle: { label: "Idle", color: "#baa67f" },
+    // Resolved, but its agent still runs (leftover.go): not open, not done.
+    leftover: { label: "Resolved · still running", color: "#9a7fc4" },
     resolved: { label: "Resolved", color: "#4e4e4e" },
   };
+  // Resolved for the user's purposes: no chat, no triage, not open work.
+  const isDone = (t) => t.state === "resolved" || t.state === "leftover";
   // A coordinator's state: herdr's live status, plus herdr-projects' "needs you".
   const COORD = { blocked: "Blocked", waiting: "Waiting on you", working: "Working", idle: "Idle", exited: "Agent exited", none: "No live pane" };
-  const ORDER = ["blocked", "waiting", "review", "landing", "working", "idle", "resolved"];
+  const ORDER = ["blocked", "waiting", "review", "landing", "working", "idle", "leftover", "resolved"];
   const HUB_COLORS = ["#ff8700", "#ff5c8f", "#2be4d0", "#fed06e", "#68a8e4", "#98bc37", "#e02c6d", "#0aaeb3", "#f75341", "#fce8c3"];
   // Viewer's local time zone, labelled (e.g. "Oct 10, 5:00 PM EDT").
   const TIME_FMT = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
@@ -268,6 +272,7 @@
 
   function threadRadius(t) {
     if (t.state === "resolved") return 4;
+    if (t.state === "leftover") return 7;
     const a = ageSec(t);
     const recency = Math.exp(-a / (6 * 3600)); // 1 now, ~0.37 after 6h
     return 6 + 9 * recency + (t.needs_you ? 2 : 0);
@@ -360,7 +365,7 @@
       const id = "hub:" + p.slug;
       const n = nodes.get(id) || { id, x: Math.cos(i) * 200, y: Math.sin(i) * 200 };
       const ts = per.get(p.slug) || [];
-      Object.assign(n, { hub: true, p, faded: !inFocus(p.slug), size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => t.state !== "resolved").length });
+      Object.assign(n, { hub: true, p, faded: !inFocus(p.slug), size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => !isDone(t)).length });
       want.push(n);
     });
     const hubIds = new Set(want.map((n) => n.id));
@@ -389,6 +394,9 @@
       (enter) => {
         const g = enter.append("g").attr("data-key", (d) => d.id).style("opacity", 0);
         g.append("circle").attr("class", "ring");
+        // A resolved thread whose agent still runs: a ring of its own (CSS
+        // shows it on .leftover nodes only).
+        g.filter((d) => !d.hub).append("circle").attr("class", "leftover-ring");
         g.append("circle").attr("class", "core").attr("r", 0);
         g.filter((d) => d.hub).append("text").attr("class", "count").attr("text-anchor", "middle").attr("dy", "0.35em");
         // Shift+click opens the thread (or coordinator) in a floating window.
@@ -419,6 +427,7 @@
       .attr("fill", (d) => (d.hub ? "#262626" : d.color)).style("stroke", (d) => (d.hub ? d.color : null));
     nodeSel.filter((d) => d.hub).select("text.count").attr("fill", (d) => d.color);
     nodeSel.select("circle.ring").attr("r", (d) => d.r);
+    nodeSel.select("circle.leftover-ring").attr("r", (d) => d.r + 4);
     nodeSel.filter((d) => d.hub).select("text.count").text((d) => d.open || "");
     hlabelSel = hlabelG.selectAll("text.name").data(want.filter((d) => d.hub), (d) => d.id)
       .join((enter) => enter.append("text").attr("class", "name").attr("text-anchor", "middle"))
@@ -754,7 +763,7 @@
         el("button", { type: "button", class: "pgo", tabindex: "-1", title: "Go to this project on the map (G)", "aria-label": "Go to " + p.name, text: "Go" }))));
       filterRows();
     }
-    const counts = d3.rollup(state.threads, (v) => v.filter((t) => t.state !== "resolved").length, (t) => t.project);
+    const counts = d3.rollup(state.threads, (v) => v.filter((t) => !isDone(t)).length, (t) => t.project);
     for (const r of list.children) {
       const on = eff.has(r.dataset.slug);
       if (r.getAttribute("aria-checked") !== String(on)) r.setAttribute("aria-checked", String(on));
@@ -1072,7 +1081,7 @@
     }
     detailTimer = setInterval(() => loadDetail(key), 10000);
     const t = state.threads.find((x) => x.key === key);
-    if (t && t.pane_alive && t.state !== "resolved") {
+    if (t && t.pane_alive && !isDone(t)) {
       // The screen streams over SSE: every few seconds, faster after a send.
       screenES = new EventSource(tpath(key, "screen") + "?ansi=1");
       screenES.addEventListener("screen", (e) => { if (selected === key) showScreen(JSON.parse(e.data)); });
@@ -1115,8 +1124,8 @@
 
   function buildChat(t) {
     const box = el("section", { id: "p-chat" }, el("h3", { text: "Chat" }));
-    if (!t.pane_alive || t.state === "resolved") {
-      box.append(el("p", { class: "muted", text: t.state === "resolved" ? "Resolved: no pane to chat with." : "The pane is gone: nothing to chat with." }));
+    if (!t.pane_alive || isDone(t)) {
+      box.append(el("p", { class: "muted", text: isDone(t) ? "Resolved: no pane to chat with." : "The pane is gone: nothing to chat with." }));
       return box;
     }
     const key = t.key;
@@ -1436,7 +1445,7 @@
     const head = $("#p-head");
     head.replaceChildren(...[el("span", { class: "pill", style: `background:${st.color}`, text: st.label }),
       t.activity && el("span", { text: "  " + t.activity })].filter(Boolean));
-    if (t.percent && t.state !== "resolved") head.append(el("div", { class: "bar" }, el("i", { style: `width:${t.percent}%` })));
+    if (t.percent && !isDone(t)) head.append(el("div", { class: "bar" }, el("i", { style: `width:${t.percent}%` })));
     const rows = [
       ["Agent", `${t.agent || "?"}${t.pane_id ? " · pane " + t.pane_id : ""}${t.pane_alive ? (t.agent_exited ? " (agent exited)" : "") : t.state === "resolved" ? "" : " (pane gone)"}`],
       ["Live", t.live_status || "—"],
@@ -1444,9 +1453,13 @@
       ["Last activity", `${nyTime(t.last_activity)} (${ago(t.last_activity)})`],
       ["Created", nyTime(t.created)],
     ];
+    for (const l of t.leftover || []) rows.push(["Still running", `${l.agent || "no agent (a shell)"} in pane ${l.pane} · ${l.status || "?"} · ${l.cwd}`]);
     const acts = $("#p-actions");
     if (acts) {
-      acts.replaceChildren(...(t.state === "resolved" ? [] : [
+      acts.replaceChildren(...(t.state === "leftover" ? (t.leftover || []).map((l) =>
+        el("button", { class: "tbtn danger", "data-act": "close-leftover", "data-pane": l.pane, text: (t.leftover.length > 1 ? `Close leftover agent in ${l.pane}` : "Close leftover agent") + "…",
+          title: `herdr closes pane ${l.pane}; asks first`, onclick: () => window.HDThreads?.closeLeftover(t.project, l) }))
+        : t.state === "resolved" ? [] : [
         el("button", { class: "tbtn", "data-act": "ack", text: t.acked ? "Acked" : "Ack", disabled: t.acked ? "" : null, title: "Record that you saw the current report", onclick: () => ackKeys([t.key]) }),
         el("button", { class: "tbtn", "data-act": "snooze", text: "Snooze 1 day", onclick: () => snoozeKeys([t.key]) }),
         el("button", { class: "tbtn danger", "data-act": "resolve", text: "Resolve…", onclick: () => resolveKey(t.key) }),
@@ -1632,7 +1645,7 @@
   function onStream(type, d) {
     if (type === "state") { $("#live").className = "live on"; checkBuild(d.build); applySnapshot(d); }
     else if (type === "delta") applyDelta(d);
-    else if (type === "system") { window.HDSystem?.frame(d); window.HDFleet?.frame(); }
+    else if (type === "system") { window.HDSystem?.frame(d); window.HDFleet?.frame(); window.HDThreads?.frame?.(); }
   }
   let stream = null;
   function connect() {

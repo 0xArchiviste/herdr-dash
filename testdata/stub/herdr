@@ -74,7 +74,7 @@ case "$1 $2" in
   "pane get")
     # The pane's row from panes.json; STUB_SCREENS/<pane>.status overrides
     # its agent_status.
-    row="$(grep -F "\"pane_id\":\"$3\"" "$D/panes.json" | sed 's/,$//')"
+    row="$(grep -F "\"pane_id\":\"$3\"" "${STUB_PANES:-$D/panes.json}" | sed 's/,$//')"
     [ -n "$row" ] || { echo "error: no pane $3" >&2; exit 1; }
     if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${3/:/_}.status" ]; then
       row="$(printf '%s' "$row" | sed "s/\"agent_status\":\"[a-z]*\"/\"agent_status\":\"$(cat "$STUB_SCREENS/${3/:/_}.status")\"/")"
@@ -88,6 +88,16 @@ case "$1 $2" in
     elif [ -f "$f.noagent" ]; then fg=bash; pg=4242
     else fg="$(grep -F "\"pane_id\":\"$pane\"" "$D/panes.json" | sed -E 's/.*"agent":"([a-z]*)".*/\1/')"; pg=4243; fi
     printf '{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":%s,"foreground_processes":[{"argv":["%s"],"name":"%s","pid":%s}],"pane_id":"%s","shell_pid":4242},"type":"pane_process_info"}}\n' "$pg" "$fg" "$fg" "$pg" "$pane" ;;
+  "pane close")
+    # The row goes from STUB_PANES. A file close-confirm-<pane> next to this
+    # script (":" as "_") answers like herdr for the last pane of a
+    # repository's primary workspace with linked worktrees open.
+    f="${STUB_PANES:-$D/panes.json}"
+    grep -qF "\"pane_id\":\"$3\"" "$f" || { echo '{"error":{"code":"pane_not_found","message":"no such pane"},"id":"cli:pane:close"}'; exit 1; }
+    if [ -f "$D/close-confirm-${3/:/_}" ]; then echo '{"error":{"code":"confirmation_required","message":"closing this pane would close a worktree group"},"id":"cli:pane:close"}'; exit 1; fi
+    sed -i "/\"pane_id\":\"$3\"/d" "$f"
+    sed -i -z 's/,\n\]}}/\n]}}/' "$f"
+    echo '{"id":"cli:pane:close","result":{"type":"ok"}}' ;;
   "pane send-keys"|"pane send-text")
     # STUB_SCREENS/<pane>.onkeys: after a key press the pane shows that file
     # (an agent moving on); the marker is used up.

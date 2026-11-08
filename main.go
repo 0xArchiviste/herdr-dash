@@ -318,7 +318,9 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 	NewRouting(cfg, col, usage, act).register(mux)
 	fl := NewFleet(cfg, col)
 	fl.register(mux)
-	NewFleetActions(cfg, fl, act).register(mux)
+	fa := NewFleetActions(cfg, fl, act)
+	fa.register(mux)
+	NewLeftovers(act, fa.audit).register(mux)
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		if col.sys.Stale() {
 			col.SampleSystem()

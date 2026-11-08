@@ -148,3 +148,29 @@ summary.tv-sh:focus-visible { outline: 2px solid var(--bblue); outline-offset: 2
 @media (prefers-reduced-motion: reduce) {
   .tv-count, .tv-expand { transition: none; }
 }
+
+/* Resolved · still running (leftover.go): resolved threads whose agents
+   still hold a pane, and orphan agent panes. */
+.tv { --tv-leftover: var(--s-leftover, #9a7fc4); }
+.tv .s-leftover, .tv-stage[data-stage="leftover"] { --c: var(--tv-leftover); }
+.tv-chip.s-leftover { color: var(--tv-leftover); }
+.tv-stage[data-stage="leftover"] .tv-sh { flex-wrap: wrap; }
+.tv-close-all { margin-left: auto; font-size: 11px; }
+.tv-close-all[hidden] { display: none; }
+.tv-lo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tv-lo li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; font-size: 12px; }
+.tv-leftover-badge { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--tv-leftover);
+  border: 1px dashed var(--tv-leftover); background: color-mix(in srgb, var(--tv-leftover) 12%, var(--black)); }
+.tv-lo-what { color: var(--bwhite); }
+.tv-rss { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--byellow); }
+.tv-lo-cwd { flex: 1 1 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bblack); font-family: ui-monospace, monospace; font-size: 11px; }
+.tv-lo-del { color: var(--bred); font-size: 11px; }
+.tv-close-leftover { margin-left: auto; }
+.tv-card[data-stage="leftover"] { border-style: dashed; }
+/* The confirmations (static/threads.js, in #dlg). */
+.lo-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 8px 0; }
+.lo-dl dt { color: var(--bblack); }
+.lo-dl dd { margin: 0; overflow-wrap: anywhere; }
+.lo-all { margin: 8px 0; padding-left: 20px; max-height: 40vh; overflow: auto; font-size: 12px; }
+.lo-all li { margin: 2px 0; overflow-wrap: anywhere; }
+.lo-count input { width: 5em; margin-left: 6px; }

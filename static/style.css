@@ -7,6 +7,7 @@
 
   --s-working: var(--bgreen); --s-waiting: var(--yellow); --s-blocked: var(--red); --s-review: var(--bblue);
   --s-landing: var(--bcyan); --s-idle: var(--white); --s-resolved: var(--g5);
+  --s-leftover: #9a7fc4;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--hard-black); color: var(--bwhite);
@@ -435,3 +436,8 @@ header#top { padding: 14px 20px; gap: 12px 20px; }
 .ht-keys { margin-top: 6px; padding: 10px; border: 1px dashed var(--borange); border-radius: 6px; color: var(--bblack); font-size: 12px; cursor: text; }
 .ht-keys:focus { outline: none; border-style: solid; color: var(--bwhite); background: #2a1f0a; }
 .ht-log .msg { font-size: 12px; margin-top: 4px; }
+/* A resolved thread whose agent still runs (leftover.go): a dashed outer
+   ring that says "still holding a pane", without the pulse of live work. */
+.node .leftover-ring { display: none; fill: none; pointer-events: none; }
+.node.leftover .leftover-ring { display: inline; stroke: var(--s-leftover, #9a7fc4); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.link.leftover { stroke-dasharray: 2 3; }

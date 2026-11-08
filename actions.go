@@ -46,7 +46,7 @@ var allowedKeys = map[string]bool{
 }
 
 // codeRe pulls the machine-readable refusal out of a herdr-projects error.
-var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|draft_in_field|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked|agent_alive|confirm_unknown|confirm_used|confirm_expired|confirm_count|plan_changed)\b`)
+var codeRe = regexp.MustCompile(`\b(agent_blocked|prompt_unconfirmed|draft_in_box|draft_in_field|prompt_gone|prompt_changed|prompt_stuck|pane_changed|agent_not_blocked|agent_alive|confirm_unknown|confirm_used|confirm_expired|confirm_count|plan_changed|not_leftover|not_resolved|pane_gone|agent_working|worktree_group)\b`)
 
 type Actions struct {
 	cfg    Config
@@ -102,6 +102,15 @@ type httpErr struct {
 }
 
 func (e httpErr) Error() string { return e.msg }
+
+// bodyErr is a refusal that answers with a body of its own (status, JSON).
+type bodyErr struct {
+	status int
+	msg    string
+	body   any
+}
+
+func (e bodyErr) Error() string { return e.msg }
 
 func fail(status int, format string, a ...any) error {
 	return httpErr{status, fmt.Sprintf(format, a...)}
@@ -182,7 +191,13 @@ func (a *Actions) guardFull(limitOf func(*http.Request) int64, readOK bool, h fu
 			}
 		}
 		var he httpErr
+		var be bodyErr
 		switch {
+		case errors.As(err, &be):
+			log.Printf("action %s from %s: refused %d: %s", target, r.RemoteAddr, be.status, be.msg)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(be.status)
+			json.NewEncoder(w).Encode(be.body)
 		case err == nil:
 			log.Printf("action %s from %s: ok (%s)", target, r.RemoteAddr, time.Since(start).Round(time.Millisecond))
 			writeJSON(w, out)
