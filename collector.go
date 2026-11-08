@@ -1243,6 +1243,9 @@ const (
 	liveLines = 60
 	// maxHistory caps the lines one history read may ask for.
 	maxHistory = 2000
+	// herdrReadMax is the most lines one `herdr pane read` returns (herdr
+	// 0.9.3), whatever --lines asks for.
+	herdrReadMax = 1000
 	// historyAge is how long a history read is reused, for any request of
 	// at most as many lines.
 	historyAge = 5 * time.Second
@@ -1435,10 +1438,23 @@ func (c *Collector) paneAgent(pane string) string {
 // lines is reused, whichever format it was asked in: one read keeps both.
 func (c *Collector) History(ctx context.Context, pane string, n int, ansi bool) string {
 	n = max(1, min(n, maxHistory))
-	h, ok := c.cachedLines(c.history, pane, historyAge, n)
+	// A history read older than the pane's newest live read may show a
+	// screen from before a redraw or a burst: it is read again.
+	fresh := func() (screenHit, bool) {
+		h, ok := c.cachedLines(c.history, pane, historyAge, n)
+		if ok {
+			c.mu.Lock()
+			if s, seen := c.screens[pane]; seen && s.at.After(h.at) {
+				ok = false
+			}
+			c.mu.Unlock()
+		}
+		return h, ok
+	}
+	h, ok := fresh()
 	if !ok {
 		unlock := c.lockPane(pane)
-		if h, ok = c.cachedLines(c.history, pane, historyAge, n); !ok {
+		if h, ok = fresh(); !ok {
 			raw := c.readPaneANSI(ctx, pane, n)
 			h = screenHit{text: stripANSI(raw), raw: raw, lines: n, at: time.Now()}
 			// A read cut short by the asker leaving is not the pane's

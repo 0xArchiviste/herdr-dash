@@ -64,6 +64,8 @@ case "$1 $2" in
       echo "clock $(date +%s%N)" # every read differs, like a live agent
       printf 'screen of %s\n❯ waiting for approval <b>bold?</b>\nLAST LINE of %s\n' "$pane" "$pane"
     }
+    # STUB_READ_MAX: like herdr 0.9.3, a read returns at most that many lines.
+    if [ -n "${STUB_READ_MAX:-}" ] && [ "${lines:-0}" -gt "$STUB_READ_MAX" ]; then lines="$STUB_READ_MAX"; fi
     # A long read takes a while, so concurrent readers would overlap.
     if [ "${lines:-0}" -gt 60 ]; then sleep 0.3; fi
     if [ -n "${STUB_SCREENS:-}" ] && [ -f "$STUB_SCREENS/${pane/:/_}.alt" ] && [ "$src" != "detection" ]; then

@@ -515,8 +515,9 @@ func (a *Actions) bulkAck(r *http.Request, body []byte) (any, error) {
 
 type screenEvent struct {
 	Screen     string  `json:"screen"`
-	ANSI       bool    `json:"ansi,omitempty"` // Screen keeps its escapes (asked with ?ansi=1)
-	Cols       int     `json:"cols,omitempty"` // the pane's width, with ANSI only
+	ANSI       bool    `json:"ansi,omitempty"`    // Screen keeps its escapes (asked with ?ansi=1)
+	Cols       int     `json:"cols,omitempty"`    // the pane's width, with ANSI only
+	Pane       string  `json:"pane_id,omitempty"` // the pane read, for writes to name it
 	LiveStatus string  `json:"live_status"`
 	PaneAlive  bool    `json:"pane_alive"`
 	Prompt     *Prompt `json:"prompt,omitempty"`
@@ -606,7 +607,14 @@ func (a *Actions) history(w http.ResponseWriter, r *http.Request, target screenT
 	pane, alive, readable := target()
 	ev := map[string]any{"screen": "", "lines": n, "pane_alive": alive}
 	if readable {
-		ev["screen"] = a.col.History(r.Context(), pane, n, r.URL.Query().Get("ansi") == "1")
+		s := a.col.History(r.Context(), pane, n, r.URL.Query().Get("ansi") == "1")
+		ev["screen"] = s
+		// herdr reads back at most herdrReadMax lines, however many are
+		// asked for: a short read of exactly that many is its limit, not
+		// the start of the pane's history.
+		if got := strings.Count(s, "\n") + 1; n > herdrReadMax && got == herdrReadMax {
+			ev["limit"] = herdrReadMax
+		}
 	}
 	writeJSON(w, ev)
 }
@@ -659,6 +667,7 @@ func (a *Actions) screenEvents(w http.ResponseWriter, r *http.Request, target sc
 		lastRead = time.Now()
 		ev := screenEvent{PaneAlive: alive}
 		if readable {
+			ev.Pane = pane
 			var raw string
 			ev.Screen, raw = a.col.Screen(r.Context(), pane, every-100*time.Millisecond)
 			if ansi {
