@@ -379,10 +379,12 @@ window.HDThreads = (() => {
     for (const k of Object.keys(by)) by[k].sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || recent(a) - recent(b));
     // Summary: counts that filter, overall progress, what is blocked on you.
     const nOf = (id) => by[id].length + (id === "leftover" ? orphans.length : 0);
-    const csig = JSON.stringify([STAGES.map((s) => nOf(s.id)), [...v.filter]]);
+    // "Resolved · still running" is an exception: no chip or group unless it has something.
+    const stagesNow = STAGES.filter((s) => s.id !== "leftover" || nOf("leftover") || v.filter.has("leftover"));
+    const csig = JSON.stringify([stagesNow.map((s) => [s.id, nOf(s.id)]), [...v.filter]]);
     if (v.counts.dataset.sig !== csig) {
       v.counts.dataset.sig = csig;
-      v.counts.replaceChildren(...STAGES.map((s) => el("button", { type: "button", class: "tv-count s-" + s.id, "data-stage": s.id, "aria-pressed": String(v.filter.has(s.id)),
+      v.counts.replaceChildren(...stagesNow.map((s) => el("button", { type: "button", class: "tv-count s-" + s.id, "data-stage": s.id, "aria-pressed": String(v.filter.has(s.id)),
         title: v.filter.has(s.id) ? `Showing ${s.label}: click to show every stage` : `Show only ${s.label}`,
         onclick: () => { v.filter.has(s.id) ? v.filter.delete(s.id) : v.filter.add(s.id); render(v); } },
       el("span", { class: "tv-dot", "aria-hidden": "true" }), el("span", { class: "lbl", text: s.label }), el("span", { class: "n", text: String(nOf(s.id)) }))));
@@ -420,6 +422,11 @@ window.HDThreads = (() => {
       g.n.textContent = String(list.length + orph.length);
       if (s.id === "done" && v.filter.has("done") && !g.node.open) g.node.open = true;
       if (g.all) g.all.hidden = list.length + orph.length < 2;
+      if (s.id === "leftover") {
+        const review = v.stages.get("review").node;
+        if (!nOf("leftover")) g.node.remove();
+        else if (!g.node.isConnected) review.before(g.node);
+      }
       const cards = [...list.map((t) => card(v, t)), ...orph.map((o) => orphanCard(v, o))];
       if (cards.length !== g.list.childElementCount || cards.some((c, i) => g.list.children[i] !== c)) g.list.replaceChildren(...cards);
     }
