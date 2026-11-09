@@ -1,0 +1,100 @@
+/* The Memory map (static/memory.js): totals on top, the treemap with a side
+   column of growers and project sparklines, a legend and the shared-memory
+   note. Tiles take their owner's state colour (--mm-c), as on the graph;
+   groups show it in their header. Phones: a sorted list with bars. */
+.hwin.mm-win { width: min(1100px, calc(100vw - 16px)); height: min(720px, calc(100vh - 120px)); }
+.mm-win .hw-body { display: flex; flex-direction: column; min-height: 0; font-size: 12px; }
+.mm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.mm-win :is(button):focus-visible { outline: 2px solid var(--bblue); outline-offset: 1px; }
+.mm-calm { margin: 2px 0; color: var(--bblack); }
+
+.mm-totals { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.mm-t { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--white); }
+.mm-t b { color: var(--bblack); font-weight: 600; }
+.mm-t[data-level="warn"] { color: var(--byellow); }
+.mm-t[data-level="crit"] { color: var(--bred); }
+.mm-t[data-k="cgroup"] { white-space: normal; }
+.mm-cgbar { position: relative; display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--g3); overflow: visible; vertical-align: middle; }
+.mm-cgbar i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--bgreen); }
+.mm-cgbar[data-level="warn"] i { background: var(--yellow); }
+.mm-cgbar[data-level="crit"] i { background: var(--red); }
+.mm-cgbar u { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--bwhite); text-decoration: none; }
+
+.mm-bar2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.mm-metric { display: flex; align-items: center; gap: 8px; color: var(--bblack); }
+.mm-seg { display: inline-flex; gap: 2px; }
+.mm-seg .tbtn { padding: 1px 7px; font-size: 11px; }
+.mm-seg .tbtn[aria-pressed="true"] { background: var(--g4); color: var(--bwhite); }
+.mm-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; }
+.mm-crumb { all: unset; cursor: pointer; padding: 1px 6px; border-radius: 5px; color: var(--bblue); white-space: nowrap; }
+.mm-crumb[aria-current="true"] { color: var(--bwhite); background: var(--g2); cursor: default; }
+.mm-crumb:hover { background: var(--g2); }
+.mm-sep { color: var(--g5); }
+
+.mm-main { flex: 1; min-height: 0; display: flex; gap: 8px; }
+.mm-stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.mm-map { position: relative; flex: 1; min-height: 160px; overflow: hidden; border-radius: 6px; background: var(--hard-black); }
+.mm-tile { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: 2px; cursor: zoom-in;
+  background: var(--mm-c, var(--g4)); color: var(--hard-black); }
+.mm-tile.group { background: color-mix(in srgb, var(--mm-c, var(--g3)) 22%, var(--g1)); color: var(--bwhite); }
+.mm-tile.group.nohead { background: var(--mm-c, var(--g3)); }
+.mm-tile[data-state="project"], .mm-tile[data-state="machine"] { background: var(--g1); }
+.mm-tile[data-state="machine"] { background: transparent; }
+.mm-tile:not(.group):hover { filter: brightness(1.15); }
+.mm-tile.hl { box-shadow: inset 0 0 0 2px var(--bwhite); }
+.mm-tile.hl > .mm-head { box-shadow: inset 0 2px 0 var(--bwhite), inset 2px 0 0 var(--bwhite), inset -2px 0 0 var(--bwhite); }
+.mm-head { display: flex; align-items: center; gap: 6px; height: 17px; padding: 0 5px; overflow: hidden; white-space: nowrap;
+  background: var(--mm-c, var(--g3)); color: var(--hard-black); font-weight: 600; font-size: 11px; line-height: 17px; }
+.mm-tile[data-state="project"] > .mm-head { background: var(--g3); color: var(--bwhite); }
+.mm-tile[data-state="other"] > .mm-head, .mm-tile[data-state="pane"] > .mm-head { color: var(--bwhite); }
+.mm-head .mm-n { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mm-head .mm-v { flex: none; font-weight: 400; opacity: .85; font-variant-numeric: tabular-nums; }
+.mm-close.tbtn { margin-left: auto; flex: none; padding: 0 6px; font-size: 10px; line-height: 14px; height: 15px; }
+.mm-lab { display: block; padding: 2px 4px; font-size: 11px; line-height: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mm-lab .mm-v { opacity: .8; font-variant-numeric: tabular-nums; }
+.mm-tile[data-state="other"]:not(.group), .mm-tile[data-state="pane"]:not(.group) { color: var(--bwhite); }
+
+.mm-tip { position: fixed; z-index: 60; max-width: 360px; pointer-events: none; }
+.mm-tip dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 4px 0 0; }
+.mm-tip dt { color: var(--bblack); }
+.mm-tip dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.mm-hint { margin-top: 4px; color: var(--bblack); font-size: 11px; }
+
+.mm-side { flex: none; width: 230px; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.mm-side h3 { margin: 4px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--bblack); }
+.mm-growers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.mm-growers li { display: flex; align-items: baseline; gap: 6px; }
+.mm-gn { all: unset; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 1px 4px; border-radius: 4px; }
+.mm-gn:hover { background: var(--g2); }
+.mm-gp { color: var(--bblack); margin-right: 4px; }
+.mm-gd { flex: none; color: var(--byellow); font-variant-numeric: tabular-nums; }
+.mm-projs { display: flex; flex-direction: column; gap: 2px; }
+.mm-proj { display: grid; grid-template-columns: 1fr 80px auto; align-items: center; gap: 6px; }
+.mm-pn { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mm-pv { font-variant-numeric: tabular-nums; color: var(--white); }
+.mm-spark { width: 80px; height: 18px; }
+.mm-spark polyline { fill: none; stroke: var(--bblue); stroke-width: 1.4; }
+
+.mm-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--bblack); font-size: 11px; }
+.mm-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.mm-legend i { width: 9px; height: 9px; border-radius: 2px; }
+.mm-note { margin: 0; color: var(--bblack); font-size: 11px; line-height: 1.4; }
+
+/* Phone: a list of the zoom level's children, heaviest first. */
+.mm-list { display: none; }
+.mm-body.phone { flex: none; }
+.mm-win .hw-body:has(.mm-body.phone) { overflow-y: auto; }
+.mm-body.phone .mm-main, .mm-body.phone .mm-stage { flex: none; }
+.mm-body.phone .mm-map { display: none; }
+.mm-body.phone .mm-list { display: flex; flex-direction: column; gap: 3px; }
+.mm-body.phone .mm-main { flex-direction: column; }
+.mm-body.phone .mm-side { width: auto; }
+.mm-row { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 5px 8px; border-radius: 6px; background: var(--g1); }
+.mm-row:focus-visible { outline: 2px solid var(--bblue); }
+.mm-rn { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mm-rv { font-variant-numeric: tabular-nums; color: var(--white); }
+.mm-row .mm-bar { grid-column: 1 / -1; display: block; height: 6px; border-radius: 3px; background: var(--g3); }
+.mm-row .mm-bar i { display: block; height: 100%; border-radius: 3px; background: var(--mm-c, var(--g5)); }
+
+/* The graph: a node whose tile was clicked in the Memory map. */
+#graph .node.memhl .core { stroke: var(--bwhite); stroke-width: 3; stroke-dasharray: 3 2; }

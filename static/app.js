@@ -129,6 +129,17 @@
       $("#f-search").dispatchEvent(new Event("input"));
     });
     $("#fit-graph").addEventListener("click", () => { userZoomed = false; lastGo = null; fit(true); });
+    const sm = el("button", { id: "size-mem", class: "tbtn", type: "button", "aria-pressed": String(sizeMem),
+      title: "Size thread nodes by the memory (RSS) of their processes instead of recent activity" }, "Size: ", el("b", { text: sizeMem ? "memory" : "activity" }));
+    sm.addEventListener("click", () => {
+      sizeMem = !sizeMem;
+      filters.sizeMem = sizeMem || undefined;
+      saveFilters();
+      sm.setAttribute("aria-pressed", String(sizeMem));
+      sm.querySelector("b").textContent = sizeMem ? "memory" : "activity";
+      render();
+    });
+    $("#fit-graph").before(sm);
     const bind = (id, key, ev = "change") => {
       const e = $(id);
       if (filters[key]) e.value = filters[key];
@@ -270,7 +281,13 @@
     refitTimer = setTimeout(refit, 120);
   }).observe($("#stage"));
 
+  // "Size by memory" (the map's toggle): a node's area follows the RSS of
+  // its pane's processes in the System strip's last frame, not its activity.
+  let sizeMem = !!filters.sizeMem;
+  const memOf = (key) => window.HDSystem?.frameNow?.()?.procs?.filter((p) => p.key === key).reduce((s, p) => s + p.rss, 0) || 0;
+  const memRadius = (b) => Math.min(34, 4 + 8 * Math.sqrt(b / 1024 ** 3));
   function threadRadius(t) {
+    if (sizeMem) return memRadius(memOf(t.key));
     if (t.state === "resolved") return 4;
     if (t.state === "leftover") return 7;
     const a = ageSec(t);
@@ -1022,6 +1039,7 @@
   function select(key) {
     selected = key;
     nodeSel.classed("selected", (d) => d.id === key);
+    document.dispatchEvent(new CustomEvent("hd-select", { detail: key }));
     placeLabels();
     stopFeeds();
     live = "";
@@ -1639,13 +1657,14 @@
     state = { ...raw, threads: raw.threads.map(effective) };
     render();
     window.HDSystem?.state();
+    window.HDMemory?.state();
     window.HDThreads?.state();
     window.HDFleet?.state();
   }
   function onStream(type, d) {
     if (type === "state") { $("#live").className = "live on"; checkBuild(d.build); applySnapshot(d); }
     else if (type === "delta") applyDelta(d);
-    else if (type === "system") { window.HDSystem?.frame(d); window.HDFleet?.frame(); window.HDThreads?.frame?.(); }
+    else if (type === "system") { window.HDSystem?.frame(d); window.HDFleet?.frame(); window.HDThreads?.frame?.(); if (sizeMem) render(); }
   }
   let stream = null;
   function connect() {
@@ -1699,6 +1718,9 @@
     select(key);
   };
   dash.render = () => render();
+  // mark(key): ring one node (the Memory map's tile clicked), or none.
+  dash.mark = (key) => nodeSel.classed("memhl", (d) => d.id === key);
+  dash.sizeMem = () => sizeMem;
   dash.inFocus = (slug) => inFocus(slug);
   dash.goProject = (slug) => goToProject(slug);
   dash.light = (slug) => light(slug || null);
