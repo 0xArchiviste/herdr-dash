@@ -79,6 +79,9 @@ func defineServerFlags() *serverOpts {
 	flag.StringVar(&cfg.ClaudeDir, "claude-dir", filepath.Join(home, ".claude/projects"), "Claude Code transcripts")
 	flag.StringVar(&cfg.CodexDir, "codex-dir", filepath.Join(home, ".codex/sessions"), "Codex sessions")
 	flag.StringVar(&cfg.Proc, "proc", env("HERDR_DASH_PROC", "/proc"), "proc filesystem for the System strip (CPU, memory, agent processes), $HERDR_DASH_PROC; \"off\" turns it off")
+	flag.StringVar(&cfg.Cgroup, "cgroup", env("HERDR_DASH_CGROUP", "/sys/fs/cgroup"), "cgroup v2 root, for the herdr server's memory.current against MemoryHigh/MemoryMax in the Memory map, $HERDR_DASH_CGROUP")
+	flag.DurationVar(&cfg.PSSEvery, "pss-every", 30*time.Second, "read PSS (smaps_rollup) at most this often while a Memory map is open; 0 turns PSS off (RSS only)")
+	flag.DurationVar(&cfg.MemHistEvery, "mem-history-every", 15*time.Second, "one memory history point per thread and project this often (120 kept in memory)")
 	flag.DurationVar(&cfg.Poll, "poll", 5*time.Second, "herdr pane list interval")
 	flag.DurationVar(&cfg.ThreadsEvery, "threads-every", 0, "thread list interval (default 3x poll, min 3s)")
 	flag.DurationVar(&cfg.QuietEvery, "quiet-every", 5*time.Minute, "interval for projects with only resolved threads")
@@ -328,8 +331,11 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		writeJSON(w, col.sys.Frame())
 	})
 	mux.HandleFunc("GET /api/system/stats", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, col.sys.Stats())
+		st := col.sys.Stats()
+		st["mem_subs"] = uint64(col.memWatched())
+		writeJSON(w, st)
 	})
+	registerMemory(mux, col)
 	mux.HandleFunc("GET /api/thread/{slug}/{id}", func(w http.ResponseWriter, r *http.Request) {
 		slug, id := r.PathValue("slug"), r.PathValue("id")
 		if !slugRe.MatchString(slug) || !idRe.MatchString(id) {

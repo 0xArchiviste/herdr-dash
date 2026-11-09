@@ -107,7 +107,8 @@
   function pill(id, lv, title, ...kids) {
     return el("button", {
       class: "sysc", type: "button", "data-id": id, "data-level": lv, title, "aria-expanded": String(openID === id && !pop.hidden),
-      onclick: (e) => { e.stopPropagation(); openID === id && !pop.hidden ? close() : open(id); },
+      // The RAM figure opens the Memory map (memory.js); the rest the popover.
+      onclick: (e) => { e.stopPropagation(); if (id === "mem" && window.HDMemory) { close(); window.HDMemory.open(); return; } openID === id && !pop.hidden ? close() : open(id); },
     }, ...kids);
   }
 
@@ -123,7 +124,7 @@
       kids.push(pill("cpu", c == null ? "ok" : level(c), `CPU${where}: ${c == null ? "measuring" : pct(c)} of ${frame.ncpu} cores`,
         el("span", { class: "sl", text: "CPU" }), bar(c, level(c)), el("span", { class: "sv", text: c == null ? "…" : pct(c) })));
       const m = pctOf(frame.mem);
-      if (frame.mem) kids.push(pill("mem", level(m), `RAM${where}: ${gib(frame.mem.used)} of ${gib(frame.mem.total)} GiB used`,
+      if (frame.mem) kids.push(pill("mem", level(m), `RAM${where}: ${gib(frame.mem.used)} of ${gib(frame.mem.total)} GiB used · click for the Memory map`,
         el("span", { class: "sl", text: "RAM" }), bar(m, level(m)), el("span", { class: "sv", text: `${gib(frame.mem.used)}/${gib(frame.mem.total)}G` })));
       const sw = pctOf(frame.swap);
       if (frame.swap?.total) kids.push(pill("swap", level(sw), `Swap${where}: ${bytes(frame.swap.used)} of ${bytes(frame.swap.total)} used`,

@@ -51,6 +51,9 @@ type Config struct {
 	STT           STTConfig     // optional local speech-to-text sidecar, env only
 	Usage         UsageConfig   // optional plan/provider usage strip, see usage.go
 	Proc          string        // /proc to read machine and agent load from, "off" for none (sysstat.go)
+	Cgroup        string        // cgroup v2 root, for the herdr server's memory limits (memmap.go)
+	PSSEvery      time.Duration // smaps_rollup at most this often while a Memory map is open
+	MemHistEvery  time.Duration // a memory history point per owner this often
 	PublicURL     string        // optional https://host[:port] that remote plain-http page loads go to
 	Build         string        // id of the embedded frontend; open pages reload when it changes
 }
@@ -295,6 +298,8 @@ type Collector struct {
 	stream     streamState // what the live stream last sent (stream.go)
 	subs       map[*Sub]struct{}
 	sys        *SysMon
+	memSubs    map[*MemSub]struct{} // open Memory maps (memmap.go)
+	memLast    *MemFrame            // the last Memory map frame
 	owners     map[string]paneOwner // pane id -> thread or coordinator, for sys
 	screens    map[string]screenHit
 	history    map[string]screenHit
@@ -340,7 +345,8 @@ func NewCollector(cfg Config) *Collector {
 		prs:          map[string]ghPR{},
 		transcript:   map[string]transcriptHit{},
 		subs:         map[*Sub]struct{}{},
-		sys:          NewSysMon(cfg.Proc, cfg.Poll),
+		sys:          NewSysMon(cfg.Proc, cfg.Poll, MemOpts{Cgroup: cfg.Cgroup, PSSEvery: cfg.PSSEvery, HistEvery: cfg.MemHistEvery}),
+		memSubs:      map[*MemSub]struct{}{},
 		owners:       map[string]paneOwner{},
 		screens:      map[string]screenHit{},
 		history:      map[string]screenHit{},
@@ -1145,21 +1151,63 @@ func (c *Collector) Unsubscribe(s *Sub) {
 func (c *Collector) watched() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return len(c.subs) > 0
+	return len(c.subs) > 0 || len(c.memSubs) > 0
+}
+
+// MemSub is one open Memory map: it gets each new frame (only the newest
+// matters; the handler diffs against what it sent).
+type MemSub struct{ Frames chan *MemFrame }
+
+func (c *Collector) SubscribeMem() *MemSub {
+	s := &MemSub{Frames: make(chan *MemFrame, 1)}
+	c.mu.Lock()
+	c.memSubs[s] = struct{}{}
+	c.mu.Unlock()
+	return s
+}
+
+func (c *Collector) UnsubscribeMem(s *MemSub) {
+	c.mu.Lock()
+	delete(c.memSubs, s)
+	if len(c.memSubs) == 0 {
+		c.memLast = nil // stale once nobody watches
+	}
+	c.mu.Unlock()
+}
+
+func (c *Collector) memWatched() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.memSubs)
 }
 
 // SampleSystem reads /proc once and sends the frame to every stream if it
-// changed. The read runs without c.mu.
+// changed, and the Memory map's frame to every open map. The read runs
+// without c.mu.
 func (c *Collector) SampleSystem() {
 	c.mu.Lock()
 	owners := c.owners
+	detail := len(c.memSubs) > 0
 	c.mu.Unlock()
-	b := c.sys.Sample(owners)
+	b, mf := c.sys.Sample(owners, detail)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if mf != nil {
+		c.memLast = mf
+		for s := range c.memSubs {
+			select {
+			case <-s.Frames:
+			default:
+			}
+			select {
+			case s.Frames <- mf:
+			default:
+			}
+		}
+	}
 	if b == nil {
 		return
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	for s := range c.subs {
 		select {
 		case <-s.System: // replace an unread older frame: only the newest matters

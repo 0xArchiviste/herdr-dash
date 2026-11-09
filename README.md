@@ -270,6 +270,8 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--threads-max-age` | | `1m`; a project whose files and panes did not change is re-listed this often |
 | `--pprof-addr` | `HERDR_DASH_PPROF_ADDR` | off; a loopback address such as `127.0.0.1:6060` serves Go's profiler |
 | `--proc` | `HERDR_DASH_PROC` | `/proc`; `off` hides machine and process numbers (see [System](#system)) |
+| `--cgroup` | `HERDR_DASH_CGROUP` | `/sys/fs/cgroup`; cgroup v2 root for the herdr server's memory limits (see [Memory map](#memory-map)) |
+| `--pss-every`, `--mem-history-every` | | `30s`, `15s`; `--pss-every 0` turns PSS off (RSS only) |
 | `--routing-config` | `HERDR_DASH_ROUTING_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/routing.toml`, else `~/.config/herdr-projects/routing.toml` (see [Agent routing](#agent-routing-preview)) |
 | `--fleet-config` | `HERDR_DASH_FLEET_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/fleet.toml`, else `~/.config/herdr-projects/fleet.toml` (see [Master window](#master-window)) |
 | `--fleet-audit` | `HERDR_DASH_FLEET_AUDIT` | `<root>/.fleet/audit.jsonl`; the bulk actions' audit log |
@@ -562,6 +564,46 @@ Samples ride the collector's pane tick (`--poll`) and run only while some
 page holds the event stream open. Pages close it while hidden. A frame goes
 out only when it changed. Without `/proc` (macOS, Windows) or with `--proc off`,
 the strip says the numbers are unavailable; agents and the queue still show.
+
+## Memory map
+
+The **Memory** button in the filter bar, or the System strip's RAM figure,
+opens a treemap of what holds memory (`static/memory.js`, `memmap.go`):
+machine → project → thread or coordinator → agent process → its child
+processes. Leftovers (resolved threads whose agents still run) and orphan
+agent panes sit under their project, the Dash service and the voice sidecar
+in a group of their own, and every process outside a herdr pane in **Not
+herdr**, grouped by name. Area is memory; colour is the owner's state, as on
+the graph. It is a window like the others: dock it, resize it.
+
+- Click zooms one level in; the breadcrumb or `Esc` zooms out. Hover for
+  RSS, PSS, CPU, process count, age, state and cwd. Double-click a thread or
+  coordinator to open its window. Leftover tiles have **Close leftover…**,
+  the same confirmed, re-checked and audited close as the thread view's; the
+  map can close nothing else.
+- Clicking a tile rings its node on the graph; selecting a node marks its
+  tile. **Size: memory** on the map's toolbar sizes thread nodes by their
+  processes' RSS instead of recent activity.
+- **Area**: PSS (`smaps_rollup`: shared pages split between the processes
+  that map them, so sums add up) where it can be read, else RSS; RSS on
+  demand. RSS sums overcount shared pages. Neither counts page cache; the
+  cgroup's `memory.current` does.
+- **Totals**: used, available, cache (page cache, buffers, reclaimable
+  slab), swap, memory pressure (`/proc/pressure/memory`, last 10 s), and the
+  cgroup herdr's panes run in (the herdr server's unit) with `memory.current`
+  against `memory.high` and `memory.max`, peak and OOM kills. It turns amber
+  at 75% of `memory.max` and red at 85% or at `memory.high`.
+- **History**: a sparkline per project and the top growers over the last
+  30 minutes, from the System strip's per-pane RSS, one point per
+  `--mem-history-every`, kept in memory (120 points) and never on disk.
+- **Phone**: a list of the zoom level's children with bars, heaviest first.
+
+Cost: the map rides the System strip's sampler. Only while a Memory map is
+on screen (and its page visible) does the walk also read the `stat` of
+processes outside panes, each process's cwd and cgroup once, and
+`smaps_rollup` at most every `--pss-every`. The page gets the whole frame
+when it opens the map's stream (`/api/memory/events`), then only what
+changed.
 
 ## Master window
 

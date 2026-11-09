@@ -87,6 +87,13 @@ type procEntry struct {
 	rss   uint64
 	at    time.Time // when ticks was read
 	seen  uint64    // sample number it was last listed in
+	// The Memory map's extras (memmap.go), read only while one is open.
+	ppid     int
+	cpu      float64 // % of one core over the last sample; -1 unknown
+	pss      uint64  // bytes, from smaps_rollup; 0 when unreadable
+	cwd      string
+	cgroup   string // cgroup v2 path of a pane process
+	detailed bool   // cwd and cgroup read
 }
 
 type cpuTimes struct{ busy, total uint64 }
@@ -109,10 +116,14 @@ type SysMon struct {
 	frame    SysFrame
 	frameKey []byte // frame minus its timestamp, for change detection
 	sent     uint64
+
+	mem memState // the Memory map's state (memmap.go)
 }
 
-func NewSysMon(dir string, every time.Duration) *SysMon {
+func NewSysMon(dir string, every time.Duration, mo MemOpts) *SysMon {
 	m := &SysMon{dir: dir, self: os.Getpid(), page: uint64(os.Getpagesize()), every: every, procs: map[int]*procEntry{}}
+	m.mem.opts = mo
+	m.mem.hist = map[string]*memSeries{}
 	switch {
 	case dir == "" || dir == "off":
 		m.dir, m.why = "", "system view is off (--proc off)"
@@ -150,14 +161,17 @@ func (m *SysMon) Stale() bool {
 func (m *SysMon) Stats() map[string]uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return map[string]uint64{"samples": m.samples, "frames": m.sent, "tracked": uint64(len(m.procs))}
+	return map[string]uint64{"samples": m.samples, "frames": m.sent, "tracked": uint64(len(m.procs)),
+		"mem_samples": m.mem.samples, "pss_passes": m.mem.pssPasses, "pss_ms": uint64(m.mem.pssCost.Milliseconds())}
 }
 
 // Sample reads /proc and returns the new frame's JSON when it differs from
 // the last one (nil otherwise). owners maps pane ids to what runs in them.
-func (m *SysMon) Sample(owners map[string]paneOwner) []byte {
+// detail (a Memory map is open) also reads every other process and returns
+// the Memory map's frame.
+func (m *SysMon) Sample(owners map[string]paneOwner, detail bool) ([]byte, *MemFrame) {
 	if m.dir == "" {
-		return nil
+		return nil, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -186,19 +200,24 @@ func (m *SysMon) Sample(owners map[string]paneOwner) []byte {
 	}
 	f.Mem, f.Swap = m.readMem()
 	f.Load = m.readLoad()
-	f.Procs = m.readProcs(owners, fresh, now)
+	f.Procs = m.readProcs(owners, fresh, now, detail)
+	m.record(f.Procs, now)
+	var mf *MemFrame
+	if detail {
+		mf = m.memFrame(owners, f, now)
+	}
 
 	f.At = ""
 	key, _ := json.Marshal(f)
 	f.At = now.UTC().Format(time.RFC3339)
 	m.frame = f
 	if bytes.Equal(key, m.frameKey) {
-		return nil
+		return nil, mf
 	}
 	m.frameKey = key
 	m.sent++
 	b, _ := json.Marshal(f)
-	return b
+	return b, mf
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
@@ -208,6 +227,12 @@ func (m *SysMon) readCPU() []cpuTimes {
 	b, err := os.ReadFile(filepath.Join(m.dir, "stat"))
 	if err != nil {
 		return nil
+	}
+	if m.mem.btime == 0 { // boot time, for process ages
+		if i := bytes.Index(b, []byte("\nbtime ")); i >= 0 {
+			line, _, _ := bytes.Cut(b[i+7:], []byte("\n"))
+			m.mem.btime, _ = strconv.ParseUint(string(bytes.TrimSpace(line)), 10, 64)
+		}
 	}
 	var out []cpuTimes
 	for _, line := range bytes.Split(b, []byte("\n")) {
@@ -234,10 +259,11 @@ func (m *SysMon) readCPU() []cpuTimes {
 	return out
 }
 
-func (m *SysMon) readMem() (mem, swap *SysMem) {
+// meminfo reads /proc/meminfo's figures in bytes (nil without it).
+func (m *SysMon) meminfo() map[string]uint64 {
 	b, err := os.ReadFile(filepath.Join(m.dir, "meminfo"))
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	v := map[string]uint64{}
 	for _, line := range strings.Split(string(b), "\n") {
@@ -246,10 +272,19 @@ func (m *SysMon) readMem() (mem, swap *SysMem) {
 			continue
 		}
 		switch k {
-		case "MemTotal", "MemAvailable", "MemFree", "SwapTotal", "SwapFree":
+		case "MemTotal", "MemAvailable", "MemFree", "SwapTotal", "SwapFree", "Cached", "Buffers", "SReclaimable", "Shmem":
 			n, _ := strconv.ParseUint(strings.TrimSuffix(strings.TrimSpace(rest), " kB"), 10, 64)
 			v[k] = n * 1024
 		}
+	}
+	m.mem.info = v
+	return v
+}
+
+func (m *SysMon) readMem() (mem, swap *SysMem) {
+	v := m.meminfo()
+	if v == nil {
+		return nil, nil
 	}
 	avail, ok := v["MemAvailable"]
 	if !ok {
@@ -274,10 +309,10 @@ func (m *SysMon) readLoad() []float64 {
 // statFields reads comm, starttime, utime+stime and rss (bytes) from
 // /proc/<pid>/stat, into a reused buffer and without allocating fields:
 // this runs for every pane process on every sample.
-func (m *SysMon) statFields(pid int) (comm string, start, ticks, rss uint64, ok bool) {
+func (m *SysMon) statFields(pid int) (comm string, ppid int, start, ticks, rss uint64, ok bool) {
 	f, err := os.Open(m.dir + "/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
-		return "", 0, 0, 0, false
+		return "", 0, 0, 0, 0, false
 	}
 	n, _ := f.Read(m.buf[:])
 	f.Close()
@@ -285,7 +320,7 @@ func (m *SysMon) statFields(pid int) (comm string, start, ticks, rss uint64, ok 
 	// comm may hold spaces and parentheses: it ends at the last ')'.
 	open, end := bytes.IndexByte(b, '('), bytes.LastIndexByte(b, ')')
 	if open < 0 || end < open {
-		return "", 0, 0, 0, false
+		return "", 0, 0, 0, 0, false
 	}
 	// After ") " comes field 3 (state); utime is 14, stime 15, starttime
 	// 22, rss 24.
@@ -305,9 +340,9 @@ func (m *SysMon) statFields(pid int) (comm string, start, ticks, rss uint64, ok 
 		i = j + 1
 	}
 	if field <= 24 {
-		return "", 0, 0, 0, false
+		return "", 0, 0, 0, 0, false
 	}
-	return string(b[open+1 : end]), v[22], v[14] + v[15], v[24] * m.page, true
+	return string(b[open+1 : end]), int(v[4]), v[22], v[14] + v[15], v[24] * m.page, true
 }
 
 // tagOf classifies a new process from its environment.
@@ -341,7 +376,7 @@ func (m *SysMon) tagOf(pid int) string {
 	return ""
 }
 
-func (m *SysMon) readProcs(owners map[string]paneOwner, fresh bool, now time.Time) []SysProc {
+func (m *SysMon) readProcs(owners map[string]paneOwner, fresh bool, now time.Time, detail bool) []SysProc {
 	d, err := os.Open(m.dir)
 	if err != nil {
 		return []SysProc{}
@@ -364,20 +399,31 @@ func (m *SysMon) readProcs(owners map[string]paneOwner, fresh bool, now time.Tim
 			continue
 		}
 		e := m.procs[pid]
-		if e != nil && e.tag == "" {
-			e.seen = m.samples // not ours: no further reads
+		if e != nil && e.tag == "" && !detail {
+			e.seen = m.samples // not ours: no further reads (unless a Memory map is open)
 			continue
 		}
-		comm, start, ticks, rss, ok := m.statFields(pid)
+		comm, ppid, start, ticks, rss, ok := m.statFields(pid)
 		if !ok {
 			continue
 		}
 		if e == nil || e.start != start {
-			e = &procEntry{start: start, tag: m.tagOf(pid)}
+			e = &procEntry{start: start, tag: m.tagOf(pid), cpu: -1}
 			m.procs[pid] = e
 		}
 		prev, prevAt := e.ticks, e.at
-		e.comm, e.ticks, e.rss, e.at, e.seen = comm, ticks, rss, now, m.samples
+		e.comm, e.ppid, e.ticks, e.rss, e.at, e.seen = comm, ppid, ticks, rss, now, m.samples
+		if detail {
+			e.cpu = -1
+			if !prevAt.IsZero() && ticks >= prev && now.Sub(prevAt) <= 2*m.every+time.Second {
+				if dt := now.Sub(prevAt).Seconds(); dt > 0 {
+					e.cpu = 100 * float64(ticks-prev) / userHZ / dt
+				}
+			}
+			if !e.detailed {
+				m.detail(pid, e)
+			}
+		}
 		if e.tag == "" {
 			continue
 		}

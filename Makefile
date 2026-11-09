@@ -23,6 +23,7 @@ vet:
 	node --check static/routing.js
 	node --check static/fleet.js
 	node --check static/attach.js
+	node --check static/memory.js
 
 test:
 	go test ./...
