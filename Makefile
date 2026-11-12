@@ -24,6 +24,7 @@ vet:
 	node --check static/fleet.js
 	node --check static/attach.js
 	node --check static/memory.js
+	node --check static/agents.js
 
 test:
 	go test ./...

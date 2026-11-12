@@ -27,7 +27,10 @@ type SessionWindow struct {
 	Reason string `json:"reason,omitempty"`
 }
 type SessionDetails struct {
-	Profile       string        `json:"profile,omitempty"`
+	Profile string `json:"profile,omitempty"`
+	// Agent: the harness the selected profile runs (session-profiles), even
+	// when the live agent differs; empty when the profile is not configured.
+	Agent         string        `json:"agent,omitempty"`
 	Provider      SessionValue  `json:"provider"`
 	Model         SessionValue  `json:"model"`
 	Effort        SessionValue  `json:"effort"`
@@ -160,6 +163,7 @@ func (c *Collector) sessionDetails(p Pane, agent, profile string) SessionDetails
 	d.Profile = profile
 	// Only the selected, matching herdr-projects profile is a valid fallback.
 	if cfg, ok := decoded(c, c.cfg.SessionProfiles, tomlDecode[profileConfig]); ok {
+		d.Agent = cfg.Profiles[profile].Agent
 		if pr, ok := cfg.Profiles[profile]; ok && (agent == "" || pr.Agent == agent) {
 			if agent == "" {
 				agent = pr.Agent

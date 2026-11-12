@@ -158,13 +158,16 @@ type coordRecord struct {
 type Coordinator struct {
 	Session SessionDetails `json:"session"`
 
-	PaneID       string `json:"pane_id"`
-	TabID        string `json:"tab_id"`
-	Agent        string `json:"agent"`
-	LiveStatus   string `json:"live_status"`
-	State        string `json:"state"`
-	Activity     string `json:"activity"`
-	LastActivity string `json:"last_activity"`
+	PaneID string `json:"pane_id"`
+	TabID  string `json:"tab_id"`
+	Agent  string `json:"agent"`
+	// RecordedAgent: the harness herdr-projects recorded starting it (the
+	// Agent filter marks a coordinator whose live agent differs).
+	RecordedAgent string `json:"recorded_agent,omitempty"`
+	LiveStatus    string `json:"live_status"`
+	State         string `json:"state"`
+	Activity      string `json:"activity"`
+	LastActivity  string `json:"last_activity"`
 	// StateSince: when its live state last changed (the ticker's
 	// pair_since), for the Master window's "quiet for 60 s" check.
 	StateSince string       `json:"state_since,omitempty"`
@@ -227,11 +230,14 @@ type Thread struct {
 	Activity   string `json:"activity"`
 	Percent    int    `json:"percent"`
 	Agent      string `json:"agent"`
-	Profile    string `json:"profile,omitempty"`
-	Kind       string `json:"kind"`
-	PaneID     string `json:"pane_id"`
-	TabID      string `json:"tab_id"`
-	PaneAlive  bool   `json:"pane_alive"`
+	// LiveAgent: the agent herdr sees in the thread's pane now (Agent is
+	// what herdr-projects recorded at launch); empty without a live pane.
+	LiveAgent string `json:"live_agent,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	Kind      string `json:"kind"`
+	PaneID    string `json:"pane_id"`
+	TabID     string `json:"tab_id"`
+	PaneAlive bool   `json:"pane_alive"`
 	// AgentExited: the pane is there but its agent is not (crashed, quit),
 	// for a thread that is neither resolved nor being launched.
 	AgentExited  bool     `json:"agent_exited,omitempty"`
@@ -746,6 +752,7 @@ func (c *Collector) coordinator(p *projectRaw) Coordinator {
 	}
 	sub, _ := pane.Tokens["hp_sub"].(string)
 	co := Coordinator{PaneID: pane.PaneID, TabID: tab, Agent: pane.Agent, LiveStatus: pane.AgentStatus, Activity: sub}
+	co.RecordedAgent = p.record.Agent
 	co.Images = coordImageTarget(c.cfg.Root, p.Slug, pane.Agent).support()
 	co.Session = c.sessionDetails(pane, pane.Agent, c.projectProfile(p.Slug, "coordinator"))
 	switch {
@@ -1060,6 +1067,9 @@ func (c *Collector) rebuild() {
 			}
 			th.Launch = launchOf(t, alive && pane.AgentStatus != "")
 			th.AgentExited = alive && pane.Agent == "" && t.Status == "open" && th.Launch == nil
+			if alive && t.Status != "resolved" {
+				th.LiveAgent = pane.Agent
+			}
 			if alive && c.showsPrompt(pane) {
 				th.Prompt = c.prompts[t.PaneID]
 			}

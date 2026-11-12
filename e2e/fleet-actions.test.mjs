@@ -374,10 +374,11 @@ test("circuit breaker: three failures in a row stop the batch (B5)", async () =>
     const lines = auditLines().filter((l) => l.batch === b.batch);
     assert.deepEqual(lines.map((l) => l.result), ["ok", "failed", "failed", "failed", "not-attempted"]);
     out.breaker = b;
-    // Undo touches only what ran.
+    // Undo touches only what ran. Preview it once the pause shows: a plan
+    // previewed before then changes when it does (plan_changed).
+    await waitFor(async () => (await rowOf("amber-wiki")).status === "paused", 10_000);
     const u = (await preview({ op: "undo", batch: b.batch })).json;
     assert.deepEqual(u.steps.map((s) => s.slug), ["amber-wiki"]);
-    await waitFor(async () => (await rowOf("amber-wiki")).status === "paused", 10_000);
     await runBatch(u);
   } finally {
     for (const s of ["basalt-etl", "dune-player", "pebble-cli"]) rmSync(join(f.stubDir, `fail-pause-${s}`), { force: true });

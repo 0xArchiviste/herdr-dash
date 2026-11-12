@@ -51,9 +51,17 @@
   // Agents, processes and the queue follow the project focus; the machine
   // (CPU, RAM, swap) stays whole. Dash and voice belong to no project.
   const inFocus = (slug) => !slug || !window.dash?.inFocus || window.dash.inFocus(slug);
+  // The Agent filter (agents.js) narrows them too.
+  const A = () => (window.HDAgents?.active() ? window.HDAgents : null);
+  const agentOK = (t) => !A() || A().match(t);
+  const procOK = (p) => !A() || (p.kind === "dash" || p.kind === "voice" ? true : p.kind === "pane" ? A().matchHarness(p.agent) : A().matchKey(p.key));
   const focusNote = () => {
     const f = window.hd?.focus?.() || [];
-    return f.length && f.length < st().projects.length ? el("div", { class: "snote sfocus", text: `Agents, queue and processes: ${f.length} focused project${f.length === 1 ? "" : "s"} only.` }) : null;
+    const a = A();
+    const notes = [
+      f.length && f.length < st().projects.length ? el("div", { class: "snote sfocus", text: `Agents, queue and processes: ${f.length} focused project${f.length === 1 ? "" : "s"} only.` }) : null,
+      a ? el("div", { class: "snote sfocus sagent", text: `Agent filter: ${a.summary()}. Agents, queue and processes on it only.` }) : null].filter(Boolean);
+    return notes.length ? el("div", {}, ...notes) : null;
   };
 
   // ------------------------------------------------------------ derived
@@ -64,10 +72,10 @@
     // Agents left running by resolved threads, and orphan agent panes.
     for (const p of per.values()) tot.leftover += p.leftover;
     // Agents that exited, leaving a shell in their pane: threads and coordinators.
-    for (const p of s.projects) if (per.has(p.slug) && p.coordinator?.agent_exited) { per.get(p.slug).exited++; tot.exited++; }
+    for (const p of s.projects) if (per.has(p.slug) && p.coordinator?.agent_exited && !A()) { per.get(p.slug).exited++; tot.exited++; }
     for (const t of s.threads) {
       const p = per.get(t.project);
-      if (!p || t.state === "resolved" || t.state === "leftover") continue;
+      if (!p || t.state === "resolved" || t.state === "leftover" || !agentOK(t)) continue;
       // herdr-projects counts open and starting threads against the limit.
       if (!t.launch || t.launch.stage !== "failed") p.open++;
       if (!t.pane_alive) continue;
@@ -81,7 +89,7 @@
 
   function queue() {
     const order = { placing: 0, queued: 0, launching: 0, briefing: 0, stuck: 1, failed: 2 };
-    const rows = st().threads.filter((t) => t.launch && t.state !== "resolved" && inFocus(t.project))
+    const rows = st().threads.filter((t) => t.launch && t.state !== "resolved" && inFocus(t.project) && agentOK(t))
       .sort((a, b) => (order[a.launch.stage] ?? 0) - (order[b.launch.stage] ?? 0) || Date.parse(a.launch.since) - Date.parse(b.launch.since));
     let n = 0;
     for (const t of rows) t._pos = t.launch.stage === "failed" || t.launch.stage === "stuck" ? null : ++n;
@@ -231,7 +239,7 @@
 
   function procsSec() {
     const body = [el("h3", { text: "Processes" })];
-    const rows = frame?.available ? frame.procs.filter((p) => inFocus(p.project)) : [];
+    const rows = frame?.available ? frame.procs.filter((p) => inFocus(p.project) && procOK(p)) : [];
     if (!rows.length) body.push(el("div", { class: "snote", text: frame?.available ? "No agent processes." : "Unavailable." }));
     for (const p of rows) {
       const lv = level(p.cpu);

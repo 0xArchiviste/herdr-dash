@@ -105,6 +105,7 @@
     const inFocus = dash.inFocus || (() => true);
     for (const h of d.hits) {
       if (!inFocus(h.project)) continue;
+      if (window.HDAgents && !window.HDAgents.matchKey(h.key)) continue;
       if (!groups.has(h.key)) groups.set(h.key, []);
       groups.get(h.key).push(h);
     }

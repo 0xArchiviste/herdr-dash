@@ -93,7 +93,28 @@
   }
 
   // ---------------------------------------------------------------- helpers
-  const inFocus = (slug) => (window.dash?.inFocus ? window.dash.inFocus(slug) : true);
+  const inFocus = (slug) => (window.dash?.inFocus ? window.dash.inFocus(slug) : true) && (!window.HDAgents?.active() || window.HDAgents.matchProject(slug));
+  // With the Agent filter on, a row's thread counts, CPU and RAM are those
+  // of its threads and coordinator on the filter (from the snapshot and the
+  // System strip's frame); the server's numbers otherwise.
+  function agentView(r) {
+    const A = window.HDAgents;
+    if (!A?.active()) return r;
+    const s = window.dash?.state?.() || { threads: [], projects: [] };
+    const ts = s.threads.filter((t) => t.project === r.slug && t.state !== "resolved" && t.state !== "leftover" && A.match(t));
+    const stages = {};
+    for (const t of ts) { const k = t.launch ? "launching" : t.state; stages[k] = (stages[k] || 0) + 1; }
+    const keys = new Set(ts.map((t) => t.key));
+    const p = s.projects.find((x) => x.slug === r.slug);
+    if (p && A.matchCoord(p)) keys.add("hub:" + r.slug);
+    let cpuSum = null, rss = 0, agents = 0;
+    for (const pr of window.HDSystem?.frameNow?.()?.procs || []) {
+      if (!keys.has(pr.key)) continue;
+      agents++; rss += pr.rss || 0;
+      if (pr.cpu != null) cpuSum = (cpuSum || 0) + pr.cpu;
+    }
+    return { ...r, stages, open: ts.length, needs_you: ts.filter((t) => t.needs_you).length, cpu: cpuSum, rss, agents };
+  }
   function ago(iso) {
     if (!iso) return "";
     const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
@@ -118,8 +139,7 @@
   function rowsShown() {
     if (!data) return [];
     const q = query.trim().toLowerCase();
-    const rows = data.rows.filter((r) => {
-      if (!inFocus(r.slug)) return false;
+    const rows = data.rows.filter((r) => inFocus(r.slug)).map(agentView).filter((r) => {
       if (q && !r.name.toLowerCase().includes(q) && !r.slug.includes(q)) return false;
       switch (filter) {
         case "attention": return r.score > 0;
@@ -295,7 +315,8 @@
         ...FILTERS.map(([v, l]) => el("option", { value: v, selected: v === filter, text: l }))),
       el("input", { id: "fl-q", type: "search", placeholder: "Filter projects…", "aria-label": "Filter projects by name", value: query, autocomplete: "off",
         oninput: (e) => { query = e.target.value; render(); } }),
-      el("span", { id: "fl-note", class: "fl-note", text: `${rows.length} shown · ${all < data.rows.length ? `${all} of ${data.rows.length} in focus` : `${data.rows.length} projects`}` }));
+      el("span", { id: "fl-note", class: "fl-note", text: `${rows.length} shown · ${all < data.rows.length ? `${all} of ${data.rows.length} in focus` : `${data.rows.length} projects`}` +
+        (window.HDAgents?.active() ? ` · agent filter: ${window.HDAgents.summary()} (counts, CPU and RAM are its own)` : "") }));
     const selbar = el("div", { class: "fl-selbar", hidden: picked.size === 0 },
       el("span", { id: "fl-count", text: `${picked.size} selected` }),
       el("button", { type: "button", id: "fl-copy", class: "tbtn", title: "Copy a plain-text summary of the selected projects", onclick: copy, text: "Copy summary" }),
