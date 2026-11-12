@@ -1,0 +1,61 @@
+/* Agent filter: its picker (a bottom sheet on phones), the Landscape table,
+   the chips, and what it dims elsewhere. Shares the focus picker's look. */
+#agent-box { position: relative; flex: none; }
+#agent-picker { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: min(560px, calc(100vw - 24px)); max-height: min(78vh, 640px);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; overflow-y: auto; background: var(--black); border: 1px solid var(--g4); border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.6); scrollbar-width: thin; }
+#agent-picker[hidden] { display: none; }
+#agent-picker .pp-head { align-items: center; }
+.ap-title { flex: 1; margin: 0; font-size: 14px; color: var(--bwhite); }
+.ap-sub { margin: 4px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--bblack); }
+#filters #agent-picker .pp-fade input { min-height: 0; accent-color: var(--byellow); }
+#ap-list { display: flex; flex-direction: column; gap: 2px; }
+.arow { -webkit-tap-highlight-color: transparent; display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 8px; border-radius: 4px; cursor: pointer; user-select: none; }
+.arow.sub { padding-left: 30px; min-height: 30px; font-size: 13px; color: var(--white); }
+.arow:hover, .arow:focus-visible { background: var(--g2); }
+.arow .box { flex: none; width: 16px; height: 16px; border: 1.5px solid var(--g5); border-radius: 3px; display: grid; place-items: center; }
+.arow.sub .box { width: 14px; height: 14px; }
+.arow[aria-checked="true"] .box { background: var(--byellow); border-color: var(--byellow); }
+.arow[aria-checked="true"] .box::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--hard-black); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.arow .dot, .achip .dot, .ap-land .lh .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.arow .an { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arow .ac { color: var(--bblack); font-size: 12px; font-variant-numeric: tabular-nums; }
+.amis { flex: none; padding: 0 5px; border-radius: 3px; font-size: 11px; color: var(--hard-black); background: var(--byellow); cursor: help; }
+.ap-land .amis { margin-left: 4px; }
+
+/* Landscape: a compact table; a row click shows only that agent or model. */
+#ap-land-wrap { overflow-x: auto; }
+.ap-land { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ap-land th, .ap-land td { padding: 4px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--g2); }
+.ap-land thead th { color: var(--bblack); font-weight: 600; }
+.ap-land th[scope="row"], .ap-land thead th:first-child { text-align: left; }
+.ap-land tbody tr { cursor: pointer; }
+.ap-land tbody tr:hover, .ap-land tbody tr:focus-visible { background: var(--g2); outline: none; }
+.ap-land tbody tr.on th[scope="row"] { color: var(--byellow); }
+.ap-land tr.sub th[scope="row"] { padding-left: 22px; font-weight: 400; color: var(--white); }
+.ap-land .lh { display: inline-flex; align-items: center; gap: 6px; color: var(--bwhite); }
+
+#agent-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+#agent-chips[hidden] { display: none; }
+.achip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 2px 2px 9px; border-radius: 999px; background: var(--g2); font-size: 13px; max-width: 240px;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); }
+.achip .an { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.achip .ax { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 0; background: transparent; color: var(--white); font-size: 16px; line-height: 1; cursor: pointer; }
+.achip .ax:hover, .achip .ax:focus-visible { background: var(--g4); color: var(--bwhite); }
+
+.mm-tile.agent-dim { opacity: .22; }
+.tv-agentnote { margin: 0 0 6px; font-size: 12px; }
+.tv-agentnote[hidden] { display: none; }
+
+@media (max-width: 700px) {
+  #agent-box { flex: 1 1 30%; }
+  #agent-box .fbtn { width: 100%; max-width: none; justify-content: space-between; }
+  #agent-picker { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: 100vw; max-height: 78dvh; z-index: 60;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); border-radius: 14px 14px 0 0; border-width: 1px 0 0;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.6); animation: pp-up .22s cubic-bezier(.2,.8,.2,1); }
+  body.agent-picking::after { content: ""; position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.45); }
+  .arow { min-height: 44px; }
+  #agent-picker .tbtn { min-height: 40px; }
+  #agent-chips { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { #agent-picker { animation: none; } }

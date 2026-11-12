@@ -758,6 +758,7 @@
       ["?", "This help (not while typing)"],
       ["D", "Dock the panel right, left or bottom, in turn (not while typing)"],
       ["P", "Project focus: pick any number of projects, type to filter (Space ticks, O only this)"],
+      ["A", "Agent filter: pick harnesses and models (claude, codex, opencode…), with the Landscape of what runs where; click a Landscape row to show only it"],
       ["Ctrl/Shift+click", "A project on the map: add it to the focus or take it out"],
       ["Focus chips", "Click: go to the project on the map (again: open its coordinator). Tab to a chip, then ← → move, Enter goes, Delete/Backspace remove. Phone: tap goes, long-press removes"],
       ["G", "In the project picker: go to the project on the map"],

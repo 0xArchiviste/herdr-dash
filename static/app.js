@@ -76,10 +76,10 @@
     const next = u.pathname + u.search.replace(/%2C/gi, ",") + u.hash;
     if (next !== location.pathname + location.search + location.hash) history.replaceState(history.state, "", next);
   }
-  const anyFilter = () => !!(eff.size || filters.state || filters.window || filters.q);
+  const anyFilter = () => !!(eff.size || window.HDAgents?.active() || filters.state || filters.window || filters.q);
   // Clear what hides threads (keeping the search text unless asked).
   function clearFilters(q = true, keepFocus = false) {
-    if (!keepFocus) focus.clear();
+    if (!keepFocus) { focus.clear(); if (window.HDAgents?.active()) window.HDAgents.set([]); }
     Object.assign(filters, { state: "", window: "" }, q ? { q: "" } : {});
     syncFilterInputs();
     saveFilters();
@@ -101,10 +101,15 @@
   // ---------------------------------------------------------------- filters
   // visible: in focus and matching the other filters. drawn: on the graph
   // (in fade mode an unfocused project stays on it, faded).
+  // The Agent filter (agents.js) ANDs with the focus: a thread on the
+  // selected agents, a project running one of them.
+  const agentOK = (t) => !window.HDAgents || window.HDAgents.match(t);
+  const hubAgentOK = (slug) => !window.HDAgents || window.HDAgents.matchProject(slug);
+  const coordAgentOK = (p) => !window.HDAgents || window.HDAgents.matchCoord(p);
   function visible(t) {
-    return inFocus(t.project) && matches(t);
+    return inFocus(t.project) && agentOK(t) && matches(t);
   }
-  const drawn = (t) => (filters.fade || inFocus(t.project)) && matches(t);
+  const drawn = (t) => (filters.fade || (inFocus(t.project) && agentOK(t))) && matches(t);
   // Resolved threads are not in the live stream: they show (and are
   // fetched, once) for the Resolved filter, a time window other than the
   // default "Open threads" (Any time, Last hour…) and a search.
@@ -372,7 +377,7 @@
   }
 
   function renderGraph(threads) {
-    const projects = state.projects.filter((p) => filters.fade || inFocus(p.slug));
+    const projects = state.projects.filter((p) => filters.fade || (inFocus(p.slug) && hubAgentOK(p.slug)));
     const hubColor = {};
     state.projects.forEach((p) => (hubColor[p.slug] = projColor(p.slug)));
     const want = [];
@@ -382,7 +387,7 @@
       const id = "hub:" + p.slug;
       const n = nodes.get(id) || { id, x: Math.cos(i) * 200, y: Math.sin(i) * 200 };
       const ts = per.get(p.slug) || [];
-      Object.assign(n, { hub: true, p, faded: !inFocus(p.slug), size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => !isDone(t)).length });
+      Object.assign(n, { hub: true, p, faded: !inFocus(p.slug) || !hubAgentOK(p.slug), size: ts.length, color: hubColor[p.slug], r: 14 + Math.sqrt((p.counts && Object.values(p.counts).reduce((a, b) => a + b, 0)) || ts.length) * 2.2, open: ts.filter((t) => !isDone(t)).length });
       want.push(n);
     });
     const hubIds = new Set(want.map((n) => n.id));
@@ -390,7 +395,7 @@
       const id = t.key;
       const hub = nodes.get("hub:" + t.project);
       const n = nodes.get(id) || { id, x: (hub?.x || 0) + (Math.random() - 0.5) * 60, y: (hub?.y || 0) + (Math.random() - 0.5) * 60 };
-      Object.assign(n, { hub: false, t, faded: !inFocus(t.project), r: threadRadius(t), color: STATES[t.state]?.color || "#baa67f" });
+      Object.assign(n, { hub: false, t, faded: !inFocus(t.project) || !agentOK(t), r: threadRadius(t), color: STATES[t.state]?.color || "#baa67f" });
       want.push(n);
       if (hubIds.has("hub:" + t.project)) links.push({ source: "hub:" + t.project, target: id, state: t.state, faded: n.faded });
     }
@@ -503,13 +508,18 @@
       if (d.p.goal) tip.append(el("div", { text: d.p.goal }));
       const co = d.p.coordinator;
       if (co) tip.append(el("div", { class: "s-" + co.state, text: "Coordinator: " + (COORD[co.state] || co.state) + (co.activity ? " · " + co.activity : "") }));
+      const ca = co && window.HDAgents?.ofCoord(d.p);
+      if (ca?.active) tip.append(el("div", { class: "sub", text: "Agent: " + ca.label }));
+      if (ca?.mismatch) tip.append(el("div", { class: "s-waiting", text: `Agent: ${ca.observed} running, recorded ${ca.recorded}` }));
       if (co?.prompt) tip.append(el("div", { class: "s-blocked", text: co.prompt.summary }));
       if (co?.agent_exited) tip.append(el("div", { class: "s-exited", text: "Coordinator agent exited: its pane is at a shell" }));
     } else {
       const t = d.t;
       tip.append(el("div", { class: "tt", text: t.title }),
         el("div", { class: "s-" + t.state, text: STATES[t.state]?.label + (t.activity ? " · " + t.activity : "") }),
-        el("div", { class: "sub", text: `${t.key} · ${t.agent || "?"} · ${ago(t.last_activity)}` }));
+        el("div", { class: "sub", text: `${t.key} · ${window.HDAgents?.of(t).label || t.agent || "?"} · ${ago(t.last_activity)}` }));
+      const ta = window.HDAgents?.of(t);
+      if (ta?.mismatch) tip.append(el("div", { class: "s-waiting", text: `Agent: ${ta.observed} running, recorded ${ta.recorded}` }));
       if (t.prompt) tip.append(el("div", { class: "s-blocked", text: t.prompt.summary }));
       if (t.agent_exited) tip.append(el("div", { class: "s-exited", text: "Agent exited: its pane is at a shell" }));
     }
@@ -573,11 +583,11 @@
     const rank = (t) => ORDER.indexOf(t.state);
     // Coordinators that need you are never acked or snoozed: they show until answered.
     const coords = mode === "parked" ? [] : coordItems();
-    return state.threads.filter((t) => t.needs_you && inFocus(t.project) && (mode === "all" || (mode === "parked") === parked(t))).concat(coords)
+    return state.threads.filter((t) => t.needs_you && inFocus(t.project) && agentOK(t) && (mode === "all" || (mode === "parked") === parked(t))).concat(coords)
       .sort((a, b) => rank(a) - rank(b) || ageSec(a) - ageSec(b));
   }
   function coordItems() {
-    return state.projects.filter((p) => p.coordinator?.needs_you && inFocus(p.slug)).map((p) => ({
+    return state.projects.filter((p) => p.coordinator?.needs_you && inFocus(p.slug) && coordAgentOK(p)).map((p) => ({
       key: "hub:" + p.slug, project: p.slug, coord: true, needs_you: true, state: p.coordinator.state,
       title: "Coordinator" + (p.coordinator.activity ? " · " + p.coordinator.activity : ""), last_activity: p.coordinator.last_activity, prompt: p.coordinator.prompt,
     }));
@@ -586,7 +596,7 @@
   let needsSig = "";
   function renderNeeds() {
     const list = needsList();
-    const hidden = state.threads.filter((t) => t.needs_you && inFocus(t.project)).length + coordItems().length - list.length;
+    const hidden = state.threads.filter((t) => t.needs_you && inFocus(t.project) && agentOK(t)).length + coordItems().length - list.length;
     const names = Object.fromEntries(state.projects.map((p) => [p.slug, p.name]));
     $("#needs-n").textContent = (list.length || "") + (hidden > 0 && $("#needs-filter").value === "active" ? ` (+${hidden} parked)` : "");
     const by = d3.group(list, (t) => t.state);
@@ -928,6 +938,7 @@
     $("#reset-filters").hidden = !anyFilter();
     $("#graph-empty").hidden = threads.length > 0;
     renderFocus();
+    window.HDAgents?.render();
     renderLegend(threads);
     renderNeeds();
     renderErrors();
@@ -1722,6 +1733,9 @@
   dash.mark = (key) => nodeSel.classed("memhl", (d) => d.id === key);
   dash.sizeMem = () => sizeMem;
   dash.inFocus = (slug) => inFocus(slug);
+  // The map's fade-or-hide setting, shared by the project and agent pickers.
+  dash.fade = () => !!filters.fade;
+  dash.setFade = (on) => { filters.fade = !!on; saveFilters(); render(); };
   dash.goProject = (slug) => goToProject(slug);
   dash.light = (slug) => light(slug || null);
   dash.state = () => state;

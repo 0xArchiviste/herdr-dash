@@ -50,6 +50,16 @@ always through `herdr-projects` and its safety checks.
   results and the System strip's agents, queue and processes follow it
   live; unfocused projects hide, or fade with **Fade others**. The focus
   survives reloads and lives in the URL (`?focus=a,b`) for bookmarks.
+- **Agent filter** (**A**): tick the harnesses actually running (claude,
+  codex, opencode, …) or one model or profile under each, with a live
+  count of active threads and coordinators. The agent is the one seen in
+  the pane, else the recorded one; ≠ marks where they disagree. It ANDs
+  with the project focus and time window across the graph, Needs-you,
+  Threads tab, Master window (rows, counts, CPU, RAM), System strip,
+  Memory map (others dimmed) and search. The picker's **Landscape** table
+  shows, per agent and model, threads working / waiting / idle,
+  coordinators, projects, CPU and RAM; click a row to show only it. Chips
+  with ×, All and None; kept on reload and in the URL (`?agent=codex,opencode`).
 - **Go to a project**: click a focus chip to pan and zoom the map to that
   project and pulse its nodes (click again to open its coordinator); hover
   lights it and dims the rest. Chips take Tab, ←/→, Enter and

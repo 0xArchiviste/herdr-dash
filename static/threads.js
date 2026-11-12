@@ -238,7 +238,8 @@ window.HDThreads = (() => {
   }
   function model(t) {
     const s = t.session || {};
-    return [t.profile || s.profile || t.agent, s.model?.value].filter(Boolean).join(" · ");
+    const a = window.HDAgents?.of(t);
+    return [t.profile || s.profile || t.agent, s.model?.value, a?.mismatch ? `${a.observed} running, recorded ${a.recorded}` : null].filter(Boolean).join(" · ");
   }
 
   // ---------------------------------------------------------------- project view
@@ -254,6 +255,7 @@ window.HDThreads = (() => {
     v.overall = el("div", { class: "tv-overall" });
     v.blocked = el("div", { class: "tv-blocked" });
     v.status = el("p", { class: "tv-status muted", role: "status", "aria-live": "polite" });
+    v.agentNote = el("p", { class: "tv-agentnote muted", hidden: "" });
     v.sum.append(v.counts, el("div", { class: "tv-sumrow" }, v.overall, markAll), v.blocked);
     v.markAll = markAll;
     v.search = search;
@@ -270,7 +272,7 @@ window.HDThreads = (() => {
     }
     v.empty = el("div", { class: "tv-empty", hidden: "" });
     v.root = el("div", { class: "tv" + (opts.compact ? " compact" : "") }, v.sum,
-      el("div", { class: "tv-tools" }, search), v.status, ...[...v.stages.values()].map((s) => s.node), v.empty);
+      el("div", { class: "tv-tools" }, search), v.agentNote, v.status, ...[...v.stages.values()].map((s) => s.node), v.empty);
     container.replaceChildren(v.root);
     views.add(v);
     ensure(slug);
@@ -370,7 +372,11 @@ window.HDThreads = (() => {
     ensure(slug);
     // Done needs the project's resolved threads, which the live stream leaves out.
     window.hd?.needResolved?.(slug);
-    const all = st().threads.filter((t) => t.project === slug);
+    const A = window.HDAgents?.active() ? window.HDAgents : null;
+    const mine = st().threads.filter((t) => t.project === slug);
+    const all = A ? mine.filter((t) => A.match(t)) : mine;
+    v.agentNote.hidden = !A;
+    if (A) v.agentNote.textContent = `Agent filter: ${A.summary()}${mine.length > all.length ? ` · ${mine.length - all.length} other thread${mine.length - all.length === 1 ? "" : "s"} hidden` : ""}`;
     const by = Object.fromEntries(STAGES.map((s) => [s.id, []]));
     for (const t of all) by[stageOf(t)].push(t);
     const orphans = st().projects.find((p) => p.slug === slug)?.orphans || [];
@@ -477,5 +483,6 @@ window.HDThreads = (() => {
   function frame() {
     if (st().threads.some((t) => t.state === "leftover") || st().projects.some((p) => p.orphans?.length)) refreshAll();
   }
+  document.addEventListener("hd-focus", () => refreshAll());
   return { mount, mountThread, state: refreshAll, frame, openReport, stageOf, STAGES, closeLeftover, closeAll };
 })();

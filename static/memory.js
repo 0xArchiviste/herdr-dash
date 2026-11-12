@@ -268,6 +268,8 @@
     t.classList.toggle("group", !!n.children);
     t.classList.toggle("nohead", !!n.children && !hasHead);
     t.classList.toggle("hl", !!hl && (d.id === hl));
+    // The Agent filter dims tiles of threads and coordinators not on it.
+    t.classList.toggle("agent-dim", !!k && !!window.HDAgents?.active() && !window.HDAgents.matchKey(k));
     const sig = [d.name, hasHead, w > 46 && h > 15, d.kind, d.kind === "leftover" && !!leftoverOf(d)].join("|");
     if (t.dataset.sig !== sig) {
       t.dataset.sig = sig;
@@ -470,6 +472,7 @@
     if (es) histTimer = setTimeout(loadHist, 1000 * Math.min(15, Math.max(2, hist?.every || 15)));
   }
   document.addEventListener("visibilitychange", sync);
+  document.addEventListener("hd-focus", () => { if (win) queue(); });
   document.addEventListener("hdwin:change", sync);
   addEventListener("resize", () => { if (win) queue(); });
 
