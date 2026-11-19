@@ -103,7 +103,9 @@ window.HDThreadWin = (() => {
     return s || { ok: false };
   }
 
-  function open(key) {
+  // open(key, o): o.solo for the pop-out page's one window (static/opener.js):
+  // no Panel button, Esc does not close it, o.onClose when it is closed.
+  function open(key, o = {}) {
     if (!window.HDWin) return null;
     const id = "thread:" + key;
     if (HDWin.has(id)) { HDWin.restore(id); return HDWin.get(id); }
@@ -112,7 +114,8 @@ window.HDThreadWin = (() => {
     let es = null, blocked = false, ctl = null, screen = null;
     let mode = "view", status = "", alive = false, pane = "", consent = false, seen = false, restoring = loadMode(id) === "raw";
     const w = HDWin.open(id, {
-      title: (key.startsWith("hub:") ? "" : key.split("/")[1] + " · ") + a.name, short: a.short, cls: "thread-win", width: 560, persist: true,
+      title: (key.startsWith("hub:") ? "" : key.split("/")[1] + " · ") + a.name, short: a.short, cls: "thread-win", width: 560, persist: !o.solo,
+      onEsc: o.solo ? () => true : undefined,
       build(body, win) {
         const log = el("div", { class: "tw-log" });
         const msg = (text, kind) => { log.append(el("div", { class: "msg " + kind, text })); while (log.childElementCount > 6) log.firstElementChild.remove(); };
@@ -184,7 +187,9 @@ window.HDThreadWin = (() => {
           text: "Raw: every key goes to the pane, Esc included. Esc Esc or Alt+Shift+R leaves. The mouse wheel scrolls this copy only: herdr passes no mouse input to the pane." });
         const sendKeys = window.HDTerm?.sender(key, { pane: () => pane, report: (ok, text) => { if (!ok) msg(text, "err"); } });
         const head = el("div", { class: "tw-head" }, el("h2", { class: "tw-name", text: a.name }), badge, modes,
-          el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }),
+          o.solo ? null : el("button", { type: "button", class: "tbtn tw-panel", text: "Panel", title: "Open the docked panel", onclick: () => window.hd?.select(key) }),
+          o.solo || !window.HDOpen ? null : el("button", { type: "button", class: "tbtn tw-popout", text: "⇱", "aria-label": "Pop out to a new browser window",
+            title: "Pop out to a new browser window (works on another monitor)", onclick: () => { if (window.HDOpen.popout(key)) HDWin.close(id); } }),
           el("div", { class: "muted tw-sub", text: a.sub }));
         const busy = () => alive && status === "working";
         const ask = (why) => (window.hd?.confirm ? window.hd.confirm(why, [], "Raw mode") : Promise.resolve(false));
@@ -291,7 +296,7 @@ window.HDThreadWin = (() => {
         document.addEventListener("hdwin:change", vis);
         win.stop = () => { stop(); modal.delete(id); clearTimeout(escTimer); document.removeEventListener("visibilitychange", vis); document.removeEventListener("hdwin:change", vis); };
       },
-      onClose: (win) => win.stop?.(),
+      onClose: (win) => { win.stop?.(); o.onClose?.(win); },
     });
     return w;
   }

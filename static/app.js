@@ -427,7 +427,10 @@
           e.stopPropagation();
           if (d.hub && (e.ctrlKey || e.metaKey || e.shiftKey)) toggleFocus(d.p.slug);
           else if (e.shiftKey && window.HDThreadWin) window.HDThreadWin.open(d.id);
-          else d.hub ? hubClick(d) : select(d.id);
+          // A thread opens the way the user chose (static/opener.js); without a choice, the panel.
+          else if (d.hub) hubClick(d);
+          else if (window.HDOpen && window.HDOpen.how(e, "panel") !== "panel") window.HDOpen.open(d.id, { e, own: "panel" });
+          else select(d.id);
         })
           .on("mouseenter", (e, d) => { hovered = d.id; placeLabels(); showTip(e, d); }).on("mousemove", moveTip)
           .on("mouseleave", () => { hovered = null; placeLabels(); hideTip(); })
@@ -620,6 +623,8 @@
               if (t.coord) return; // nothing to ack on a coordinator
               picked.has(t.key) ? picked.delete(t.key) : picked.add(t.key); renderNeeds(); return;
             }
+            // The way the user chose (static/opener.js); without a choice, the panel.
+            if (window.HDOpen && window.HDOpen.how(null, "panel") !== "panel") { window.HDOpen.open(t.key, { own: "panel", near: chipNode(t.key) }); return; }
             if (t.coord) { select(t.key); return; }
             // Make sure the node is visible before selecting it.
             if (!visible(t)) clearFilters(true, true);
@@ -638,7 +643,13 @@
   // the prompt card, without opening the panel.
   // Every chip gets a window button (the thread's chat in a floating window);
   // one with a prompt also an Answer button (its dialog window).
+  const chipNode = (key) => () => document.querySelector(`#needs .chip[data-key="${CSS.escape(key)}"]`);
   function chipWith(t, chip) {
+    // Ctrl/Cmd- or middle-click on a chip pops it out.
+    if (window.HDOpen) {
+      chip.addEventListener("click", (e) => { if (!selecting && (e.ctrlKey || e.metaKey)) { e.stopImmediatePropagation(); window.HDOpen.popout(t.key); } }, true);
+      chip.addEventListener("auxclick", (e) => { if (!selecting && e.button === 1) { e.preventDefault(); window.HDOpen.popout(t.key); } });
+    }
     if (selecting) return chip;
     const win = el("button", { class: "chip-win", "data-key": t.key, title: "Open in a window", "aria-label": "Open " + t.title + " in a window", text: "⧉",
       onclick: () => window.HDThreadWin?.open(t.key) });
@@ -931,7 +942,12 @@
     box.textContent = state.errors.slice(0, 3).join("\n");
   }
 
+  // openBtn: b opens key the way the user chose, else the place's own way.
+  const openBtn = (b, key, own) => (window.HDOpen ? window.HDOpen.bind(b, key, { own, near: () => b.closest("details") || b }) : (b.addEventListener("click", () => dash.open(key)), b));
+
   function render() {
+    // A pop-out page (static/opener.js) shows one window: no graph, no strip.
+    if (window.HDOpen?.solo) { window.HDOpen.state(); return; }
     updateEff();
     if (resolvedShown()) needResolved();
     const threads = state.threads.filter(visible);
@@ -1433,7 +1449,7 @@
           el("span", { class: "t", text: x.title }),
           el("span", { class: "muted", text: `${x.id} · ${nyTime(x.time)}` })),
         el("div", { class: "md" }, ...(x.html ? safeHTML(x.html) : [])),
-        el("button", { class: "tbtn open-thread", text: `Open ${x.id}`, onclick: () => select(x.key) }))) : [el("em", { class: "muted", text: "No thread reports yet." })]));
+        openBtn(el("button", { class: "tbtn open-thread", text: `Open ${x.id}` }), x.key, "panel"))) : [el("em", { class: "muted", text: "No thread reports yet." })]));
     }
     fillJump(d.jump);
   }

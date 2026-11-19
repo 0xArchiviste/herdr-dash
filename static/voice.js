@@ -855,6 +855,7 @@
       el("label", { class: "row" }, el("span", { text: "Detect speech in this browser for voice navigation" }), vad),
       el("label", { class: "row" }, el("span", { text: "Ask the AI model for phrases the grammar misses" + (server.intent ? "" : " (not configured)") }), ai),
       note,
+      ...(window.HDOpen ? [window.HDOpen.settingsRow()] : []),
       ...(window.HDPrompt ? [window.HDPrompt.settingsRow()] : []),
       el("div", { class: "row" }, el("button", { class: "tbtn", type: "button", text: "Reset to defaults", onclick: () => { Object.assign(cfg, DEFAULTS); saveCfg(); showSettings(); refreshAvailability(); } }),
         el("button", { class: "tbtn", type: "button", text: "Help (?)", onclick: () => { closeOverlays(); showHelp(); } })));

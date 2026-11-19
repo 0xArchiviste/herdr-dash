@@ -118,7 +118,7 @@
       const h0 = hs[0];
       const t = threads.get(key);
       const hub = key.startsWith("hub:");
-      return el("button", { class: "hit", "data-key": key, title: "Open " + (hub ? "the coordinator panel" : key), onclick: () => { box.hidden = true; dash.open?.(key); } },
+      return el("button", { class: "hit", "data-key": key, title: "Open " + (hub ? "the coordinator panel" : key), onclick: (e) => { box.hidden = true; window.HDOpen ? window.HDOpen.open(key, { e, own: "panel" }) : dash.open?.(key); } },
         el("div", { class: "s-head" },
           el("span", { class: "dot", style: `background:${hub ? "#ff8700" : dash.STATES?.[t?.state]?.color || "#baa67f"}` }),
           el("span", { class: "s-proj", text: names[h0.project] || h0.project }),

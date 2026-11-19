@@ -223,6 +223,8 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	}))
+	mux.HandleFunc("GET /thread/{slug}/{id}", popoutPage(sub, "../../"))
+	mux.HandleFunc("GET /coordinator/{slug}", popoutPage(sub, "../"))
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, col.Snapshot())
 	})

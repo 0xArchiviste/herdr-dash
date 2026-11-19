@@ -237,6 +237,8 @@
   }
   const opens = (p) => p.kind === "thread" || p.kind === "coordinator" || (p.kind === "leftover" && !!p.thread);
 
+  // openKey opens a row's thread the way the user chose (static/opener.js), else its panel.
+  const openKey = (key, e) => (window.HDOpen ? window.HDOpen.open(key, { e, own: "panel" }) : window.dash.open(key));
   function procsSec() {
     const body = [el("h3", { text: "Processes" })];
     const rows = frame?.available ? frame.procs.filter((p) => inFocus(p.project) && procOK(p)) : [];
@@ -246,7 +248,7 @@
       body.push(el(opens(p) ? "button" : "div", {
         class: "sproc", type: opens(p) ? "button" : null, "data-key": p.key, "data-kind": p.kind, "data-level": lv,
         title: `${p.n} process${p.n === 1 ? "" : "es"}, busiest ${p.top}` + (opens(p) ? " · open" : ""),
-        onclick: opens(p) ? () => { close(); window.dash.open(p.key); } : null,
+        onclick: opens(p) ? (e) => { close(); openKey(p.key, e); } : null,
       },
         el("span", { class: "spname" }, p.project && (p.kind === "thread" || p.kind === "leftover") ? el("span", { class: "spproj", text: p.project }) : null, procName(p)),
         el("span", { class: "spagent", text: (p.exited ? "agent exited · " + p.top : [p.agent, p.top !== p.agent ? p.top : null].filter(Boolean).join(" · ")) + ` (${p.n})` }),
@@ -263,7 +265,7 @@
     if (!q.rows.length) body.push(el("div", { class: "snote", text: "Nothing waiting to launch." }));
     for (const t of q.rows) {
       body.push(el("button", { class: "squeue", type: "button", "data-key": t.key, "data-level": qLevel(t), title: `Open ${t.key}`,
-        onclick: () => { close(); window.dash.open(t.key); } },
+        onclick: (e) => { close(); openKey(t.key, e); } },
         el("span", { class: "spos", text: t._pos == null ? "—" : String(t._pos) }),
         el("span", { class: "sqt" }, el("span", { class: "sqproj", text: t.project }), `${t.id} ${t.title || ""}`),
         el("span", { class: "sprof", text: t.profile || t.agent || "" }),
