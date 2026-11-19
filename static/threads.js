@@ -220,6 +220,10 @@ window.HDThreads = (() => {
     });
   }
 
+  // openBtn makes b open key the way the user chose (static/opener.js),
+  // else the place's own way.
+  const openBtn = (b, key, own) => (window.HDOpen ? window.HDOpen.bind(b, key, { own, near: () => b }) : (b.addEventListener("click", () => window.hd?.select(key)), b));
+
   // ---------------------------------------------------------------- pieces
   function evRow(e) {
     const k = EV[e.type] || EV.other;
@@ -353,7 +357,9 @@ window.HDThreads = (() => {
         el("span", { class: "tv-title", text: t.title, title: t.title }),
         el("span", { class: "tv-acts" },
           el("button", { type: "button", class: "tbtn tv-report", title: `Open ${t.id}'s report in a window`, "aria-label": `Report of ${t.id}`, text: "Report", onclick: () => openReport(t.key) }),
-          el("button", { type: "button", class: "tbtn tv-open", title: `Open ${t.id}'s panel`, "aria-label": `Open ${t.id}`, text: "Open", onclick: () => window.hd?.select(t.key) }))),
+          // Open: a window by default; its menu: the panel or a new browser window (static/opener.js).
+          window.HDOpen ? window.HDOpen.button(t.key, { cls: "tv-open", near: () => c }) :
+            el("button", { type: "button", class: "tbtn tv-open", "aria-label": `Open ${t.id}`, text: "Open", onclick: () => window.hd?.select(t.key) }))),
       t.state === "resolved" || t.state === "leftover" ? null : bar(t),
       t.state === "leftover" ? leftoverRows(t.project, t.leftover || [], t.id) : null,
       el("div", { class: "tv-meta" },
@@ -410,8 +416,8 @@ window.HDThreads = (() => {
     if (v.blocked.dataset.sig !== bsig) {
       v.blocked.dataset.sig = bsig;
       v.blocked.replaceChildren(el("span", { class: "tv-bl-label", text: "Blocked on you:" }),
-        ...needs.map((t) => el("button", { type: "button", class: "tbtn tv-bl", "data-id": t.id, title: `${CHIP[t.state]}: open ${t.id}`, onclick: () => window.hd?.select(t.key) },
-          el("span", { class: "tv-chip s-" + t.state, text: CHIP[t.state] }), ` ${t.id} · ${t.title}`)));
+        ...needs.map((t) => openBtn(el("button", { type: "button", class: "tbtn tv-bl", "data-id": t.id, title: `${CHIP[t.state]}: open ${t.id}` },
+          el("span", { class: "tv-chip s-" + t.state, text: CHIP[t.state] }), ` ${t.id} · ${t.title}`), t.key, "panel")));
     }
     const e = tl.get(slug);
     v.status.textContent = e?.err ? `Timeline unavailable (${e.err}); cards still update. It retries when the project changes.` : "";

@@ -164,9 +164,11 @@
   }
 
   // ---------------------------------------------------------------- open
-  function openCoord(key) {
+  // The way the user chose (static/opener.js); without a choice, a window.
+  function openCoord(key, e) {
     if (!key) return;
-    if (window.HDThreadWin) window.HDThreadWin.open(key);
+    if (window.HDOpen) window.HDOpen.open(key, { e, own: "window" });
+    else if (window.HDThreadWin) window.HDThreadWin.open(key);
     else window.hd?.select(key);
   }
 
@@ -234,7 +236,7 @@
   const num = (n, cls) => el("span", { class: n ? cls : "fl-zero", text: n ? String(n) : "–" });
   const selBox = (r) => el("input", { type: "checkbox", class: "fl-sel", "aria-label": `Select ${r.name}`, checked: picked.has(r.slug),
     onclick: (e) => { e.stopPropagation(); tick(r.slug, e.target.checked, e.shiftKey); } });
-  const nameBtn = (r) => el("button", { type: "button", class: "fl-name", title: `Open ${r.name}'s coordinator`, onclick: (e) => { e.stopPropagation(); openCoord("hub:" + r.slug); } },
+  const nameBtn = (r) => el("button", { type: "button", class: "fl-name", title: `Open ${r.name}'s coordinator`, onclick: (e) => { e.stopPropagation(); openCoord("hub:" + r.slug, e); } },
     el("b", { text: r.name }), el("small", { text: r.slug }));
 
   function table(rows) {
@@ -250,7 +252,7 @@
     const body = el("tbody");
     for (const r of rows) {
       const tr = el("tr", { "data-slug": r.slug, tabindex: "0", class: picked.has(r.slug) ? "sel" : null, "aria-selected": String(picked.has(r.slug)),
-        onclick: () => openCoord("hub:" + r.slug),
+        onclick: (e) => openCoord("hub:" + r.slug, e),
         onkeydown: (e) => {
           if (e.target !== tr) return;
           if (e.key === "Enter") { e.preventDefault(); openCoord("hub:" + r.slug); }
@@ -290,7 +292,7 @@
     if (!items.length) return el("p", { id: "fl-attn", class: "fl-calm", text: "Nothing needs you across the fleet." });
     return el("ol", { id: "fl-attn", class: "fl-attn", "aria-label": "Needs attention, most urgent first" }, ...items.map((a) =>
       el("li", { "data-slug": a.slug, "data-kind": a.kind },
-        el("button", { type: "button", title: `Open ${a.name}'s coordinator`, onclick: () => openCoord(a.key) },
+        el("button", { type: "button", title: `Open ${a.name}'s coordinator`, onclick: (e) => openCoord(a.key, e) },
           el("span", { class: "fl-akind", "data-kind": a.kind, "aria-hidden": "true" }),
           el("b", { text: a.name }), el("span", { class: "fl-atext", text: a.text }),
           a.since ? el("span", { class: "fl-aage", text: ago(a.since) }) : null))));

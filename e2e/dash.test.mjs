@@ -773,8 +773,12 @@ test("page: hub opens the coordinator panel with chat, threads, tasks and memory
   await page.evaluate(() => document.querySelector('svg g.node[data-key="hub:alpha"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
   await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Alpha Project", 3000);
 
-  // 30: an open thread opens its panel.
+  // 30: an open thread opens its window (the menu has the panel: e2e/open.test.mjs).
   await page.locator('#p-tv .tv-card[data-key="alpha/t-0002"] .tv-open').click();
+  await page.waitForSelector('.hwin[data-win="thread:alpha/t-0002"]');
+  await page.evaluate(() => HDWin.close("thread:alpha/t-0002"));
+  await page.locator('#p-tv .tv-card[data-key="alpha/t-0002"] .ho-more').click();
+  await page.locator('#open-menu [data-how="panel"]').click();
   await waitFor(async () => (await page.locator("#panel h2.title").innerText()) === "Needs approval", 3000);
 
   // 28: beta is blocked: the refusal is shown with the note, nothing resent.

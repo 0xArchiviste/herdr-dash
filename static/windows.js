@@ -28,8 +28,13 @@
 // arrows; a double-click on its title bar maximises or restores it. The size
 // is kept with its position; docks size their windows themselves, and a
 // window floated again takes its last floating size. Phones: sheets only.
+//
+// A pop-out page (/thread/<slug>/<id>, /coordinator/<slug>: static/opener.js)
+// is "solo": its layout and positions stay in memory, so it never writes
+// over the main tab's.
 window.HDWin = (() => {
   "use strict";
+  const SOLO = /\/(thread\/[^/]+\/[^/]+|coordinator\/[^/]+)\/?$/.test(location.pathname);
   const POS_KEY = "hd-win-pos";
   const LAYOUT_KEY = "hd-win-layout";
   const PHONE = 700; // px: at or under this width windows are sheets
@@ -54,7 +59,8 @@ window.HDWin = (() => {
     for (const k of kids) if (k != null) e.append(k);
     return e;
   };
-  const store = {
+  const mem = {};
+  const store = SOLO ? { get: () => mem, put(id, p) { mem[id] = p; } } : {
     get() { try { return JSON.parse(localStorage.getItem(POS_KEY) || "{}") || {}; } catch { return {}; } },
     put(id, p) { try { const all = store.get(); all[id] = p; localStorage.setItem(POS_KEY, JSON.stringify(all)); } catch {} },
   };
@@ -75,7 +81,7 @@ window.HDWin = (() => {
   }
   function loadLayout() {
     let s = {};
-    try { s = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") || {}; } catch {}
+    try { if (!SOLO) s = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") || {}; } catch {}
     const L = { order: strs(s.order), tray: TRAY_POS.includes(s.tray) ? s.tray : "bl", open: strs(s.open), min: strs(s.min),
       side: SIDES.includes(s.side) ? s.side : "right", docks: {}, hidden: null };
     readDocks(s, L);
@@ -89,7 +95,7 @@ window.HDWin = (() => {
   }
   const loadLayoutFrom = (s) => { const L = { min: strs(s.min), side: SIDES.includes(s.side) ? s.side : "right", docks: {} }; readDocks(s, L); return L; };
   const layout = loadLayout();
-  const saveLayout = () => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch {} };
+  const saveLayout = () => { if (SOLO) return; try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch {} };
   const dockOf = (id) => SIDES.find((s) => layout.docks[s].ids.includes(id)) || null;
   const drop = (arr, id) => { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); };
   function undockId(id) {
@@ -773,6 +779,17 @@ window.HDWin = (() => {
     return w;
   }
 
+  // place moves a floating window to x, y (kept on screen, remembered) and
+  // brings it to front; docked windows, maximised ones and sheets stay.
+  function place(id, x, y) {
+    const w = wins.get(id);
+    if (!w || w.dock || w.max || phone()) return;
+    w.x = x; w.y = y;
+    clamp(w);
+    save(w);
+    front(w);
+  }
+
   function minimise(id) {
     const w = wins.get(id);
     if (!w || w.dock) return;
@@ -944,7 +961,8 @@ window.HDWin = (() => {
 
   document.body.append(layer);
   return {
-    open, close, minimise, restore,
+    open, close, minimise, restore, place,
+    solo: SOLO,
     minimiseAll: hideAll, restoreAll: showAll, toggleAll, allHidden: () => !!layout.hidden,
     // panel(name, { hide, show }): see "Minimise all" above.
     panel: (name, p) => { panels.set(name, p); renderTray(); },

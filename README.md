@@ -117,6 +117,18 @@ always through `herdr-projects` and its safety checks.
   open in the same kind of window (Shift+click its node, `⧉` on its strip
   chip or in the panel), so several can be watched side by side; they come
   back after a reload, and the three front-most stream their screens.
+- **Open, your way**: a Threads card's *Open* opens the thread's window
+  beside the card (or brings it back to the front); its `▾` menu opens it in
+  a window, the panel, or a **pop-out**: a browser window of its own
+  (`/thread/<slug>/<id>`, `/coordinator/<slug>`) with just that window,
+  full-size, streaming live, for a second monitor; it closes itself once
+  the thread is resolved. Ctrl/Cmd- or middle-click pops out; on a phone
+  the pop-out is a new tab, and the desktop app opens it in the default
+  browser. "Make this the default" in the menu, or ⚙ → "Open threads in",
+  sets how every place opens a thread (graph, Needs-you strip, Threads
+  cards, reports, Master window, Memory map, System list, search); without
+  one, Threads cards, the Master window and Memory map tiles open windows
+  and the other places the panel, as before.
 - **Tray and docks**: the tray takes any number of windows (it wraps; `+N`
   lists the rest); drag its buttons to reorder them and its `⠿` grip to move
   it to another edge or corner. Windows dock right, left or bottom: drag one

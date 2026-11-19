@@ -354,7 +354,7 @@
     side.replaceChildren(
       el("h3", { text: `Top growers · last ${win}` }),
       hist?.growers?.length ? el("ol", { class: "mm-growers" }, ...hist.growers.slice(0, 8).map((g) => el("li", { "data-key": g.key, "data-kind": g.kind },
-        el("button", { type: "button", class: "mm-gn", title: `${g.key}: ${bytes(g.from)} → ${bytes(g.to)} over ${dur(g.over)}`, onclick: () => (g.kind === "thread" || g.kind === "coordinator" ? window.dash?.open(g.key) : null) },
+        el("button", { type: "button", class: "mm-gn", title: `${g.key}: ${bytes(g.from)} → ${bytes(g.to)} over ${dur(g.over)}`, onclick: (e) => (g.kind === "thread" || g.kind === "coordinator" ? (window.HDOpen ? window.HDOpen.open(g.key, { e, own: "panel" }) : window.dash?.open(g.key)) : null) },
           g.project && g.kind !== "coordinator" ? el("span", { class: "mm-gp", text: g.project }) : null, g.kind === "coordinator" ? `${g.project} · coordinator` : title(g)),
         el("span", { class: "mm-gd", text: `+${bytes(g.delta)}` })))) : el("p", { class: "mm-calm", text: hist ? "Nothing grew." : "Collecting…" }),
       el("h3", { text: "Projects (RSS)" }),
@@ -432,7 +432,7 @@
     clearTimeout(zoomTimer);
     const n = nodeAt(e);
     const o = n && ownerOf(n);
-    if (o && (o.data.kind === "thread" || o.data.kind === "coordinator") && o.data.key) window.HDThreadWin?.open(o.data.key);
+    if (o && (o.data.kind === "thread" || o.data.kind === "coordinator") && o.data.key) window.HDOpen ? window.HDOpen.open(o.data.key, { e, own: "window" }) : window.HDThreadWin?.open(o.data.key);
   }
   // A node selected on the graph: mark its tile.
   document.addEventListener("hd-select", (e) => {
