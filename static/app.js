@@ -1765,6 +1765,8 @@
     needResolved,
     // The stream's handler, for tests: (type, data) as if it came in.
     streamEvent: onStream,
+    // For tests: the graph's layout has stopped moving (until the next restart).
+    graphSettled: () => sim.alpha() < sim.alphaMin(),
     selected: () => selected,
     select,
     needs: needsList,

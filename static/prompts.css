@@ -15,6 +15,10 @@
 .pcard pre { margin: 6px 0; padding: 6px 8px; background: var(--hard-black); border: 1px solid var(--g3); border-radius: 6px;
   font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
 .pc-subject { color: var(--byellow); }
+.pc-list { margin: 6px 0; padding: 6px 8px 6px 26px; background: var(--hard-black); border: 1px solid var(--g3); border-radius: 6px; font-size: 12px; max-height: 160px; overflow: auto; }
+.pc-list code { color: var(--byellow); overflow-wrap: anywhere; }
+.pc-lasting { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--borange); border: 1px solid #6b4a10; border-radius: 4px; padding: 0 5px; }
+.pc-unparsed { color: var(--byellow); font-size: 13px; }
 .pc-detail .add { color: var(--bgreen); }
 .pc-detail .del { color: var(--bred); }
 .pc-opts { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }

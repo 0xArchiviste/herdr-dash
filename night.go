@@ -618,13 +618,18 @@ func (n *Night) press(c nightCand, p *Prompt, opt int) (answerResult, error) {
 
 var (
 	allowLabel   = regexp.MustCompile(`(?i)^(yes|allow|approve|accept|proceed|confirm|ok|run)\b`)
-	lastingLabel = regexp.MustCompile(`(?i)don['’]?t ask again|always|auto mode|accept edits|auto-approve|in the future|trust|(from|for) this project|allow all`)
+	lastingLabel = regexp.MustCompile(`(?i)don['’]?t ask again|always|auto mode|accept edits|auto-approve|in the future|trust|(from|for) this project|allow all|until \w+ (is )?restart`)
 	recommended  = regexp.MustCompile(`(?i)\(recommended\)`)
 )
 
 // decide picks the option to press, or -1 and why the prompt is left.
 func (n *Night) decide(p *Prompt, s NightSettings, c nightCand) (int, string) {
+	if p.Lasting {
+		return -1, "a lasting grant (" + clip(p.Title+": "+p.Question, 80) + "): left for you"
+	}
 	switch p.Kind {
+	case "unparsed":
+		return -1, "unparsed prompt (its options could not be read safely): left for you"
 	case "plan":
 		return -1, "plan approval: always left for you"
 	case "trust":
@@ -703,7 +708,7 @@ func denyText(p *Prompt) string {
 			det = append(det, l)
 		}
 	}
-	all := strings.Join([]string{p.Title, p.Subject, p.Question, p.Desc, strings.Join(det, "\n")}, "\n")
+	all := strings.Join([]string{p.Title, p.Subject, p.Question, p.Desc, strings.Join(det, "\n"), strings.Join(p.List, "\n")}, "\n")
 	return strings.Join(strings.Fields(all), " ")
 }
 

@@ -313,9 +313,15 @@ test("page: a version gap resyncs; deltas patch in place without reheating", asy
 
     // 7. Let the graph settle, mark DOM nodes, then a non-structural delta.
     const positions = () => page.$$eval("#graph g.node", (gs) => gs.map((g) => g.getAttribute("transform")).join("|"));
+    // Settled: the simulation has stopped (two equal reads alone can be a
+    // page too loaded to draw a frame between them).
     let prev = "";
-    await waitFor(async () => { const p = await positions(); const same = p === prev; prev = p; return same; }, 20_000);
-    await sleep(300);
+    await waitFor(async () => {
+      const p = await positions();
+      const same = p === prev;
+      prev = p;
+      return same && (await page.evaluate(() => window.hd.graphSettled()));
+    }, 20_000);
     const settled = await positions();
     await page.evaluate(() => {
       document.querySelector('#needs .chip[data-key="alpha/t-0003"]').__mark = 1;
@@ -329,6 +335,7 @@ test("page: a version gap resyncs; deltas patch in place without reheating", asy
     await waitFor(() => page.evaluate((v) => window.hd.version() > v, v0), 10_000);
     await waitFor(() => page.evaluate(() => window.hd.state().threads.find((t) => t.key === "alpha/t-0001").activity === "Compiling the widget"));
     await sleep(800);
+    assert.ok(await page.evaluate(() => window.hd.graphSettled()), "an activity change restarted the layout");
     assert.equal(await positions(), settled, "an activity change reheated the settled graph");
     assert.equal(await page.evaluate(() => document.querySelector('#needs .chip[data-key="alpha/t-0003"]').__mark), 1, "the Needs-you strip was rebuilt for an unrelated change");
     assert.equal(await page.evaluate(() => document.querySelector('#graph g.node[data-key="alpha/t-0001"]').__mark), 1, "the changed node was recreated");
