@@ -20,7 +20,7 @@
     for (const k of kids) if (k != null) e.append(k);
     return e;
   };
-  const KIND = { permission: "Permission", question: "Question", plan: "Plan", trust: "Trust", confirm: "Confirm" };
+  const KIND = { permission: "Permission", question: "Question", plan: "Plan", trust: "Trust", confirm: "Confirm", unparsed: "Prompt" };
   const STALE_MS = 3000; // after a confirmed answer, a snapshot still showing that prompt is old
   const AUTO_MAX = 6; // windows opened by themselves at once
 
@@ -129,6 +129,7 @@
       const head = el("div", { class: "pc-head" },
         el("span", { class: "pc-kind " + p.kind, text: KIND[p.kind] || "Prompt" }),
         p.title && p.title !== KIND[p.kind] ? el("span", { class: "pc-title", text: p.title }) : null,
+        p.lasting ? el("span", { class: "pc-lasting", title: "Confirming grants this beyond this one request: the agent will not ask again until it restarts.", text: "lasting grant" }) : null,
         el("span", { class: "pc-harness", text: p.harness }));
       const parts = [head];
       if (p.tabs?.length > 1) {
@@ -140,6 +141,9 @@
       if (p.question) parts.push(el("div", { class: "pc-q", text: p.question }));
       if (p.desc) parts.push(el("div", { class: "pc-desc", text: p.desc }));
       if (p.subject) parts.push(codeBlock("pc-subject", p.subject));
+      // A list the prompt shows (opencode's patterns): its details, not options.
+      if (p.list?.length) parts.push(el("ul", { class: "pc-list" }, ...p.list.map((x) => el("li", {}, el("code", { text: x })))));
+      if (p.kind === "unparsed") parts.push(el("p", { class: "pc-note pc-unparsed", text: "The options on this screen could not be read safely: answer in the terminal." }));
       if (p.detail) parts.push(p.kind === "plan" ? el("pre", { class: "pc-plan", text: p.detail }) : codeBlock("pc-detail", p.detail));
       const list = el("div", { class: "pc-opts", role: "listbox", "aria-label": "Options" });
       const claude = p.harness === "claude";
@@ -225,6 +229,7 @@
     function keydown(e) {
       if (!cur || busy || e.altKey || e.ctrlKey || e.metaKey) return false;
       const n = cur.options.length;
+      if (!n) return false; // unparsed: nothing to pick from here
       const o = cur.options[sel];
       switch (e.key) {
         case "ArrowDown": case "ArrowUp":

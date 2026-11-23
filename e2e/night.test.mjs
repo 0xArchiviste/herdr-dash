@@ -170,7 +170,7 @@ test("never picks don't ask again: with no allow-once option the prompt is left"
   // An opencode "Always allow" confirmation is a lasting grant too.
   show("w1C:p1", fixture("opencode-always.ansi"));
   const a = await entryFor((e) => e.pane === "w1C:p1" && e.result === "refused");
-  assert.match(a.reason, /no allow-once option/);
+  assert.match(a.reason, /lasting grant/);
   assert.deepEqual(keysTo(m, "w1C:p1"), []);
   clear("w2A:p1");
   clear("w1C:p1");

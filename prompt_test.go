@@ -29,11 +29,24 @@ package main
 // 12. A screen at a real pane width splits a command, path or option label
 //     over lines: the parts are kept apart, glued without a space where a
 //     word was split, or a label's second line becomes its description.
+// 13. Screen chrome beside or below the prompt (opencode's sidebar at 120
+//     columns: the wrapped cwd:branch, MCP list, version; status bars)
+//     becomes part of the title, the subject or an option, or a button row
+//     is glued onto the wrapped text above it.
+// 14. A bulleted list in the prompt ("- pattern") is offered as options
+//     instead of shown as the request's details.
+// 15. A parse that still looks wrong (an option that is a list item, or a
+//     path glued to a button word) is shown with its wrong options rather
+//     than as unparsed ("answer in the terminal").
+// 16. A prompt that is itself a lasting grant (opencode's "Always allow"
+//     confirmation: until OpenCode restarts) is not flagged as one.
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type wantOpt struct {
@@ -53,6 +66,8 @@ func TestParsePrompt(t *testing.T) {
 		kind, harness, title, q, subject string
 		desc                             string // "": not checked
 		multi                            bool
+		lasting                          bool
+		list                             string // "|"-joined; "": none
 		summary                          string
 		detail                           string // substring of Detail
 		opts                             []wantOpt
@@ -140,9 +155,34 @@ func TestParsePrompt(t *testing.T) {
 			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
 		{file: "opencode-edit.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Edit", subject: "notes.txt", detail: "1 + hello world",
 			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
-		{file: "opencode-always.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", subject: "wc *",
+		{file: "opencode-always.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", list: "wc *", lasting: true,
+			q:       "This will allow the following patterns until OpenCode is restarted",
+			summary: "Permission: Always allow wc *",
+			opts:    []wantOpt{{label: "Confirm", keys: "enter", cur: true, always: true}, {label: "Cancel", keys: "right enter"}}},
+		// opencode 1.18 taken live at 76 and 120 columns (13, 14, 16). At 120
+		// a sidebar sits beside the prompt with the wrapped cwd:branch, and the
+		// first step's key hints are cut off ("enter co").
+		{file: "opencode-perm-76.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Shell command", subject: "ls /tmp/oc-demo-c | wc -l",
+			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
+		{file: "opencode-perm-120.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Shell command", subject: "ls /tmp/oc-demo-c | wc -l",
+			summary: "Permission: Shell ls /tmp/oc-demo-c | wc -l",
+			opts:    []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
+		{file: "opencode-always-76.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", list: "ls *|wc *", lasting: true,
+			q: "This will allow the following patterns until OpenCode is restarted", summary: "Permission: Always allow ls *, wc *",
+			opts: []wantOpt{{label: "Confirm", keys: "enter", cur: true, always: true}, {label: "Cancel", keys: "right enter"}}},
+		{file: "opencode-always-120.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", list: "ls *|wc *", lasting: true,
+			q: "This will allow the following patterns until OpenCode is restarted", summary: "Permission: Always allow ls *, wc *",
+			opts: []wantOpt{{label: "Confirm", keys: "enter", cur: true, always: true}, {label: "Cancel", keys: "right enter"}}},
+		// The reported screen: the 120-column capture with its key hints on
+		// their own row and a sidebar line reaching the edge right above the
+		// buttons. It parsed as "- ls *", "<path> - wc *", "<path>Confirm",
+		// "Cancel".
+		{file: "opencode-always-glued.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Always allow", list: "ls *|wc *", lasting: true,
 			q:    "This will allow the following patterns until OpenCode is restarted",
 			opts: []wantOpt{{label: "Confirm", keys: "enter", cur: true, always: true}, {label: "Cancel", keys: "right enter"}}},
+		{file: "opencode-external-76.ansi", agent: "opencode", kind: "permission", harness: "opencode", title: "Access external directory", subject: "/tmp/oc-demo-a",
+			list: "/tmp/oc-demo-a/*", summary: "Permission: Access external directory /tmp/oc-demo-a",
+			opts: []wantOpt{{label: "Allow once", keys: "enter", cur: true}, {label: "Allow always", keys: "right enter", always: true}, {label: "Reject", keys: "right right enter"}}},
 		{file: "opencode-question.ansi", agent: "opencode", kind: "question", harness: "opencode", q: "Which database would you like to use?",
 			opts: []wantOpt{{label: "Postgres", keys: "1", cur: true}, {label: "SQLite", keys: "2"}, {label: "Type your own answer", keys: "3", text: "required"}}},
 		{file: "confirm-yn.txt", agent: "", kind: "confirm", harness: "other", q: "Continue?", summary: "Confirm: Continue?",
@@ -190,6 +230,10 @@ func TestParsePrompt(t *testing.T) {
 			if p.Multi != c.multi {
 				t.Errorf("multi = %v", p.Multi)
 			}
+			if p.Lasting != c.lasting {
+				t.Errorf("lasting = %v", p.Lasting)
+			}
+			eq("list", strings.Join(p.List, "|"), c.list)
 			if len(p.Summary) > 100 || p.Summary == "" {
 				t.Errorf("summary %q", p.Summary)
 			}
@@ -235,6 +279,83 @@ func TestParsePrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// unmarked takes away what tells opencode's sidebar apart (its version
+// line and its boxes), as a screen read mid-redraw or a layout not seen yet
+// might.
+func unmarked(s string) string {
+	s = stripANSI(s)
+	s = regexp.MustCompile(`• OpenCode [0-9.]+`).ReplaceAllStringFunc(s, func(m string) string { return strings.Repeat(" ", utf8.RuneCountInString(m)) })
+	return regexp.MustCompile(`[┌┐└┘│─]`).ReplaceAllString(s, " ")
+}
+
+// 15: with the sidebar not told apart, the parse glues chrome to the
+// buttons; it is shown as unparsed (answer in the terminal), never with the
+// wrong options.
+func TestParsePromptGluedUnparsed(t *testing.T) {
+	b, err := os.ReadFile("testdata/prompts/opencode-always-glued.ansi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ParsePrompt(unmarked(string(b)), "opencode")
+	if p == nil {
+		t.Fatal("no prompt: a blocked pane showing buttons must still say it waits")
+	}
+	if p.Kind != "unparsed" || len(p.Options) != 0 || p.Harness != "opencode" {
+		t.Fatalf("got kind %q harness %q options %+v", p.Kind, p.Harness, p.Options)
+	}
+	if !strings.Contains(p.Summary, "answer in the terminal") || p.Sig == "" {
+		t.Errorf("summary %q sig %q", p.Summary, p.Sig)
+	}
+}
+
+func TestGluedLabel(t *testing.T) {
+	// label: glued in a numbered menu, glued on a button row.
+	for label, want := range map[string][2]bool{
+		"Confirm": {false, false}, "Cancel": {false, false}, "Allow always": {false, false}, "Reject": {false, false},
+		"Yes, and don’t ask again for: /opt/demo-tools/report-kit *": {false, true},
+		"Yes, allow reading from /etc from this project":             {false, true},
+		"No, and tell Codex what to do differently":                  {false, false},
+		"- /tmp/opencode/*": {true, true},
+		"• ls *":            {true, true},
+		"~/w/demo-suite/hp-demo- - /mnt/c/Temp/*":   {false, true},
+		"t-0042-core:hp/demo/t-0042-format Confirm": {true, true},
+		"hp/demo/t-0042-formatConfirm":              {true, true},
+		"Cancel ~/w/demo":                           {true, true},
+	} {
+		for i, buttons := range []bool{false, true} {
+			if got := gluedLabel(label, buttons); got != want[i] {
+				t.Errorf("gluedLabel(%q, buttons=%v) = %v, want %v", label, buttons, got, want[i])
+			}
+		}
+	}
+}
+
+// 13, 15: no fixture (any harness, any width) parses with an option that
+// looks glued or listed: the audit of every screen we have.
+func TestParsePromptNoGluedOptions(t *testing.T) {
+	for _, dir := range []string{"testdata/prompts", "testdata/screens"} {
+		es, _ := os.ReadDir(dir)
+		for _, e := range es {
+			if strings.HasSuffix(e.Name(), ".mjs") {
+				continue
+			}
+			b, _ := os.ReadFile(dir + "/" + e.Name())
+			p := ParsePrompt(string(b), "")
+			if p == nil {
+				continue
+			}
+			if p.Kind == "unparsed" {
+				t.Errorf("%s: unparsed", e.Name())
+			}
+			for _, o := range p.Options {
+				if gluedLabel(o.Label, false) {
+					t.Errorf("%s: option %q", e.Name(), o.Label)
+				}
+			}
+		}
 	}
 }
 

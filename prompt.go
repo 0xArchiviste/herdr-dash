@@ -40,24 +40,29 @@ type PromptTab struct {
 }
 
 type Prompt struct {
-	Kind      string         `json:"kind"`    // permission, question, plan, trust, confirm
-	Harness   string         `json:"harness"` // claude, codex, opencode, other
-	Title     string         `json:"title,omitempty"`
-	Question  string         `json:"question,omitempty"`
-	Subject   string         `json:"subject,omitempty"` // command, file, URL, folder
-	Desc      string         `json:"desc,omitempty"`
-	Detail    string         `json:"detail,omitempty"` // diff, plan or longer text
-	Multi     bool           `json:"multi,omitempty"`
-	Notes     bool           `json:"notes,omitempty"`   // options take notes ("n"), not answers
-	Focused   bool           `json:"focused,omitempty"` // a text field in the pane has the keyboard
-	Tabs      []PromptTab    `json:"tabs,omitempty"`
-	Cancel    []string       `json:"cancel,omitempty"` // Esc: cancel or deny, as the pane says
-	Prev      []string       `json:"prev,omitempty"`   // previous / next question tab
-	Next      []string       `json:"next,omitempty"`
+	Kind     string      `json:"kind"`    // permission, question, plan, trust, confirm
+	Harness  string      `json:"harness"` // claude, codex, opencode, other
+	Title    string      `json:"title,omitempty"`
+	Question string      `json:"question,omitempty"`
+	Subject  string      `json:"subject,omitempty"` // command, file, URL, folder
+	Desc     string      `json:"desc,omitempty"`
+	Detail   string      `json:"detail,omitempty"` // diff, plan or longer text
+	Multi    bool        `json:"multi,omitempty"`
+	Notes    bool        `json:"notes,omitempty"`   // options take notes ("n"), not answers
+	Focused  bool        `json:"focused,omitempty"` // a text field in the pane has the keyboard
+	Tabs     []PromptTab `json:"tabs,omitempty"`
+	Cancel   []string    `json:"cancel,omitempty"` // Esc: cancel or deny, as the pane says
+	Prev     []string    `json:"prev,omitempty"`   // previous / next question tab
+	Next     []string    `json:"next,omitempty"`
+	// List is a bulleted list the prompt shows as its request (opencode's
+	// patterns): details, never options.
+	List      []string       `json:"list,omitempty"`
+	Lasting   bool           `json:"lasting,omitempty"` // the prompt itself grants something lasting (opencode "Always allow")
 	Options   []PromptOption `json:"options"`
 	Summary   string         `json:"summary"`
 	Sig       string         `json:"sig"` // same prompt, same sig (highlight, checks and typed text aside)
 	sigLabels []string       // per option: what the sig takes of it (typed text left out)
+	buttons   bool           // read from a button row (opencode): labels are single words, never paths
 }
 
 // pline is one screen line: its raw text (with escapes) and its plain text,
@@ -118,12 +123,74 @@ func barless(s string) string {
 	return s
 }
 
+// sidebarCol is the column where opencode's sidebar starts (wide panes: the
+// session's MCP list, a model box, the wrapped cwd:branch and the version
+// line drawn beside the prompt), or 0. Its text is not the prompt's.
+var (
+	sideVersion = regexp.MustCompile(`\s{2}(• OpenCode \d)`)
+	sideBox     = regexp.MustCompile(`\s{2}(┌─{8,}┐)`)
+)
+
+func sidebarCol(rows []string) int {
+	if !strings.Contains(strings.Join(rows, "\n"), "┃") { // opencode's box bar
+		return 0
+	}
+	col := 0
+	for _, re := range []*regexp.Regexp{sideVersion, sideBox} {
+		for _, r := range rows {
+			t := plainLine(r)
+			if m := re.FindStringSubmatchIndex(t); m != nil {
+				c := utf8.RuneCountInString(t[:m[2]])
+				if c >= 40 && (col == 0 || c < col) {
+					col = c
+				}
+			}
+		}
+		if col > 0 {
+			return col
+		}
+	}
+	return 0
+}
+
+// cutCol keeps the columns of s left of col.
+func cutCol(s string, col int) string {
+	r := []rune(s)
+	if len(r) <= col {
+		return s
+	}
+	return strings.TrimRight(string(r[:col]), " ")
+}
+
+var (
+	buttonWords = `(?:Confirm|Cancel|Allow once|Allow always|Always allow|Allow|Reject|Deny|Submit)`
+	listItemRe  = regexp.MustCompile(`^[-•*]\s`)
+	gluedEndRe  = regexp.MustCompile(`[/~:]\S*\s?` + buttonWords + `$`)
+	gluedHeadRe = regexp.MustCompile(`^` + buttonWords + `\s?\S*[/~]`)
+	pathish     = regexp.MustCompile(`[/~]\S|\S/`)
+)
+
+// gluedLabel reports an option label that cannot be one: a list item, or a
+// path-like fragment glued to a button word (a wrapped line of screen
+// chrome joined to a button row). On a button row (buttons) any path is
+// chrome: opencode's buttons are a word or two.
+func gluedLabel(label string, buttons bool) bool {
+	l := strings.TrimSpace(label)
+	return listItemRe.MatchString(l) || gluedEndRe.MatchString(l) || gluedHeadRe.MatchString(l) ||
+		buttons && (pathish.MatchString(l) || strings.Contains(l, " - "))
+}
+
 // ParsePrompt reads the prompt at the bottom of screen (plain or ANSI text),
 // or nil. agent is herdr's agent name for the pane, when known.
 func ParsePrompt(screen, agent string) *Prompt {
 	var ls []pline
-	for _, r := range strings.Split(screen, "\n") {
+	rows := strings.Split(screen, "\n")
+	side := sidebarCol(rows)
+	for _, r := range rows {
 		plain := plainLine(r)
+		if side > 0 {
+			plain = cutCol(plain, side)
+		}
 		text := barless(plain)
 		ls = append(ls, pline{raw: r, text: text, plain: plain, bar: text != plain && strings.TrimSpace(plain) != strings.TrimSpace(text), width: utf8.RuneCountInString(plain)})
 	}
@@ -152,6 +219,14 @@ func ParsePrompt(screen, agent string) *Prompt {
 		return nil
 	}
 	p.Harness = harness(agent, ls)
+	for _, o := range p.Options {
+		if gluedLabel(o.Label, p.buttons) {
+			// Screen chrome or a list made it into the options: offering
+			// them would send keys for something else.
+			p = &Prompt{Kind: "unparsed", Harness: p.Harness, Title: p.Title, Question: p.Question, Options: []PromptOption{}}
+			break
+		}
+	}
 	if p.Harness == "codex" && p.Kind == "trust" {
 		arrowKeys(p)
 	}
@@ -1084,7 +1159,8 @@ var buttonHint = regexp.MustCompile(`ctrl\+|⇆|enter `)
 func buttonPrompt(ls []pline) *Prompt {
 	bi := -1
 	for i := len(ls) - 1; i >= 0 && i >= len(ls)-4; i-- {
-		if strings.Contains(ls[i].text, "⇆ select") && strings.Contains(ls[i].text, "enter confirm") {
+		// "enter confirm" may be cut off at the pane's edge ("enter co").
+		if strings.Contains(ls[i].text, "⇆ select") {
 			bi = i
 			break
 		}
@@ -1127,22 +1203,22 @@ func buttonPrompt(ls []pline) *Prompt {
 	if h := regexp.MustCompile(`⇆|ctrl\+f`).FindString(ls[bi].text); h != "" {
 		cur = uniqueIdx(bgs, bgAt(ls[bi].raw, h))
 	}
-	p := &Prompt{Kind: "permission"}
+	p := &Prompt{Kind: "permission", buttons: true}
 	// The box above: "△ Permission required" or "△ Always allow", a title
 	// line, the subject and any diff.
 	var body []string
 	for i := li - 1; i >= 0 && i >= li-30; i-- {
 		t := strings.TrimSpace(ls[i].text)
-		if strings.HasPrefix(t, "△ ") {
+		if boxHead.MatchString(t) {
 			body = append([]string{t}, body...)
 			break
 		}
 		body = append([]string{ls[i].text}, body...)
 	}
-	if len(body) == 0 || !strings.HasPrefix(body[0], "△ ") {
+	if len(body) == 0 || !boxHead.MatchString(body[0]) {
 		return nil
 	}
-	head := strings.TrimPrefix(body[0], "△ ")
+	head := boxHead.ReplaceAllString(body[0], "")
 	var rest, diff []string
 	for _, b := range body[1:] {
 		s := strings.TrimSpace(b)
@@ -1151,27 +1227,43 @@ func buttonPrompt(ls []pline) *Prompt {
 		}
 		rest = append(rest, s)
 	}
+	// A bulleted list ("- ls *", the patterns a grant covers) is the
+	// request's details, one item a line.
+	item := func(s string) bool {
+		if v, ok := strings.CutPrefix(s, "- "); ok && !diffRe.MatchString(s) {
+			p.List = append(p.List, strings.TrimSpace(v))
+			return true
+		}
+		return false
+	}
 	if head != "Permission required" {
 		p.Title = head
 		for _, s := range rest {
-			if v, ok := strings.CutPrefix(s, "- "); ok && p.Subject == "" {
-				p.Subject = v
-			} else if p.Question == "" {
+			if !item(s) && p.Question == "" {
 				p.Question = s
 			}
 		}
+		// "Always allow": confirming grants the patterns until opencode
+		// restarts, not just this once.
+		p.Lasting = strings.Contains(strings.ToLower(head), "always") || lastingQ.MatchString(p.Question)
 	} else {
 		for i, s := range rest {
 			switch {
 			case i == 0 && strings.HasPrefix(s, "# "):
 				p.Title = strings.TrimPrefix(s, "# ")
-			case i == 0 && strings.HasPrefix(s, "→ "):
-				verb, obj, _ := strings.Cut(strings.TrimPrefix(s, "→ "), " ")
-				p.Title, p.Subject = verb, obj
+			case i == 0 && (strings.HasPrefix(s, "→ ") || strings.HasPrefix(s, "← ")):
+				s = strings.TrimSpace(s[len("→ "):])
+				if v, ok := strings.CutPrefix(s, "Access external directory "); ok {
+					p.Title, p.Subject = "Access external directory", v
+				} else {
+					p.Title, p.Subject, _ = strings.Cut(s, " ")
+				}
 			case strings.HasPrefix(s, "$ ") && p.Subject == "":
 				p.Subject = strings.TrimPrefix(s, "$ ")
 			case diffRe.MatchString(s):
 				diff = append(diff, s)
+			case item(s):
+			case s == "Patterns" && len(p.List) == 0:
 			default:
 				if p.Desc == "" {
 					p.Desc = s
@@ -1185,13 +1277,18 @@ func buttonPrompt(ls []pline) *Prompt {
 		if cur >= 0 {
 			o.Keys = arrows(i-cur, "left", "right")
 		}
-		if l == "Confirm" && strings.Contains(head, "Always") {
+		if l == "Confirm" && p.Lasting {
 			o.Always = true
 		}
 		p.Options = append(p.Options, o)
 	}
 	return p
 }
+
+var (
+	boxHead  = regexp.MustCompile(`^[△⚠]\s+`)
+	lastingQ = regexp.MustCompile(`(?i)until \w+ is restarted|always allow`)
+)
 
 // ---------------------------------------------------------------- y/n
 
@@ -1233,7 +1330,15 @@ func finish(p *Prompt) {
 		short = strings.Fields(short)[0]
 	}
 	subj := strings.SplitN(p.Subject, "\n", 2)[0]
+	if subj == "" {
+		subj = strings.Join(p.List, ", ")
+	}
 	switch p.Kind {
+	case "unparsed":
+		p.Summary = "Prompt: answer in the terminal"
+		if p.Title != "" {
+			p.Summary = p.Title + ": answer in the terminal"
+		}
 	case "permission":
 		p.Summary = "Permission: " + strings.TrimSpace(short+" "+subj)
 		if short == "" && subj == "" {
@@ -1254,7 +1359,7 @@ func finish(p *Prompt) {
 	}
 	p.Summary = clip(p.Summary, 90)
 	h := sha1.New()
-	h.Write([]byte(p.Kind + "\x00" + p.Title + "\x00" + p.Question + "\x00" + p.Subject + "\x00" + p.Detail))
+	h.Write([]byte(p.Kind + "\x00" + p.Title + "\x00" + p.Question + "\x00" + p.Subject + "\x00" + p.Detail + "\x00" + strings.Join(p.List, "\x00")))
 	for i, o := range p.Options {
 		l := o.Label
 		if i < len(p.sigLabels) {
