@@ -33,6 +33,7 @@ import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { chromium } from "playwright";
+import { WAIT_SCALE } from "./helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -56,7 +57,7 @@ async function getJSON(path) {
 }
 
 async function waitFor(fn, ms = 10_000) {
-  const end = Date.now() + ms;
+  const end = Date.now() + ms * WAIT_SCALE; // see helpers.mjs
   let last;
   while (Date.now() < end) {
     try {
@@ -194,7 +195,7 @@ test("demo page: blocked thread shows its prompt and quick replies, hub opens th
 // Rects of every hub name, visible thread label and node core, once the
 // layout has stopped moving.
 async function labelBoxes(page) {
-  let prev = "";
+  let prev = "", since = 0;
   return waitFor(async () => {
     const b = await page.evaluate(() => {
       const r = (e) => { const x = e.getBoundingClientRect(); return { l: x.left, t: x.top, r: x.right, b: x.bottom }; };
@@ -207,11 +208,11 @@ async function labelBoxes(page) {
       };
     });
     const sig = JSON.stringify(b, (k, v) => (typeof v === "number" ? Math.round(v) : v));
-    const still = sig === prev;
-    prev = sig;
-    if (!still) await new Promise((res) => setTimeout(res, 400));
-    return still && b;
-  }, 20_000);
+    // Settled: unchanged for a full second. Two reads 100 ms apart can match
+    // mid-layout when a loaded machine skips animation frames.
+    if (sig !== prev) { prev = sig; since = Date.now(); }
+    return Date.now() - since >= 1000 && b;
+  }, 45_000);
 }
 const hit = (a, b, pad = 1) => a.l + pad < b.r && b.l + pad < a.r && a.t + pad < b.b && b.t + pad < a.b;
 
@@ -242,7 +243,7 @@ test("demo graph: hub names always readable, few thread labels, no collisions", 
     const b = await labelBoxes(page);
     // 7, 8, 11
     assertLabels(b, where);
-    const blockedShown = await page.evaluate(() => [...document.querySelectorAll("svg text.label")].some((e) => e.dataset.key && document.querySelector(`svg g.node.blocked[data-key="${e.dataset.key}"]`) && getComputedStyle(e).visibility !== "hidden" && +getComputedStyle(e).opacity > 0.5));
+    const blockedShown = await waitFor(() => page.evaluate(() => [...document.querySelectorAll("svg text.label")].some((e) => e.dataset.key && document.querySelector(`svg g.node.blocked[data-key="${e.dataset.key}"]`) && getComputedStyle(e).visibility !== "hidden" && +getComputedStyle(e).opacity > 0.5)), 10_000).catch(() => false);
     assert.ok(blockedShown, `${where}: a blocked thread is labelled`);
     // 7: hub names are drawn above every node.
     assert.ok(await page.evaluate(() => {

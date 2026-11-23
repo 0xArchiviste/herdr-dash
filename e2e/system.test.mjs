@@ -180,7 +180,9 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   // S3/S7: core shares 97/50/10/2 → total ~40%; RAM 13 of 16 GiB = 81% → warn.
   const fr = await waitFor(async () => {
     const j = await (await fetch(url + "/api/system")).json();
-    return j.cpu && j.procs.find((p) => p.key === "alpha/t-0001")?.cpu != null ? j : null;
+    // A sample in which the fake /proc moved on: a stalled test timer can
+    // leave one whole sample with no new ticks (every process at 0).
+    return j.cpu && j.procs.find((p) => p.key === "alpha/t-0001")?.cpu > 0 && j.procs.find((p) => p.key === "hub:alpha")?.cpu > 0 ? j : null;
   });
   out.frame = { cpu: fr.cpu, mem: fr.mem, swap: fr.swap, load: fr.load, wsl: fr.wsl };
   assert.ok(Math.abs(fr.cpu.pct - 40) <= 4, `total CPU ${fr.cpu.pct}`);
@@ -201,7 +203,23 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   const t1 = by("alpha/t-0001");
   assert.ok(t1 && t1.kind === "thread" && t1.project === "alpha" && t1.thread === "t-0001", "t-0001 row");
   assert.equal(t1.n, 2, "agent and child summed (unreadable environ excluded)");
-  assert.ok(Math.abs(t1.cpu - 150) <= 20, `t-0001 CPU ${t1.cpu}`);
+  // The fake /proc advances on the test's timer, which a loaded machine
+  // stalls, so a sample's absolute shares are off by the stall; and the
+  // server reads one process file after another, so a stall can also land
+  // between two of them. Against alpha's coordinator (85%), t-0001 must be
+  // 150 (agent and child summed; 120 alone is 15% short): the median of that
+  // ratio over five samples, which one skewed sample cannot move.
+  assert.ok(t1.cpu > 0, `t-0001 CPU ${t1.cpu}`);
+  const ratios = new Map();
+  await waitFor(async () => {
+    const j = await (await fetch(url + "/api/system")).json();
+    const a = j.procs.find((p) => p.key === "alpha/t-0001")?.cpu, h = j.procs.find((p) => p.key === "hub:alpha")?.cpu;
+    if (a > 0 && h > 0) ratios.set(j.at, [a, h]); // one entry per sample
+    return ratios.size >= 5;
+  }, 30_000);
+  const rs = [...ratios.values()].map(([a, h]) => a / h).sort((a, b) => a - b), med = rs[2];
+  out.t1Cpu = { t1: t1.cpu, samples: [...ratios.values()], median: med, want: 150 / 85 };
+  assert.ok(Math.abs(med - 150 / 85) <= 0.08 * (150 / 85), `t-0001 : hub median ${med.toFixed(3)} of ${rs.map((r) => r.toFixed(3))}, want ${(150 / 85).toFixed(3)}`);
   assert.equal(t1.rss, Math.round(900e6 / PAGE) * PAGE + Math.round(200e6 / PAGE) * PAGE);
   assert.equal(by("hub:alpha")?.kind, "coordinator");
   assert.equal(by("alpha/t-0003")?.agent, "codex");
@@ -291,16 +309,17 @@ test("without /proc the strip says unavailable and the page still works", async 
     const s = start(f, port, proc);
     try {
       const u = `http://127.0.0.1:${port}`;
-      await waitFor(async () => (await (await fetch(u + "/api/state")).json()).threads.length > 0);
+      // A loaded machine can take far longer than 10 s to start and poll.
+      await waitFor(async () => (await (await fetch(u + "/api/state")).json()).threads.length > 0, 30_000);
       const j = await (await fetch(u + "/api/system")).json();
       assert.equal(j.available, false);
       assert.ok(j.reason);
       const page = await browser.newPage();
       await page.goto(u);
-      await waitFor(async () => (await page.locator('#sys [data-id="cpu"]').getAttribute("data-level")) === "na");
+      await waitFor(async () => (await page.locator('#sys [data-id="cpu"]').getAttribute("data-level")) === "na", 30_000);
       // Agents and queue come from the thread list, so they still work (the
       // test before launched beta/t-0011: two wait, the failed one aside).
-      await waitFor(async () => /\b2\b/.test(await page.locator('#sys [data-id="queue"]').innerText()));
+      await waitFor(async () => /\b2\b/.test(await page.locator('#sys [data-id="queue"]').innerText()), 30_000);
       assert.ok(await page.locator("#graph g.node").count() > 0);
       await page.close();
     } finally {

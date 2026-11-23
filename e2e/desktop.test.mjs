@@ -19,7 +19,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, statSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, statSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repo, td, stub, here, artifacts, freePort, startServer, waitFor } from "./helpers.mjs";
@@ -29,8 +29,20 @@ const bin = join(repo, "bin/herdr-dash-desktop");
 const tmp = mkdtempSync(join(tmpdir(), "herdr-dash-desktop-"));
 const out = {};
 const procs = [];
+// A stub model whose app was SIGKILLed (a failed or slow test's cleanup)
+// outlives it and holds the app's stderr pipe open, so this file's process
+// never exits and `make check` hangs. D5 is asserted on the SIGTERM path in
+// the test; this only reaps leftovers, found by their STT_LOG under tmp.
+function reapSidecars() {
+  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
+    let env = "";
+    try { env = readFileSync(`/proc/${pid}/environ`, "utf8"); } catch { continue; }
+    if (env.split("\0").some((v) => v.startsWith("STT_LOG=" + tmp + "/"))) try { process.kill(+pid, "SIGKILL"); } catch {}
+  }
+}
 after(() => {
   for (const p of procs) if (p.exitCode === null) p.kill("SIGKILL");
+  reapSidecars();
   writeFileSync(join(artifacts, "desktop.json"), JSON.stringify(out, null, 2) + "\n");
 });
 
@@ -74,6 +86,7 @@ function launch(args, env = {}) {
 // Each test ends its apps: a leftover would hold the single-instance lock.
 const stopAll = async () => {
   for (const p of procs) if (p.exitCode === null && p.signalCode === null) { p.kill("SIGKILL"); await p.exited; }
+  reapSidecars();
 };
 
 const logLines = (f) => readFileSync(f, "utf8").split("\n").filter(Boolean);

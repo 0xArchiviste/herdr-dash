@@ -26,6 +26,7 @@ vet:
 	node --check static/memory.js
 	node --check static/agents.js
 	node --check static/opener.js
+	node --check static/night.js
 
 test:
 	go test ./...

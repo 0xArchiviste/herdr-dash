@@ -41,7 +41,12 @@ export class FakeProc {
     const now = Date.now();
     const t = this.frozen ? 0 : ((now - this.last) / 1000) * 100; // USER_HZ
     this.last = now;
-    this.cpu.forEach((c, i) => { c.user += this.cores[i] * t; c.idle += (1 - this.cores[i]) * t; });
+    // Machine and core CPU are a ratio of two /proc/stat deltas, so the core
+    // counters can run faster than USER_HZ: a sample shortened by a stalled
+    // timer then still has enough ticks that whole-tick rounding stays far
+    // below a percent (2% of 15 ticks would round to 0 or 7%).
+    const ct = t * 100;
+    this.cpu.forEach((c, i) => { c.user += this.cores[i] * ct; c.idle += (1 - this.cores[i]) * ct; });
     for (const p of this.procs.values()) p.ticks += p.share * t;
     this.write();
   }

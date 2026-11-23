@@ -133,6 +133,8 @@ test("node, strip and window show the exited agent; the window's input is a comm
   await input.press("Enter");
   await waitFor(() => sent(m).length === 1);
   assert.deepEqual(sent(m), [`herdr pane send-text w1A:p1 $'\\E[200~echo "a b" $HOME \\'q\\' \\\\; | cat # é ✓\\E[201~\\r'`]);
+  // The field clears when the send returns, which a loaded machine delays.
+  await waitFor(async () => (await input.inputValue()) === "", 10_000).catch(() => {});
   assert.equal(await input.inputValue(), "");
   await waitFor(async () => (await win.locator(".screen").innerText()).includes(`$ echo "a b" $HOME 'q'`), 8000);
   // History: Up recalls, Down returns to the line being typed.
@@ -140,6 +142,9 @@ test("node, strip and window show the exited agent; the window's input is a comm
   await input.fill("ls -la");
   await input.press("Enter");
   await waitFor(() => sent(m).length === 1);
+  // The field clears when the send returns; on a loaded machine that can be
+  // after the next fill, so wait for it before typing the draft.
+  await waitFor(async () => (await input.inputValue()) === "");
   await input.fill("half typed");
   await input.press("ArrowUp");
   assert.equal(await input.inputValue(), "ls -la");
@@ -187,9 +192,15 @@ test("keys mode sends raw keys to the dead pane, batched", async () => {
   await page.keyboard.press("Escape");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
-  await waitFor(() => sent(m).length >= 1);
-  await new Promise((r) => setTimeout(r, 400));
-  assert.equal(sent(m).join("\n"), `herdr pane send-text w1A:p1 $'q\\E\\E[A\\r'`);
+  // Batched: four keystrokes go out in fewer sends than keys. Typed in one
+  // burst they are one send; a loaded machine can split the burst across the
+  // batch window, which is accepted only if the keys delivered, in order,
+  // are exactly the same.
+  const keys = () => sent(m).map((l) => /^herdr pane send-text w1A:p1 \$'(.*)'$/.exec(l)?.[1] ?? `?${l}`).join("");
+  await waitFor(() => keys() === "q\\E\\E[A\\r", 10_000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 400)); // nothing more follows
+  assert.equal(keys(), "q\\E\\E[A\\r", sent(m).join("\n"));
+  assert.ok(sent(m).length <= 2, `${sent(m).length} sends for 4 keys: ` + sent(m).join("\n"));
   await page.close();
 });
 
@@ -269,10 +280,15 @@ test("restart: refused while the agent runs or unconfirmed; from the window afte
   await win.locator('[data-act="restart"]').click();
   await page.locator("#dlg-ok").click();
   await waitFor(() => log.since(m).includes(`${hp} thread restart alpha t-0001`));
+  // The stub logs the call before it brings the agent back, and the server
+  // and the page each see it on their next poll, which load delays: poll.
+  await waitFor(() => !existsSync(f("w1A:p1", "noagent")), 10_000).catch(() => {});
   assert.equal(existsSync(f("w1A:p1", "noagent")), false);
   // The window follows the agent coming back: the chat returns.
-  await win.locator(".chat-row").waitFor({ state: "visible", timeout: 10_000 });
+  await win.locator(".chat-row").waitFor({ state: "visible", timeout: 30_000 });
+  await win.locator(".ht-banner").waitFor({ state: "hidden", timeout: 10_000 }).catch(() => {});
   assert.equal(await win.locator(".ht-banner").isVisible(), false);
+  await waitFor(async () => !(await thread("alpha/t-0001")).agent_exited, 10_000).catch(() => {});
   assert.ok(!(await thread("alpha/t-0001")).agent_exited);
   assert.deepEqual(page.errors, []);
   await page.close();

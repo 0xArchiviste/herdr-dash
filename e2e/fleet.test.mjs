@@ -128,7 +128,31 @@ test("API: 30 rows with each project's facts (M1)", async () => {
   // threads (25%, 500 MB each) in the fake /proc.
   const rss = (b) => Math.round(b / PAGE) * PAGE;
   assert.equal(d.rss, rss(300e6) + 2 * rss(500e6));
-  assert.ok(Math.abs(d.cpu - 55) < 12, `cpu ${d.cpu}`);
+  // The fake /proc advances on the test's timer, which a loaded machine
+  // stalls, so one sample can see twice or half the real time; every
+  // process in a sample shares that error, so delta-forge's share of the
+  // fleet's CPU is what proves the attribution: 55 of all agents'. A stall
+  // can also fall between two process files of one sample, so the median
+  // share over five samples is compared.
+  const want = f.procs.reduce((a, [, , o]) => a + o.cpu * 100, 0);
+  assert.ok(d.cpu > 0, `cpu ${d.cpu}`);
+  const ac = new AbortController(); // samples run while someone watches
+  fetch(url + "/api/events", { signal: ac.signal }).then((r) => r.body.getReader().read()).catch(() => {});
+  const shares = [];
+  try {
+    // One read per sample: the frame's `every` apart.
+    const every = (await (await fetch(url + "/api/system")).json()).every || 1;
+    for (let i = 0; i < 20 && shares.length < 5; i++) {
+      const j = await getFleet();
+      const got = j.rows.reduce((a, r) => a + (r.cpu || 0), 0), dc = rowOf(j, "delta-forge").cpu;
+      if (got > 0 && dc > 0) shares.push([dc, got]);
+      await sleep(every * 1000 + 300);
+    }
+  } finally { ac.abort(); }
+  assert.ok(shares.length >= 5, "five CPU samples: " + JSON.stringify(shares));
+  const ss = shares.map(([a, b]) => a / b).sort((a, b) => a - b), med = ss[2];
+  out.cpuShare = { deltaForge: d.cpu, samples: shares, median: med, want: 55 / want };
+  assert.ok(Math.abs(med - 55 / want) <= 0.1 * (55 / want), `delta-forge share median ${med.toFixed(4)} of ${JSON.stringify(shares)}, want 55/${want}`);
   assert.equal(d.agents, 3);
   assert.equal(rowOf(fl, "fjord-sync").rss, 0, "an exited coordinator has no process");
   // Last activity: the newest of the coordinator and the threads.

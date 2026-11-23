@@ -27,6 +27,7 @@ type Config struct {
 	FleetConfig     string // fleet.toml (internal/fleet); the Master window reads it
 	FleetAudit      string // the fleet audit log; default <root>/.fleet/audit.jsonl
 	FleetConfirmTTL time.Duration
+	NightConfig     string // Night mode's settings (night.go); "" keeps them in memory
 
 	Auth          string
 	ReadOnly      bool
@@ -313,6 +314,7 @@ type Collector struct {
 	paneLocks  map[string]*sync.Mutex // one pane read at a time per pane
 	burst      map[string]time.Time   // pane -> read its screen fast until
 	prompts    map[string]*Prompt     // blocked pane -> the prompt it shows
+	onPrompts  func()                 // after each prompt refresh (Night mode, night.go)
 	kick       chan struct{}
 	listSig    uint64    // root files and panes as of the last `list`
 	listAt     time.Time // when `list` last ran
@@ -420,6 +422,7 @@ func (c *Collector) Run(ctx context.Context) {
 	c.refreshThreads(ctx, true)
 	c.refreshOpencode(ctx)
 	c.refreshPrompts(ctx)
+	c.promptsDone()
 	c.rebuild()
 	c.refreshPRs(ctx)
 	c.rebuild()
@@ -441,6 +444,7 @@ func (c *Collector) Run(ctx context.Context) {
 			c.refreshPanes(ctx)
 			c.refreshOpencode(ctx)
 			c.refreshPrompts(ctx)
+			c.promptsDone()
 			if c.watched() {
 				c.SampleSystem()
 			}
@@ -456,6 +460,7 @@ func (c *Collector) Run(ctx context.Context) {
 			c.refreshOpencode(ctx)
 			c.refreshThreads(ctx, false)
 			c.refreshPrompts(ctx)
+			c.promptsDone()
 		}
 		c.rebuild()
 	}
@@ -1490,6 +1495,17 @@ func (c *Collector) refreshPrompts(ctx context.Context) {
 	c.mu.Lock()
 	c.prompts = got
 	c.mu.Unlock()
+}
+
+// promptsDone hands the new prompts to Night mode, which answers in its
+// own goroutine (a tick already running is skipped).
+func (c *Collector) promptsDone() {
+	c.mu.Lock()
+	f := c.onPrompts
+	c.mu.Unlock()
+	if f != nil {
+		go f()
+	}
 }
 
 // FreshPrompt reads pane now (no cache) and parses its prompt: what an

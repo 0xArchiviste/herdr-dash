@@ -44,8 +44,13 @@ export function startServer(port, stubLog, extra = [], env = {}) {
   });
 }
 
+// Deadlines only: a condition that holds returns at once, so a longer
+// deadline never passes a test that would fail, it only stops a loaded
+// machine (load average ~30 is normal here) from failing a slow one.
+export const WAIT_SCALE = +(process.env.E2E_WAIT_SCALE || 3);
+
 export async function waitFor(fn, ms = 10_000) {
-  const end = Date.now() + ms;
+  const end = Date.now() + ms * WAIT_SCALE;
   let last;
   while (Date.now() < end) {
     try {

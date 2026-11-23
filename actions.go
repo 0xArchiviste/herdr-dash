@@ -837,6 +837,12 @@ func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req ans
 	if !a.bucket.take() {
 		return nil, fail(http.StatusTooManyRequests, "too many writes; wait a moment")
 	}
+	return a.pressChecked(pane, steps, p, req, send)
+}
+
+// pressChecked is answerChecked without the page's rate limit (Night mode
+// has a loop limit of its own, night.go).
+func (a *Actions) pressChecked(pane string, steps []keyStep, p *Prompt, req answerReq, send func(keyStep) (string, error)) (answerResult, error) {
 	label := req.Action
 	if label == "" {
 		label = p.Options[req.Option].Label
@@ -851,7 +857,7 @@ func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req ans
 		if err != nil {
 			a.mu.Unlock()
 			a.col.Burst(pane)
-			return nil, err
+			return answerResult{}, err
 		}
 		outs = append(outs, out)
 	}
@@ -868,7 +874,7 @@ func (a *Actions) answerChecked(pane string, steps []keyStep, p *Prompt, req ans
 			}
 			pressed = append(pressed, st.keys...)
 		}
-		return nil, httpErr{http.StatusConflict, fmt.Sprintf("prompt_stuck: pressed %s for “%s” but the pane still shows the same prompt after %s; check the screen (nothing was sent again)",
+		return answerResult{}, httpErr{http.StatusConflict, fmt.Sprintf("prompt_stuck: pressed %s for “%s” but the pane still shows the same prompt after %s; check the screen (nothing was sent again)",
 			strings.Join(pressed, " "), label, confirmWait)}
 	}
 	return answerResult{OK: true, Output: strings.Join(outs, "\n"), After: after, Label: label}, nil
@@ -927,7 +933,10 @@ func (a *Actions) kickSoon() {
 // panel does, then asks herdr about that pane right now: it must still run
 // the same agent session and be blocked on a prompt. Anything else refuses.
 func (a *Actions) coordVerified(r *http.Request) (string, Coordinator, error) {
-	slug := r.PathValue("slug")
+	return a.coordVerifiedSlug(r.PathValue("slug"))
+}
+
+func (a *Actions) coordVerifiedSlug(slug string) (string, Coordinator, error) {
 	if !slugRe.MatchString(slug) {
 		return "", Coordinator{}, fail(http.StatusBadRequest, "bad project")
 	}

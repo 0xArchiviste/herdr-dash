@@ -172,6 +172,14 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	go func() {
 		<-sig
 		wruntime.Quit(ctx)
+		// A signal that lands before the GTK main loop runs makes Quit a
+		// no-op ("gtk_main_quit: assertion 'main_loops != NULL' failed")
+		// and the app would never exit: stop the server and the sidecar
+		// here and exit.
+		time.Sleep(5 * time.Second)
+		log.Printf("desktop: still running 5s after the signal; exiting")
+		a.shutdown(ctx)
+		os.Exit(0)
 	}()
 	go a.boot(appCtx)
 }
