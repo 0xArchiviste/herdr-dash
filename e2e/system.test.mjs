@@ -180,7 +180,9 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   // S3/S7: core shares 97/50/10/2 → total ~40%; RAM 13 of 16 GiB = 81% → warn.
   const fr = await waitFor(async () => {
     const j = await (await fetch(url + "/api/system")).json();
-    return j.cpu && j.procs.find((p) => p.key === "alpha/t-0001")?.cpu != null ? j : null;
+    // A sample in which the fake /proc moved on: a stalled test timer can
+    // leave one whole sample with no new ticks (every process at 0).
+    return j.cpu && j.procs.find((p) => p.key === "alpha/t-0001")?.cpu > 0 && j.procs.find((p) => p.key === "hub:alpha")?.cpu > 0 ? j : null;
   });
   out.frame = { cpu: fr.cpu, mem: fr.mem, swap: fr.swap, load: fr.load, wsl: fr.wsl };
   assert.ok(Math.abs(fr.cpu.pct - 40) <= 4, `total CPU ${fr.cpu.pct}`);

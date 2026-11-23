@@ -111,6 +111,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { chromium } from "playwright";
+import { WAIT_SCALE } from "./helpers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -187,7 +188,7 @@ async function getJSON(path) {
 }
 
 async function waitFor(fn, ms = 10_000) {
-  const end = Date.now() + ms;
+  const end = Date.now() + ms * WAIT_SCALE; // see helpers.mjs
   let last;
   while (Date.now() < end) {
     try {
