@@ -133,6 +133,8 @@ test("node, strip and window show the exited agent; the window's input is a comm
   await input.press("Enter");
   await waitFor(() => sent(m).length === 1);
   assert.deepEqual(sent(m), [`herdr pane send-text w1A:p1 $'\\E[200~echo "a b" $HOME \\'q\\' \\\\; | cat # é ✓\\E[201~\\r'`]);
+  // The field clears when the send returns, which a loaded machine delays.
+  await waitFor(async () => (await input.inputValue()) === "", 10_000).catch(() => {});
   assert.equal(await input.inputValue(), "");
   await waitFor(async () => (await win.locator(".screen").innerText()).includes(`$ echo "a b" $HOME 'q'`), 8000);
   // History: Up recalls, Down returns to the line being typed.
@@ -278,10 +280,15 @@ test("restart: refused while the agent runs or unconfirmed; from the window afte
   await win.locator('[data-act="restart"]').click();
   await page.locator("#dlg-ok").click();
   await waitFor(() => log.since(m).includes(`${hp} thread restart alpha t-0001`));
+  // The stub logs the call before it brings the agent back, and the server
+  // and the page each see it on their next poll, which load delays: poll.
+  await waitFor(() => !existsSync(f("w1A:p1", "noagent")), 10_000).catch(() => {});
   assert.equal(existsSync(f("w1A:p1", "noagent")), false);
   // The window follows the agent coming back: the chat returns.
-  await win.locator(".chat-row").waitFor({ state: "visible", timeout: 10_000 });
+  await win.locator(".chat-row").waitFor({ state: "visible", timeout: 30_000 });
+  await win.locator(".ht-banner").waitFor({ state: "hidden", timeout: 10_000 }).catch(() => {});
   assert.equal(await win.locator(".ht-banner").isVisible(), false);
+  await waitFor(async () => !(await thread("alpha/t-0001")).agent_exited, 10_000).catch(() => {});
   assert.ok(!(await thread("alpha/t-0001")).agent_exited);
   assert.deepEqual(page.errors, []);
   await page.close();

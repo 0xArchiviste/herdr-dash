@@ -106,6 +106,7 @@ type STT struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
+	done    chan struct{} // closed when the last started sidecar has exited
 	port    int
 	n       int // active streams
 	timer   *time.Timer
@@ -344,11 +345,13 @@ func (s *STT) start(ctx context.Context) error {
 		cancel()
 		return fail(http.StatusBadGateway, "local engine: %s", err)
 	}
+	done := make(chan struct{})
 	s.mu.Lock()
-	s.cmd, s.cancel, s.started = cmd, cancel, time.Now()
+	s.cmd, s.cancel, s.started, s.done = cmd, cancel, time.Now(), done
 	s.mu.Unlock()
 	go func() {
 		err := cmd.Wait()
+		close(done)
 		s.mu.Lock()
 		if s.cmd == cmd {
 			s.cmd, s.ready = nil, false
@@ -395,18 +398,31 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// stopSidecar kills the sidecar process.
+// stopSidecar stops the sidecar process and waits until it has exited.
+// Cancelling only asks exec's watcher goroutine to signal it; a process that
+// exits right after (the desktop app on SIGTERM) could otherwise leave the
+// model running. A second caller waits on the same exit.
 func (s *STT) stopSidecar(why string) {
 	s.mu.Lock()
-	cmd, started, cancel := s.cmd, s.started, s.cancel
+	cmd, started, cancel, done := s.cmd, s.started, s.cancel, s.done
 	s.cmd, s.ready = nil, false
 	s.mu.Unlock()
-	if cmd == nil {
-		return
+	if cmd != nil {
+		log.Printf("local engine: stopping sidecar (%s) after %s", why, time.Since(started).Round(time.Second))
+		cancel()
 	}
-	log.Printf("local engine: stopping sidecar (%s) after %s", why, time.Since(started).Round(time.Second))
-	cancel()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(sttStopWait):
+			log.Printf("local engine: sidecar still running %s after stop", sttStopWait)
+		}
+	}
 }
+
+// sttStopWait bounds stopSidecar: the sidecar's WaitDelay (SIGTERM, then
+// SIGKILL after 3 s) plus slack.
+const sttStopWait = 5 * time.Second
 
 func (s *STT) acquire(ctx context.Context) error {
 	s.startMu.Lock()
