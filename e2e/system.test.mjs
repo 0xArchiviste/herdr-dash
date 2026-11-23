@@ -201,7 +201,15 @@ test("machine, agents, queue: numbers, attribution, order, colours, clicks", asy
   const t1 = by("alpha/t-0001");
   assert.ok(t1 && t1.kind === "thread" && t1.project === "alpha" && t1.thread === "t-0001", "t-0001 row");
   assert.equal(t1.n, 2, "agent and child summed (unreadable environ excluded)");
-  assert.ok(Math.abs(t1.cpu - 150) <= 20, `t-0001 CPU ${t1.cpu}`);
+  // The fake /proc advances on the test's timer, which a loaded machine
+  // stalls, so a sample's absolute shares can be off by the stall; every
+  // process in the sample is off by the same factor. Against alpha's
+  // coordinator (85%) in the same frame, t-0001 must be 150: agent and child
+  // summed (120 alone would be 15% short).
+  const hub = by("hub:alpha");
+  out.t1Cpu = { t1: t1.cpu, hub: hub?.cpu };
+  assert.ok(t1.cpu > 0 && hub?.cpu > 0, `t-0001 CPU ${t1.cpu}, hub ${hub?.cpu}`);
+  assert.ok(Math.abs(t1.cpu / hub.cpu - 150 / 85) <= 0.08 * (150 / 85), `t-0001 CPU ${t1.cpu} vs hub ${hub.cpu}, want 150:85`);
   assert.equal(t1.rss, Math.round(900e6 / PAGE) * PAGE + Math.round(200e6 / PAGE) * PAGE);
   assert.equal(by("hub:alpha")?.kind, "coordinator");
   assert.equal(by("alpha/t-0003")?.agent, "codex");
@@ -291,16 +299,17 @@ test("without /proc the strip says unavailable and the page still works", async 
     const s = start(f, port, proc);
     try {
       const u = `http://127.0.0.1:${port}`;
-      await waitFor(async () => (await (await fetch(u + "/api/state")).json()).threads.length > 0);
+      // A loaded machine can take far longer than 10 s to start and poll.
+      await waitFor(async () => (await (await fetch(u + "/api/state")).json()).threads.length > 0, 30_000);
       const j = await (await fetch(u + "/api/system")).json();
       assert.equal(j.available, false);
       assert.ok(j.reason);
       const page = await browser.newPage();
       await page.goto(u);
-      await waitFor(async () => (await page.locator('#sys [data-id="cpu"]').getAttribute("data-level")) === "na");
+      await waitFor(async () => (await page.locator('#sys [data-id="cpu"]').getAttribute("data-level")) === "na", 30_000);
       // Agents and queue come from the thread list, so they still work (the
       // test before launched beta/t-0011: two wait, the failed one aside).
-      await waitFor(async () => /\b2\b/.test(await page.locator('#sys [data-id="queue"]').innerText()));
+      await waitFor(async () => /\b2\b/.test(await page.locator('#sys [data-id="queue"]').innerText()), 30_000);
       assert.ok(await page.locator("#graph g.node").count() > 0);
       await page.close();
     } finally {

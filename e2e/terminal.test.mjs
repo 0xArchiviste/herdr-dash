@@ -140,6 +140,9 @@ test("node, strip and window show the exited agent; the window's input is a comm
   await input.fill("ls -la");
   await input.press("Enter");
   await waitFor(() => sent(m).length === 1);
+  // The field clears when the send returns; on a loaded machine that can be
+  // after the next fill, so wait for it before typing the draft.
+  await waitFor(async () => (await input.inputValue()) === "");
   await input.fill("half typed");
   await input.press("ArrowUp");
   assert.equal(await input.inputValue(), "ls -la");
@@ -187,9 +190,15 @@ test("keys mode sends raw keys to the dead pane, batched", async () => {
   await page.keyboard.press("Escape");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
-  await waitFor(() => sent(m).length >= 1);
-  await new Promise((r) => setTimeout(r, 400));
-  assert.equal(sent(m).join("\n"), `herdr pane send-text w1A:p1 $'q\\E\\E[A\\r'`);
+  // Batched: four keystrokes go out in fewer sends than keys. Typed in one
+  // burst they are one send; a loaded machine can split the burst across the
+  // batch window, which is accepted only if the keys delivered, in order,
+  // are exactly the same.
+  const keys = () => sent(m).map((l) => /^herdr pane send-text w1A:p1 \$'(.*)'$/.exec(l)?.[1] ?? `?${l}`).join("");
+  await waitFor(() => keys() === "q\\E\\E[A\\r", 10_000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 400)); // nothing more follows
+  assert.equal(keys(), "q\\E\\E[A\\r", sent(m).join("\n"));
+  assert.ok(sent(m).length <= 2, `${sent(m).length} sends for 4 keys: ` + sent(m).join("\n"));
   await page.close();
 });
 

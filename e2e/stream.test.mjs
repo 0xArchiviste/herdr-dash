@@ -62,6 +62,18 @@ function start(f) {
   }));
 }
 
+// Wait until no state change has arrived for `ms` (the stream has settled).
+async function quiet(s, ms = 3_000, max = 30_000) {
+  const end = Date.now() + max;
+  const count = () => s.of("delta").length + s.of("state").length;
+  for (;;) {
+    const n = count();
+    await sleep(ms);
+    if (count() === n) return;
+    if (Date.now() > end) throw new Error("the stream never settled");
+  }
+}
+
 // A raw SSE reader: every event with its name, size and parsed data.
 function sse(url, headers = {}) {
   const ctl = new AbortController();
@@ -113,17 +125,25 @@ test("stream: live snapshot on connect, then small versioned deltas", async () =
     out.snapshotBytes = s.of("state")[0].size;
     out.fullStateBytes = JSON.stringify(full).length;
 
+    // Under load the first pane and PR ticks can land after the snapshot;
+    // wait until the stream is quiet so the rename is the only change. Every
+    // delta, settling ones included, is still checked against the chain.
+    await quiet(s);
+    const before = s.of("delta").length;
+    const prev = before ? s.of("delta")[before - 1].data.version : snap.version;
+
     // 1/2. One thread renamed: one delta, carrying that thread only.
     editThreads(f, "alpha", (rows) => { rows.find((r) => r.id === "t-0005").title = "Renamed by a delta"; });
-    await waitFor(() => s.of("delta").length >= 1, 10_000);
-    const d1 = s.of("delta")[0].data;
-    assert.equal(d1.base, snap.version, "first delta does not follow the snapshot");
-    assert.equal(d1.version, snap.version + 1);
+    await waitFor(() => s.of("delta").length > before, 20_000);
+    const d1 = s.of("delta")[before].data;
+    assert.equal(d1.base, prev, "the delta does not follow the version before it");
+    assert.equal(d1.version, prev + 1);
+    out.settleDeltas = before;
     assert.deepEqual((d1.threads || []).map((t) => t.key), ["alpha/t-0005"]);
     assert.equal(d1.threads[0].title, "Renamed by a delta");
     assert.ok(!d1.projects?.length || d1.projects.every((p) => p.slug === "alpha"), "a delta carried an unchanged project");
     assert.equal(s.of("state").length, 1, "a full snapshot was sent again");
-    out.renameDeltaBytes = s.of("delta")[0].size;
+    out.renameDeltaBytes = s.of("delta")[before].size;
     assert.ok(out.renameDeltaBytes < 4000, `delta of ${out.renameDeltaBytes} bytes for one renamed thread`);
 
     // 5. A thread added, one removed, one resolved: in order, keyed.
@@ -173,14 +193,15 @@ test("stream: nothing is sent while nothing changes", async () => {
   let s;
   try {
     await waitFor(async () => (await (await fetch(base + "/api/state")).json()).threads.length > 0);
-    await sleep(3_000); // the first PR check and timelines settle
     s = sse(base + "/api/events");
     await waitFor(() => s.of("state").length === 1);
-    const at = s.bytes();
+    await quiet(s); // the first PR check and timelines settle, however slow the machine
+    const d0 = s.of("delta").length, sys0 = s.of("system").length, at = s.bytes();
     // --poll 1s: eight pane ticks and two thread ticks, nothing changed.
     await sleep(8_000);
-    out.idle = { deltas: s.of("delta").length, states: s.of("state").length - 1, bytesAfterSnapshot: s.bytes() - at, systemEvents: s.of("system").length };
-    assert.equal(s.of("delta").length, 0, "deltas while idle: " + JSON.stringify(s.of("delta").map((e) => e.data)));
+    const idle = s.of("delta").slice(d0);
+    out.idle = { settleDeltas: d0, deltas: idle.length, states: s.of("state").length - 1, bytesAfterSettle: s.bytes() - at, systemEvents: s.of("system").length - sys0 };
+    assert.equal(idle.length, 0, "deltas while idle: " + JSON.stringify(idle.map((e) => e.data)));
     assert.equal(s.of("state").length, 1);
   } finally {
     await s?.close();

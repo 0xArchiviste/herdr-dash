@@ -128,7 +128,15 @@ test("API: 30 rows with each project's facts (M1)", async () => {
   // threads (25%, 500 MB each) in the fake /proc.
   const rss = (b) => Math.round(b / PAGE) * PAGE;
   assert.equal(d.rss, rss(300e6) + 2 * rss(500e6));
-  assert.ok(Math.abs(d.cpu - 55) < 12, `cpu ${d.cpu}`);
+  // The fake /proc advances on the test's timer, which a loaded machine
+  // stalls, so one sample can see twice or half the real time. Every process
+  // in a sample shares that error, so delta-forge's share of the fleet's CPU
+  // in the same response is what proves the attribution: 55 of all agents'.
+  const want = f.procs.reduce((a, [, , o]) => a + o.cpu * 100, 0);
+  const got = fl.rows.reduce((a, r) => a + (r.cpu || 0), 0);
+  out.cpuShare = { deltaForge: d.cpu, fleet: got, expected: [55, want] };
+  assert.ok(d.cpu > 0 && got > 0, `cpu ${d.cpu} of ${got}`);
+  assert.ok(Math.abs(d.cpu / got - 55 / want) <= 0.1 * (55 / want), `cpu ${d.cpu} of ${got}, want 55 of ${want}`);
   assert.equal(d.agents, 3);
   assert.equal(rowOf(fl, "fjord-sync").rss, 0, "an exited coordinator has no process");
   // Last activity: the newest of the coordinator and the threads.

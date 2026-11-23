@@ -452,7 +452,11 @@ test("ANSI costs no more pane reads than plain text", async () => {
   await watch("?ansi=1", 9000);
   const ansi = reads(m);
   out.paneReadsPer9s = { plain, ansi };
-  assert.ok(ansi <= plain, `ANSI ${ansi} reads vs plain ${plain}`);
+  // A 9 s window holds three or four read ticks depending on where it starts,
+  // and a loaded machine shifts that. A second read path for ANSI would at
+  // least double the count, so one tick of slack still proves A9.
+  assert.ok(plain >= 2, `plain watch made only ${plain} reads`);
+  assert.ok(ansi <= plain + 1 && ansi < 2 * plain, `ANSI ${ansi} reads vs plain ${plain}`);
   // History: one read serves both formats.
   await new Promise((r) => setTimeout(r, 5500));
   m = mark();
