@@ -298,6 +298,7 @@ so the first command does not wait. On Windows it reaches the Dash in WSL at
 | `--fleet-config` | `HERDR_DASH_FLEET_CONFIG` | `$XDG_CONFIG_HOME/herdr-projects/fleet.toml`, else `~/.config/herdr-projects/fleet.toml` (see [Master window](#master-window)) |
 | `--fleet-audit` | `HERDR_DASH_FLEET_AUDIT` | `<root>/.fleet/audit.jsonl`; the bulk actions' audit log |
 | `--fleet-confirm-ttl` | | `2m`; how long a bulk-action preview can be run |
+| `--night-config` | `HERDR_DASH_NIGHT_CONFIG` | `$XDG_CONFIG_HOME/herdr-dash/night.json`, else `~/.config/herdr-dash/night.json` (see [Night mode](#night-mode)) |
 | `--usage` | `HERDR_DASH_USAGE` | `auto`; `off`, or a list like `claude,codex` (see [Usage](#usage)) |
 | `--memex` | `HERDR_DASH_MEMEX` | `off`; `memex` (on `PATH`) or a path turns on transcript search |
 | `--memex-timeout`, `--memex-per-min` | | `2s`, `30` |
@@ -712,6 +713,48 @@ action with who, when, the command, the preview hash and token, the result
 and the undo; lines older than 90 days are dropped. The actions run through
 an `Actuator` interface (`internal/fleet`): today herdr-projects
 subcommands, later the Go manager natively.
+
+## Night mode
+
+**🌙 Night mode** in the top bar lets the dashboard answer permission
+prompts while you sleep, so agents do not hang until morning. It ships
+**off**. Switch it on now (optionally with an auto-off time, e.g. 08:00) or
+give it a nightly window (e.g. 23:00 to 08:00, the server's local time).
+While it is on, a banner on every page (pop-outs, the desktop app and
+phones too) says so with tonight's counts.
+
+It runs in the server with the collector, so it works with no page open,
+and reads only the panes the collector already parses (blocked ones).
+
+- **What it answers:** permission prompts from Claude Code, Codex,
+  opencode and the other parsed harnesses, in threads and (by default)
+  coordinators, in all projects or chosen ones (**Use the project focus**
+  takes the focus picker's projects). It picks the **allow once** option
+  ("Yes", "Yes, just this once", "Allow once"), never a lasting grant
+  ("don't ask again", "always", auto mode, trust). A harness with no
+  allow-once option gets its plain allow option if that is not a lasting
+  grant, logged as such; otherwise the prompt is left.
+- **Questions** (off by default): a question whose options mark exactly one
+  "(Recommended)" gets that option; any other question is left. Plan
+  approvals, trust screens, y/n confirmations and anything ambiguous are
+  always left.
+- **Guardrails:** a deny list of command patterns that are never approved
+  (rm -r of `/`, `~` or outside the thread's worktree, force pushes to main,
+  `git reset --hard` on main, deleting branches or repos, dropping
+  databases, `herdr-projects update`, credential and secret files, `sudo`,
+  `curl | sh`, `systemctl stop/disable`, `wsl --shutdown`), editable in the
+  settings (regular expressions, case ignored); a loop limit (a pane that
+  asks more than 20 times in 10 minutes is flagged and not answered again
+  that night); and the same checks as answering from the page: the prompt
+  must have looked the same for a few seconds, a fresh read must still show
+  it, the thread or coordinator must still own the pane with the same agent
+  session, and the keys come from the server's own parse.
+- **Night log:** a window listing what was left for you (and why, with
+  "still waiting" on prompts still on screen), the loops flagged, and every
+  approval (time, project, thread, command or tool, option). Each decision
+  is also an `op: "night-approve"` line in the fleet audit log
+  (`--fleet-audit`). When a night ends the page shows a summary toast, once
+  (also when it is first opened the next morning).
 
 ## Agent routing (preview)
 

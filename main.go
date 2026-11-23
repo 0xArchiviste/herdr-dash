@@ -73,6 +73,7 @@ func defineServerFlags() *serverOpts {
 	flag.StringVar(&cfg.SessionProfiles, "session-profiles", filepath.Join(home, ".config/herdr-projects/config.toml"), "herdr-projects profile config for session fallbacks")
 	flag.StringVar(&cfg.RoutingConfig, "routing-config", env("HERDR_DASH_ROUTING_CONFIG", routing.DefaultPath(os.Getenv, home)), "agent routing policy (routing.toml), $HERDR_DASH_ROUTING_CONFIG; default $XDG_CONFIG_HOME/herdr-projects/routing.toml")
 	flag.StringVar(&cfg.FleetAudit, "fleet-audit", env("HERDR_DASH_FLEET_AUDIT", ""), "the Master window's audit log (JSONL, kept 90 days), $HERDR_DASH_FLEET_AUDIT; default <root>/.fleet/audit.jsonl")
+	flag.StringVar(&cfg.NightConfig, "night-config", env("HERDR_DASH_NIGHT_CONFIG", NightPath(os.Getenv, home)), "Night mode settings (JSON), $HERDR_DASH_NIGHT_CONFIG; default $XDG_CONFIG_HOME/herdr-dash/night.json")
 	flag.DurationVar(&cfg.FleetConfirmTTL, "fleet-confirm-ttl", 2*time.Minute, "how long a bulk-action preview can be confirmed")
 	flag.StringVar(&cfg.FleetConfig, "fleet-config", env("HERDR_DASH_FLEET_CONFIG", fleet.DefaultPath(os.Getenv, home)), "fleet policy (fleet.toml) the Master window reads, $HERDR_DASH_FLEET_CONFIG; default $XDG_CONFIG_HOME/herdr-projects/fleet.toml")
 	flag.StringVar(&cfg.OpencodeDB, "opencode-db", filepath.Join(home, ".local/share/opencode/opencode.db"), "OpenCode session database (optional sqlite3 CLI)")
@@ -326,6 +327,7 @@ func newMux(col *Collector, cfg Config, localSTT ...*STT) *http.ServeMux {
 	fa := NewFleetActions(cfg, fl, act)
 	fa.register(mux)
 	NewLeftovers(act, fa.audit).register(mux)
+	NewNight(cfg, col, act, fa.audit).register(mux)
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		if col.sys.Stale() {
 			col.SampleSystem()

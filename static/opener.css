@@ -25,7 +25,7 @@
 .tw-popout { padding-inline: 8px; }
 
 /* The pop-out page: one window, the whole page. */
-body.solo > :not(#win-layer):not(#dlg):not(#toasts):not(#open-menu):not(.solo-gone) { display: none !important; }
+body.solo > :not(#win-layer):not(#night-banner):not(#dlg):not(#toasts):not(#open-menu):not(.solo-gone) { display: none !important; }
 body.solo #win-tray, body.solo #dock-hint, body.solo .wdock { display: none !important; }
 body.solo #win-layer > .hwin.solo-win { position: fixed; left: 0 !important; top: 0 !important; right: 0; bottom: 0; width: 100vw !important; height: 100dvh !important;
   max-height: none; border: 0; border-radius: 0; box-shadow: none; box-sizing: border-box; }
