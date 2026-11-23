@@ -39,6 +39,7 @@ import { artifacts, freePort, startServer, waitFor, td, WAIT_SCALE } from "./hel
 mkdirSync(artifacts, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), "herdr-dash-ansi-"));
 const stubLog = join(tmp, "calls.log");
+const stubTimes = join(tmp, "times.log");
 const screens = join(tmp, "screens");
 mkdirSync(screens);
 writeFileSync(stubLog, "");
@@ -61,7 +62,7 @@ let url, srv, browser;
 before(async () => {
   const port = await freePort();
   url = `http://127.0.0.1:${port}`;
-  srv = startServer(port, stubLog, [], { STUB_SCREENS: screens });
+  srv = startServer(port, stubLog, [], { STUB_SCREENS: screens, STUB_TIMES: stubTimes });
   await waitFor(async () => (await (await fetch(url + "/api/state")).json()).threads.length > 0);
   browser = await chromium.launch();
 });
@@ -449,9 +450,15 @@ test("new output and load earlier work with styled rows", async () => {
 });
 
 test("ANSI costs no more pane reads than plain text", async () => {
-  // A9: measured on the same pane for the same time, plain then ANSI.
+  // A9: measured on the same pane, plain then ANSI. The server keeps a
+  // pane's read for 2.9 s (3 s cadence), so one read path never reads it
+  // twice sooner than that; a second read path for ANSI would. Load only
+  // stretches the gaps between reads, so the shortest gap is the measure,
+  // not the count in a time window (a loaded machine moves that).
   const reads = (from) => readFileSync(stubLog, "utf8").split("\n").slice(from).filter((l) => /pane read w2A:p1 /.test(l)).length;
   const mark = () => readFileSync(stubLog, "utf8").split("\n").length - 1;
+  let m;
+  const times = () => readFileSync(stubTimes, "utf8").split("\n").filter((l) => / pane read w2A:p1 /.test(l)).map((l) => +l.split(" ")[0]);
   const watch = async (q, ms) => {
     const ctl = new AbortController();
     const r = await fetch(url + "/api/thread/beta/t-0001/screen" + q, { signal: ctl.signal });
@@ -459,20 +466,21 @@ test("ANSI costs no more pane reads than plain text", async () => {
     const end = Date.now() + ms;
     try { while (Date.now() < end) await Promise.race([rd.read(), new Promise((res) => setTimeout(res, 200))]); } finally { ctl.abort(); }
   };
-  await new Promise((r) => setTimeout(r, 3500)); // nothing cached
-  let m = mark();
-  await watch("", 9000);
-  const plain = reads(m);
-  await new Promise((r) => setTimeout(r, 3500));
-  m = mark();
-  await watch("?ansi=1", 9000);
-  const ansi = reads(m);
-  out.paneReadsPer9s = { plain, ansi };
-  // A 9 s window holds three or four read ticks depending on where it starts,
-  // and a loaded machine shifts that. A second read path for ANSI would at
-  // least double the count, so one tick of slack still proves A9.
-  assert.ok(plain >= 2, `plain watch made only ${plain} reads`);
-  assert.ok(ansi <= plain + 1 && ansi < 2 * plain, `ANSI ${ansi} reads vs plain ${plain}`);
+  const during = async (q) => {
+    await new Promise((r) => setTimeout(r, 3500)); // nothing cached
+    const from = Date.now();
+    await watch(q, 9000);
+    const ts = times().filter((t) => t >= from);
+    const gaps = ts.slice(1).map((t, i) => t - ts[i]);
+    return { reads: ts.length, minGapMs: gaps.length ? Math.min(...gaps) : null };
+  };
+  const plain = await during("");
+  const ansi = await during("?ansi=1");
+  out.paneReadsPer9s = { plain: plain.reads, ansi: ansi.reads };
+  out.minMsBetweenPaneReads = { plain: plain.minGapMs, ansi: ansi.minGapMs };
+  assert.ok(plain.reads >= 2 && ansi.reads >= 2, `too few reads to compare: ${JSON.stringify(out.paneReadsPer9s)}`);
+  // 2.9 s cache, minus a little for the ticker's 250 ms steps and timing.
+  for (const [k, v] of [["plain", plain], ["ANSI", ansi]]) assert.ok(v.minGapMs >= 2500, `${k}: pane read twice within ${v.minGapMs} ms`);
   // History: one read serves both formats.
   await new Promise((r) => setTimeout(r, 5500));
   m = mark();
