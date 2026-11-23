@@ -34,7 +34,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
-import { artifacts, freePort, startServer, waitFor, td } from "./helpers.mjs";
+import { artifacts, freePort, startServer, waitFor, td, WAIT_SCALE } from "./helpers.mjs";
 
 mkdirSync(artifacts, { recursive: true });
 const tmp = mkdtempSync(join(tmpdir(), "herdr-dash-ansi-"));
@@ -402,6 +402,15 @@ test("new output and load earlier work with styled rows", async () => {
   await page.evaluate(() => {
     window.__long = 0;
     new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__long = Math.max(window.__long, e.duration); }).observe({ type: "longtask", buffered: false });
+    // Work per frame, which load does not inflate: rows styled (HDAnsi.line
+    // calls) between two animation frames. Parsing a long history in one go
+    // styles them all in one frame.
+    window.__rowsNow = 0;
+    window.__rowsMax = 0;
+    const line = window.HDAnsi.line;
+    window.HDAnsi.line = (raw) => { window.__rowsNow++; return line(raw); };
+    const frame = () => { window.__rowsMax = Math.max(window.__rowsMax, window.__rowsNow); window.__rowsNow = 0; requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
   });
   const w = await win(page, "alpha/t-0001");
   const pre = w.locator(".screen");
@@ -419,8 +428,15 @@ test("new output and load earlier work with styled rows", async () => {
   await waitFor(async () => (await pre.locator(".tl.raw").count()) === 0, 8000);
   // row 431: colour 16 + 30, the cube's (0, 5, 0).
   assert.equal((await styleOf(w, "row 431")).color, "rgb(0, 255, 0)");
+  // A10: at most a render's and an upgrade's budget (250 rows each, see
+  // static/scrollback.js) in one frame, never the whole history.
+  out.maxRowsStyledPerFrame = await page.evaluate(() => Math.max(window.__rowsMax, window.__rowsNow));
+  assert.ok(out.maxRowsStyledPerFrame > 0, "rows were styled");
+  assert.ok(out.maxRowsStyledPerFrame <= 500, "rows styled in one frame: " + out.maxRowsStyledPerFrame);
+  // Wall clock as a backstop only: a loaded machine stretches every task,
+  // so the budget scales with E2E_WAIT_SCALE (default 3; 1 on an idle machine).
   out.longestTaskMsLoading2000Rows = Math.round(await page.evaluate(() => window.__long));
-  assert.ok(out.longestTaskMsLoading2000Rows < 400, "longest task " + out.longestTaskMsLoading2000Rows);
+  assert.ok(out.longestTaskMsLoading2000Rows < 400 * WAIT_SCALE, `longest task ${out.longestTaskMsLoading2000Rows} (budget ${400 * WAIT_SCALE})`);
   // Scrolled up, new output shows the jump button; it goes to the bottom.
   await pre.evaluate((e) => { e.scrollTop = 0; });
   show("w1A:p1", long + "\n\x1b[32mfresh output\x1b[0m\n", 120);
