@@ -778,13 +778,16 @@ agent. Saving writes `routing.toml` and nothing else.
 - **Add** picks from a searchable list (type to filter, ↑ ↓ and Enter,
   Escape; a bottom sheet on a phone): a herdr-projects profile, or a
   provider's model. The models are the ones whose sizes Dash knows (Claude
-  Opus, Sonnet, Haiku and Fable), the models your profiles name, the Codex
-  `config.toml` model and the opencode config's provider models, each with
-  a readable name and its raw id. *Other…* takes any other model id by
+  Opus, Sonnet, Haiku and Fable), the models Codex lists in its own
+  `models_cache.json` (its display name, levels and window; models Codex
+  hides only when something names them), the models your profiles name,
+  the Codex `config.toml` model and the opencode config's provider models,
+  each with a readable name and its raw id. *Other…* takes any other model id by
   hand, checked before it is added.
 - **Reasoning and context** are set per card: only the effort levels the
-  harness accepts (Claude low to max, Codex minimal to xhigh, none for
-  opencode), defaulting to the profile's own effort, and a context size
+  model accepts (Claude low to max; Codex each model's own levels from
+  `models_cache.json`, such as low to ultra, else minimal to xhigh; none
+  for opencode), defaulting to the profile's own effort, and a context size
   where the model offers more than one (Claude 200k or 1M), else the size
   is shown. They are saved (`effort`, `context` in tokens) and shown in the
   preview; they apply when the herdr-projects launch hook lands. The server

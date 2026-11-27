@@ -130,6 +130,14 @@ func (rt *Routing) state(snap routing.Snapshot) routingState {
 	}
 	sort.Slice(st.Profiles, func(i, j int) bool { return st.Profiles[i].Name < st.Profiles[j].Name })
 	st.Catalog = rt.catalog(cat)
+	// A profile is named as the catalog names its model (Codex's own name).
+	for i, p := range st.Profiles {
+		if prov := providerOfAgent(p.Agent); prov != "" && p.Model != "" {
+			if m, ok := routing.Find(st.Catalog, prov, p.Model); ok {
+				st.Profiles[i].Label = m.Label
+			}
+		}
+	}
 	st.Enforcement["settings"] = "Reasoning and context are saved and shown in the preview; each applies when the launch hook lands."
 	st.Projects = rt.projects()
 	return st
@@ -175,19 +183,40 @@ func profileLabel(agent, model string) string {
 	return agent + " (not routable)"
 }
 
-// catalog is what the picker offers: built-in models, profile models, and
-// the models each harness's own config names (Codex config.toml, opencode
-// providers) with the context sizes they state.
+// catalog is what the picker offers: built-in models, the models Codex
+// lists in its models_cache.json (name, levels and window per model),
+// profile models, and the models each harness's own config names (Codex
+// config.toml, opencode providers) with the context sizes they state.
 func (rt *Routing) catalog(profiles map[string]routing.Profile) []routing.Harness {
 	extra := map[string][]routing.Model{}
-	if b, err := os.ReadFile(filepath.Join(filepath.Dir(rt.cfg.CodexDir), "config.toml")); err == nil {
-		var c codexConfig
-		if tomlDecode(b, &c) == nil && c.Model != "" {
-			m := routing.Model{ID: c.Model, Source: "config"}
-			if c.Window > 0 {
-				m.Contexts = []int64{c.Window}
+	efforts := map[string][]string{}
+	named := map[string]bool{} // Codex models a profile or the config names
+	for _, p := range profiles {
+		if p.Agent == "codex" && p.Model != "" {
+			named[p.Model] = true
+		}
+	}
+	var codexCfg codexConfig
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(rt.cfg.CodexDir), "config.toml")); err == nil && tomlDecode(b, &codexCfg) == nil && codexCfg.Model != "" {
+		named[codexCfg.Model] = true
+		// The config's window is what Codex runs it with: it comes first.
+		m := routing.Model{ID: codexCfg.Model, Source: "config"}
+		if codexCfg.Window > 0 {
+			m.Contexts = []int64{codexCfg.Window}
+		}
+		extra["codex"] = append(extra["codex"], m)
+	}
+	if ms, ok := codexModels(filepath.Join(filepath.Dir(rt.cfg.CodexDir), "models_cache.json")); ok {
+		var all []string
+		for _, m := range ms {
+			if m.hidden && !named[m.ID] {
+				continue
 			}
-			extra["codex"] = append(extra["codex"], m)
+			all = append(all, m.Efforts...)
+			extra["codex"] = append(extra["codex"], m.Model)
+		}
+		if len(all) > 0 {
+			efforts["codex"] = routing.SortEfforts("codex", all)
 		}
 	}
 	for _, name := range []string{"opencode.jsonc", "opencode.json", "config.json"} {
@@ -227,7 +256,68 @@ func (rt *Routing) catalog(profiles map[string]routing.Profile) []routing.Harnes
 		}
 		break
 	}
-	return routing.Catalog(profiles, extra)
+	return routing.Catalog(profiles, extra, efforts)
+}
+
+type codexModel struct {
+	routing.Model
+	hidden bool
+}
+
+// codexModels reads Codex's own model list (models_cache.json beside its
+// sessions dir): each model's display name, the reasoning levels it lists
+// and its context window. A model Codex hides is marked so.
+func codexModels(path string) ([]codexModel, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var c struct {
+		Models []struct {
+			Slug        string `json:"slug"`
+			DisplayName string `json:"display_name"`
+			Levels      []struct {
+				Effort string `json:"effort"`
+			} `json:"supported_reasoning_levels"`
+			Visibility string `json:"visibility"`
+			Window     int64  `json:"context_window"`
+			Priority   int    `json:"priority"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return nil, false
+	}
+	sort.SliceStable(c.Models, func(i, j int) bool { return c.Models[i].Priority < c.Models[j].Priority })
+	var out []codexModel
+	for _, m := range c.Models {
+		if !routing.ModelRe.MatchString(m.Slug) {
+			continue
+		}
+		cm := codexModel{Model: routing.Model{ID: m.Slug, Source: "harness"}, hidden: m.Visibility == "hide"}
+		if name := strings.TrimSpace(m.DisplayName); name != "" && len(name) <= 80 {
+			cm.Label = name
+		}
+		for _, l := range m.Levels {
+			if l.Effort != "" && len(l.Effort) <= 32 {
+				cm.Efforts = append(cm.Efforts, l.Effort)
+			}
+		}
+		cm.Efforts = routing.SortEfforts("codex", cm.Efforts)
+		if m.Window >= routing.MinContext && m.Window <= routing.MaxContext {
+			cm.Contexts = []int64{m.Window}
+		}
+		out = append(out, cm)
+	}
+	return out, true
+}
+
+func providerOfAgent(agent string) string {
+	for _, p := range routing.Providers {
+		if p.Agent == agent {
+			return p.ID
+		}
+	}
+	return ""
 }
 
 // legacyProfile is what a launch uses without routing: PROJECT.md
@@ -429,16 +519,16 @@ func (rt *Routing) checkCandidates(ops []routing.Op) routing.FieldErrors {
 				bad("model", "must be a model id of at most 128 characters, without spaces")
 				continue
 			}
+			model := c.Model
+			if model == "" {
+				model = p.Model
+			}
 			if c.Effort != "" {
-				if msg := routing.CheckEffort(c.Provider, c.Effort); msg != "" {
+				if msg := routing.CheckModelEffort(catalog, c.Provider, model, c.Effort); msg != "" {
 					bad("effort", msg)
 				}
 			}
 			if c.Context != 0 {
-				model := c.Model
-				if model == "" {
-					model = p.Model
-				}
 				if msg := routing.CheckContext(catalog, c.Provider, model, c.Context); msg != "" {
 					bad("context", msg)
 				}

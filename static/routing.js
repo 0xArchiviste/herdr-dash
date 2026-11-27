@@ -119,7 +119,9 @@
     const m = modelInfo(c.provider, id);
     const label = m?.label || id || `${PROVIDER_LABEL[c.provider] || c.provider} default model`;
     const raw = c.model ? `${c.profile} · ${c.model}` : `profile ${c.profile}${p?.model ? ` · ${p.model}` : ""}`;
-    return { id, model: m, label, raw, profile: p, efforts: harness(c.provider)?.efforts || [] };
+    // The model's own levels when the harness lists them (Codex), else the harness's.
+    const efforts = (m?.efforts?.length ? m.efforts : harness(c.provider)?.efforts) || [];
+    return { id, model: m, label, raw, profile: p, efforts };
   }
   const settingsText = (c) => [c.effort ? `reasoning ${c.effort}` : "", c.context ? `${ctxLabel(c.context)} context` : ""].filter(Boolean).join(" · ");
 
@@ -185,7 +187,9 @@
     else {
       effort = el("select", { class: "rt-effort", "data-focus": `effort:${mode}:${ckey(c)}`, "aria-label": `Reasoning for ${d.label}`, title: "Reasoning (effort). Applies when the launch hook lands." },
         el("option", { value: "", text: defEffort ? `Profile default (${defEffort})` : "Harness default" }),
-        ...d.efforts.map((l) => el("option", { value: l, text: l, selected: l === c.effort })));
+        ...d.efforts.map((l) => el("option", { value: l, text: l, selected: l === c.effort })),
+        // A saved level the list lacks stays shown, so nothing changes silently.
+        c.effort && !d.efforts.includes(c.effort) ? el("option", { value: c.effort, text: `${c.effort} (not listed)`, selected: true }) : null);
       effort.addEventListener("change", () => set({ effort: effort.value }));
     }
     const sizes = d.model?.contexts || [];
@@ -304,7 +308,8 @@
         label: `${h.label} default model`, raw: `profile ${h.id}`, text: `${h.id} ${h.label} default` });
       for (const m of h.models) {
         const c = { provider: h.id, profile: h.id, model: m.id };
-        const ctx = m.contexts.length ? m.contexts.map(ctxLabel).join(" / ") : "context unknown";
+        const sizes = m.contexts || [];
+        const ctx = sizes.length ? sizes.map(ctxLabel).join(" / ") : "context unknown";
         opts.push({ pick: `model:${h.id}:${m.id}`, cand: c, why: have.has(ckey(c)) ? "in this list" : "",
           label: m.label, raw: `${m.id} · ${ctx}`, text: `${h.id} ${h.label} ${m.id} ${m.label}` });
       }
