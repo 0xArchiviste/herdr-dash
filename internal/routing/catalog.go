@@ -18,12 +18,40 @@ import (
 // stored and previewed in stage 1; applying them at launch belongs to the
 // herdr-projects launch hook.
 
-// HarnessEfforts are the effort levels each harness accepts, low to high.
-// opencode has no effort setting.
+// HarnessEfforts are the effort levels each harness accepts, low to high,
+// when the harness does not say for itself; Codex lists each model's own
+// levels in its models_cache.json, and those replace this list in the
+// catalog. opencode has no effort setting.
 var HarnessEfforts = map[string][]string{
 	"claude":   {"low", "medium", "high", "xhigh", "max"},
 	"codex":    {"minimal", "low", "medium", "high", "xhigh"},
 	"opencode": {},
+}
+
+// KnownEfforts are every level a harness has been seen to accept, low to
+// high: what a policy file may name before the catalog says which model
+// takes which (a saved choice is checked per model by CheckModelEffort).
+var KnownEfforts = map[string][]string{
+	"claude":   {"low", "medium", "high", "xhigh", "max"},
+	"codex":    {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+	"opencode": {},
+}
+
+// SortEfforts orders levels low to high, unknown ones last as given.
+func SortEfforts(provider string, levels []string) []string {
+	known := KnownEfforts[provider]
+	out := slices.Clone(levels)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := slices.Index(known, out[i]), slices.Index(known, out[j])
+		if a < 0 {
+			a = len(known)
+		}
+		if b < 0 {
+			b = len(known)
+		}
+		return a < b
+	})
+	return slices.Compact(out)
 }
 
 const (
@@ -39,7 +67,10 @@ type Model struct {
 	ID       string  `json:"id"`
 	Label    string  `json:"label"`
 	Contexts []int64 `json:"contexts"` // offered sizes, smallest (the default) first; empty: unknown
-	Source   string  `json:"source"`   // built-in, profile, config
+	// Efforts are the levels this model takes, when the harness lists them
+	// per model (Codex); absent: the harness's levels apply.
+	Efforts []string `json:"efforts,omitempty"`
+	Source  string   `json:"source"` // built-in, harness, config, profile
 }
 
 // Harness is one provider's entry in the catalog.
@@ -59,29 +90,37 @@ var builtinModels = map[string][]Model{
 	},
 }
 
-// Catalog builds the picker's catalog from the built-in models, the
-// profiles' models and models a harness config names (extra, per
-// provider; opencode ids are provider/model).
-func Catalog(profiles map[string]Profile, extra map[string][]Model) []Harness {
+// Catalog builds the picker's catalog from the built-in models, models a
+// harness itself or its config names (extra, per provider, earlier entries
+// winning; opencode ids are provider/model) and the profiles' models. One
+// model named by several sources is one entry: the first source to state a
+// label, sizes or levels gives them. efforts, per provider, replaces the
+// harness's default levels (Codex's own list).
+func Catalog(profiles map[string]Profile, extra map[string][]Model, efforts map[string][]string) []Harness {
 	var out []Harness
 	for _, p := range Providers {
-		h := Harness{ID: p.ID, Label: p.Label, Efforts: HarnessEfforts[p.ID], Models: []Model{}}
+		levels := HarnessEfforts[p.ID]
+		if e, ok := efforts[p.ID]; ok && len(e) > 0 {
+			levels = e
+		}
+		h := Harness{ID: p.ID, Label: p.Label, Efforts: slices.Clone(levels), Models: []Model{}}
 		seen := map[string]int{}
 		add := func(m Model) {
 			if m.ID == "" || !ModelRe.MatchString(m.ID) {
 				return
 			}
 			if i, ok := seen[m.ID]; ok {
-				if len(h.Models[i].Contexts) == 0 {
-					h.Models[i].Contexts = m.Contexts
+				have := &h.Models[i]
+				if have.Label == "" {
+					have.Label = m.Label
+				}
+				if len(have.Contexts) == 0 && len(m.Contexts) > 0 {
+					have.Contexts = m.Contexts
+				}
+				if len(have.Efforts) == 0 && len(m.Efforts) > 0 {
+					have.Efforts = m.Efforts
 				}
 				return
-			}
-			if m.Label == "" {
-				m.Label = ModelLabel(p.ID, m.ID)
-			}
-			if m.Contexts == nil {
-				m.Contexts = []int64{}
 			}
 			seen[m.ID] = len(h.Models)
 			h.Models = append(h.Models, m)
@@ -104,6 +143,18 @@ func Catalog(profiles map[string]Profile, extra map[string][]Model) []Harness {
 		for _, n := range names {
 			if pr := profiles[n]; pr.Agent == p.Agent && pr.Model != "" {
 				add(Model{ID: pr.Model, Source: "profile"})
+			}
+		}
+		for i := range h.Models {
+			m := &h.Models[i]
+			if m.Label == "" {
+				m.Label = ModelLabel(p.ID, m.ID)
+			}
+			if m.Contexts == nil {
+				m.Contexts = []int64{}
+			}
+			if len(m.Efforts) == 0 {
+				m.Efforts = nil
 			}
 		}
 		out = append(out, h)
@@ -129,8 +180,10 @@ func Find(cat []Harness, provider, model string) (Model, bool) {
 var acronyms = map[string]string{"gpt": "GPT", "glm": "GLM", "llama": "Llama", "qwen": "Qwen", "o3": "o3", "o4": "o4"}
 
 // ModelLabel is a readable name for a model id the catalog has no label
-// for: "gpt-6-mini" → "GPT 6 mini"; opencode's "box/qwen3" → "qwen3 via
-// opencode (box)". It never invents facts: it only reformats the id.
+// for: "claude-fable-5-2" → "Claude Fable 5.2", "gpt-6.2-sol" →
+// "GPT-6.2-Sol" (Codex's own style), "gpt-6-mini" → "GPT-6-Mini";
+// opencode's "box/qwen3" → "Qwen3 via opencode (box)". It never invents
+// facts: it only reformats the id.
 func ModelLabel(provider, id string) string {
 	if m, ok := Find([]Harness{{ID: provider, Models: builtinModels[provider]}}, provider, id); ok && m.Label != "" {
 		return m.Label
@@ -145,13 +198,27 @@ func ModelLabel(provider, id string) string {
 	for i, w := range words {
 		if a, ok := acronyms[strings.ToLower(w)]; ok {
 			words[i] = a
-		} else if i == 0 {
-			rs := []rune(w)
+		} else if rs := []rune(w); len(rs) > 0 && unicode.IsLower(rs[0]) {
 			rs[0] = unicode.ToUpper(rs[0])
 			words[i] = string(rs)
 		}
 	}
-	label := strings.Join(words, " ")
+	var label string
+	if len(words) > 0 && words[0] == "GPT" {
+		// GPT ids keep their hyphens, as Codex names them.
+		label = strings.Join(words, "-")
+	} else {
+		// A run of short numbers is a version: 5 2 → 5.2.
+		var parts []string
+		for i, w := range words {
+			if i > 0 && isShortNum(w) && isShortNum(words[i-1]) {
+				parts[len(parts)-1] += "." + w
+				continue
+			}
+			parts = append(parts, w)
+		}
+		label = strings.Join(parts, " ")
+	}
 	if provider == "opencode" {
 		label += " via opencode"
 		if sub != "" {
@@ -159,6 +226,18 @@ func ModelLabel(provider, id string) string {
 		}
 	}
 	return label
+}
+
+func isShortNum(w string) bool {
+	if w == "" || len(w) > 2 {
+		return false
+	}
+	for _, r := range w {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ContextLabel is 200k, 1M, 131k.
@@ -188,19 +267,39 @@ func contextsText(cs []int64) string {
 	return strings.Join(parts[:len(parts)-1], ", ") + " or " + parts[len(parts)-1]
 }
 
-// CheckEffort says why effort is not a level provider accepts ("" if it is).
+// CheckEffort says why effort is not a level provider is known to accept
+// ("" if it is). It is the check a policy file gets on its own; a save is
+// checked per model by CheckModelEffort.
 func CheckEffort(provider, effort string) string {
-	levels, ok := HarnessEfforts[provider]
+	levels, ok := KnownEfforts[provider]
 	if !ok {
 		return ""
 	}
+	return effortMsg(provider, levels, effort)
+}
+
+// CheckModelEffort says why effort is not a level model (on provider) takes:
+// the model's own levels when the catalog lists them, else the harness's.
+func CheckModelEffort(cat []Harness, provider, model, effort string) string {
+	if m, ok := Find(cat, provider, model); ok && len(m.Efforts) > 0 {
+		return effortMsg(m.Label, m.Efforts, effort)
+	}
+	for _, h := range cat {
+		if h.ID == provider {
+			return effortMsg(provider, h.Efforts, effort)
+		}
+	}
+	return CheckEffort(provider, effort)
+}
+
+func effortMsg(who string, levels []string, effort string) string {
 	if len(levels) == 0 {
-		return fmt.Sprintf("%s has no reasoning (effort) setting; remove effort", provider)
+		return fmt.Sprintf("%s has no reasoning (effort) setting; remove effort", who)
 	}
 	if slices.Contains(levels, effort) {
 		return ""
 	}
-	return fmt.Sprintf("%s supports %s", provider, strings.Join(levels, ", "))
+	return fmt.Sprintf("%s supports %s", who, strings.Join(levels, ", "))
 }
 
 // CheckContext says why context does not fit model on provider: a model
